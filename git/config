@@ -1,0 +1,6 @@
+[user]
+	name = sumeet
+	email = sumeetsaini621@gmail.com
+
+[core]
+	editor = vim # TODO: Change this to nvim when that is setup
