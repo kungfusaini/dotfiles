@@ -49,6 +49,23 @@
 			];
 		};
 
+	system.defaults = {
+	 	dock.autohide = true;
+		dock.wvous-br-corner = 1;
+		dock.tilesize = 1;
+		finder.FXPreferredViewStyle = "clmv";
+		finder.ShowStatusBar = true;
+		finder.ShowPathbar = true;
+		finder.AppleShowAllExtensions = true;
+		finder.FXEnableExtensionChangeWarning = false;
+		finder.NewWindowTarget = "Other";
+		finder.NewWindowTargetPath = "file:///Users/sumeet";
+		trackpad.Clicking = true;
+		controlcenter.Bluetooth = true;
+		controlcenter.Sound = true;
+		controlcenter.BatteryShowPercentage = true;
+
+	};
       # Necessary for using flakes on this system.
       nix.settings.experimental-features = "nix-command flakes";
 
