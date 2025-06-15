@@ -41,6 +41,8 @@
 	homebrew = {
 		enable = true;
 		onActivation.cleanup = "zap"; # Removes all packages apart from the ones below
+		onActivation.autoUpdate = true;
+		onActivation.upgrade = true;
 		casks = [
 			 "itsycal" # this didn't work in nix as it needs to go into the application folder
 			 "time-out"
