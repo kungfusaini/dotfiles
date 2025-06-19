@@ -1,0 +1,15 @@
+2025/06/17-19:38:17.114 c3b94 Reusing MANIFEST /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_www.netflix.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/17-19:38:17.116 c3b94 Recovering log #4
+2025/06/17-19:38:17.116 c3b94 Reusing old log /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_www.netflix.com_0.indexeddb.leveldb/000004.log 
+2025/06/17-19:38:49.222 c3bb7 Level-0 table #8: started
+2025/06/17-19:38:49.235 c3bb7 Level-0 table #8: 78576 bytes OK
+2025/06/17-19:38:49.238 c3bb7 Delete type=0 #4
+2025/06/17-19:38:49.238 c3b94 Manual compaction at level-0 from (begin) .. (end); will stop at (end)
+2025/06/17-19:38:49.239 c3b94 Manual compaction at level-1 from (begin) .. (end); will stop at '\x00\x01\x01\x02\x01\x0e\x00u\x00n\x00s\x00e\x00n\x00t\x00p\x00l\x00a\x00y\x00d\x00a\x00t\x00a' @ 1495 : 1
+2025/06/17-19:38:49.239 c3b94 Compacting 1@1 + 1@2 files
+2025/06/17-19:38:49.245 c3b94 Generated table #9@1: 46 keys, 6087 bytes
+2025/06/17-19:38:49.246 c3b94 Compacted 1@1 + 1@2 files => 6087 bytes
+2025/06/17-19:38:49.249 c3b94 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/17-19:38:49.249 c3b94 Delete type=2 #5
+2025/06/17-19:38:49.250 c3b94 Delete type=2 #8
+2025/06/17-19:38:49.251 c3b94 Manual compaction at level-1 from '\x00\x01\x01\x02\x01\x0e\x00u\x00n\x00s\x00e\x00n\x00t\x00p\x00l\x00a\x00y\x00d\x00a\x00t\x00a' @ 1495 : 1 .. (end); will stop at (end)

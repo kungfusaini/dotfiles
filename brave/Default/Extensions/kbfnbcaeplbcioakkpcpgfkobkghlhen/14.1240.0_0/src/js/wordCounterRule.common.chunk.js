@@ -1,0 +1,1 @@
+(self.webpackChunk=self.webpackChunk||[]).push([[8365],{77897:(e,n,a)=>{a.r(n),a.d(n,{WordCounter:()=>r});var r,o=a(42969),t=a(1314),u=a(8791),d=a(72043),c=a(74425);!function(e){e.page=(0,d.$W)({domain:c.EA,name:"wordcounter"},[u.T.textarea("WordCounter",(e=>({createLayout:()=>new t.A7(e.field,{gbuttonMinPadding:o.rR})})))])}(r||(r={}))}}]);

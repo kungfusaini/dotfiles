@@ -1,0 +1,29 @@
+2025/06/17-12:38:53.903 c3b94 Creating DB /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_outlook.live.com_0.indexeddb.leveldb since it was missing.
+2025/06/17-12:38:53.906 c3b94 Reusing MANIFEST /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_outlook.live.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/17-12:38:53.910 c3bb7 Level-0 table #5: started
+2025/06/17-12:38:53.911 c3bb7 Level-0 table #5: 571 bytes OK
+2025/06/17-12:38:53.913 c3bb7 Delete type=0 #3
+2025/06/17-12:38:53.913 c3b92 Manual compaction at level-0 from '\x00\x01\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x02\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/06/17-12:38:54.459 c3b92 Level-0 table #7: started
+2025/06/17-12:38:54.460 c3b92 Level-0 table #7: 548 bytes OK
+2025/06/17-12:38:54.462 c3b92 Delete type=0 #4
+2025/06/17-12:38:54.462 c3b92 Manual compaction at level-0 from '\x00\x02\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x03\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/06/17-12:38:56.487 c3b94 Level-0 table #9: started
+2025/06/17-12:38:56.488 c3b94 Level-0 table #9: 249 bytes OK
+2025/06/17-12:38:56.494 c3b94 Delete type=0 #6
+2025/06/17-12:38:56.494 c3b94 Manual compaction at level-0 from (begin) .. (end); will stop at '\x00\x00\x00\x002\x02\x03\x01\x00\x00\x00\x00\x00\x00\x00\x00' @ 38 : 0
+2025/06/17-12:38:56.494 c3b94 Compacting 1@0 + 1@1 files
+2025/06/17-12:38:56.496 c3b94 Generated table #10@0: 11 keys, 501 bytes
+2025/06/17-12:38:56.496 c3b94 Compacted 1@0 + 1@1 files => 501 bytes
+2025/06/17-12:38:56.497 c3b94 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/06/17-12:38:56.498 c3b94 Delete type=2 #7
+2025/06/17-12:38:56.498 c3b94 Delete type=2 #9
+2025/06/17-12:38:56.498 c3b94 Manual compaction at level-0 from '\x00\x00\x00\x002\x02\x03\x01\x00\x00\x00\x00\x00\x00\x00\x00' @ 38 : 0 .. (end); will stop at (end)
+2025/06/17-12:38:56.498 c3b94 Manual compaction at level-1 from (begin) .. (end); will stop at '\x00\x00\x00\x00\xc9\x1a\x00h\x00t\x00t\x00p\x00s\x00_\x00o\x00u\x00t\x00l\x00o\x00o\x00k\x00.\x00l\x00i\x00v\x00e\x00.\x00c\x00o\x00m\x00_\x000\x00@\x001\x13\x00o\x00w\x00a\x00-\x00o\x00f\x00f\x00l\x00i\x00n\x00e\x00-\x00a\x00c\x00t\x00i\x00o\x00n\x00s' @ 28 : 0
+2025/06/17-12:38:56.498 c3b94 Compacting 1@1 + 1@2 files
+2025/06/17-12:38:56.500 c3b94 Generated table #11@1: 6 keys, 253 bytes
+2025/06/17-12:38:56.500 c3b94 Compacted 1@1 + 1@2 files => 253 bytes
+2025/06/17-12:38:56.501 c3b94 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/17-12:38:56.501 c3b94 Delete type=2 #10
+2025/06/17-12:38:56.501 c3b94 Delete type=2 #5
+2025/06/17-12:38:56.502 c3b94 Manual compaction at level-1 from '\x00\x00\x00\x00\xc9\x1a\x00h\x00t\x00t\x00p\x00s\x00_\x00o\x00u\x00t\x00l\x00o\x00o\x00k\x00.\x00l\x00i\x00v\x00e\x00.\x00c\x00o\x00m\x00_\x000\x00@\x001\x13\x00o\x00w\x00a\x00-\x00o\x00f\x00f\x00l\x00i\x00n\x00e\x00-\x00a\x00c\x00t\x00i\x00o\x00n\x00s' @ 28 : 0 .. (end); will stop at (end)

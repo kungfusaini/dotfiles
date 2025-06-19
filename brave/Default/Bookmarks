@@ -1,0 +1,78 @@
+{
+   "checksum": "c1e8f8923484cbb00c9330af9d0135b2",
+   "roots": {
+      "bookmark_bar": {
+         "children": [ {
+            "date_added": "13394187176361549",
+            "date_last_used": "0",
+            "guid": "86c55189-a002-4836-b8c2-377dcd036f35",
+            "id": "5",
+            "meta_info": {
+               "power_bookmark_meta": ""
+            },
+            "name": "Keyball61 – holykeebs",
+            "type": "url",
+            "url": "https://holykeebs.com/products/keyball61"
+         }, {
+            "children": [ {
+               "date_added": "13394708021795574",
+               "date_last_used": "0",
+               "guid": "d9fbc498-5f67-4f68-828e-2ef8004e48d7",
+               "id": "6",
+               "meta_info": {
+                  "power_bookmark_meta": ""
+               },
+               "name": "Expense Tracker",
+               "type": "url",
+               "url": "https://docs.google.com/forms/d/e/1FAIpQLSeUBGeKcxw996oP4v6z81DzRHqQmqSxXo6aUBleKHBpXvcy3w/viewform"
+            }, {
+               "date_added": "13394708062583236",
+               "date_last_used": "0",
+               "guid": "6d66af2e-c087-485f-b4f6-5479472b67d8",
+               "id": "8",
+               "meta_info": {
+                  "power_bookmark_meta": ""
+               },
+               "name": "Statement 2025",
+               "type": "url",
+               "url": "https://docs.google.com/spreadsheets/d/1ThMBtse7olPc9ABqd5O3BXDZLEhUtOFiQc144BU8Fy8/edit?gid=1586088755#gid=1586088755"
+            } ],
+            "date_added": "13394708053256244",
+            "date_last_used": "0",
+            "date_modified": "13394708062583236",
+            "guid": "08890d06-3997-4699-bb66-b970e745445a",
+            "id": "7",
+            "name": "Personal",
+            "type": "folder"
+         } ],
+         "date_added": "13394145816028477",
+         "date_last_used": "0",
+         "date_modified": "13394708021795574",
+         "guid": "0bc5d13f-2cba-5d74-951f-3f233fe6c908",
+         "id": "1",
+         "name": "Bookmarks bar",
+         "type": "folder"
+      },
+      "other": {
+         "children": [  ],
+         "date_added": "13394145816028480",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "82b081ec-3dd3-529c-8475-ab6c344590dd",
+         "id": "2",
+         "name": "Other Bookmarks",
+         "type": "folder"
+      },
+      "synced": {
+         "children": [  ],
+         "date_added": "13394145816028481",
+         "date_last_used": "0",
+         "date_modified": "0",
+         "guid": "4cf2e351-0e85-532b-bb37-df045d8f8d0f",
+         "id": "3",
+         "name": "Mobile Bookmarks",
+         "type": "folder"
+      }
+   },
+   "version": 1
+}

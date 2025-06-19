@@ -26,13 +26,21 @@
           pkgs.karabiner-elements
 	  pkgs.neovim
           pkgs.obsidian
+          pkgs.pyenv
           pkgs.raycast
           pkgs.stats
           pkgs.the-unarchiver
           pkgs.tldr
           pkgs.tmux
+          pkgs.vscode
           pkgs.whatsapp-for-mac
         ];
+	
+	# TODO: fonts!
+	# fonts.packages =
+	# [
+	#   pkgs.nerd-fonts-jetbrains-mono
+	# ];
 
 	# TODO: move this to the readme when I make it	{
 	# regular brew packages
@@ -46,6 +54,7 @@
 		casks = [
 			 "itsycal" # this didn't work in nix as it needs to go into the application folder
 			 "time-out"
+			"activitywatch"
 			];
 		};
 
@@ -64,8 +73,16 @@
 		controlcenter.Bluetooth = true;
 		controlcenter.Sound = true;
 		controlcenter.BatteryShowPercentage = true;
-
+		NSGlobalDomain._HIHideMenuBar = true;
+		
+		# Undocumented Settings
+		CustomUserPreferences = {
+			NSGlobalDomain = {
+    				AppleHighlightColor = "0.968627 0.831373 1.000000 Purple";
+  			};
+		};
 	};
+
       # Necessary for using flakes on this system.
       nix.settings.experimental-features = "nix-command flakes";
 

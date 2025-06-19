@@ -1,0 +1,6 @@
+2025/06/16-12:18:22.399 c3b92 Creating DB /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_www.overleaf.com_0.indexeddb.leveldb since it was missing.
+2025/06/16-12:18:22.403 c3b92 Reusing MANIFEST /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_www.overleaf.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/16-13:07:58.443 c3b94 Level-0 table #5: started
+2025/06/16-13:07:58.446 c3b94 Level-0 table #5: 54705 bytes OK
+2025/06/16-13:07:58.448 c3b94 Delete type=0 #3
+2025/06/16-13:07:58.449 c3b94 Manual compaction at level-0 from (begin) .. (end); will stop at (end)

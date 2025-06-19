@@ -1,0 +1,6 @@
+2025/06/12-13:47:38.762 c3b92 Creating DB /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_kbdfans.com_0.indexeddb.leveldb since it was missing.
+2025/06/12-13:47:38.767 c3b92 Reusing MANIFEST /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_kbdfans.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/12-13:47:45.427 c3b94 Level-0 table #5: started
+2025/06/12-13:47:45.428 c3b94 Level-0 table #5: 805 bytes OK
+2025/06/12-13:47:45.432 c3b94 Delete type=0 #3
+2025/06/12-13:47:45.433 c3b94 Manual compaction at level-0 from (begin) .. (end); will stop at (end)

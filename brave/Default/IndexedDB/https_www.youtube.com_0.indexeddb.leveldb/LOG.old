@@ -1,0 +1,93 @@
+2025/06/16-09:42:15.504 c3b94 Reusing MANIFEST /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_www.youtube.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/16-09:42:15.504 c3b94 Recovering log #81
+2025/06/16-09:42:15.509 c3b94 Reusing old log /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_www.youtube.com_0.indexeddb.leveldb/000081.log 
+2025/06/16-09:44:48.723 c3b94 Level-0 table #86: started
+2025/06/16-09:44:48.743 c3b94 Level-0 table #86: 1611881 bytes OK
+2025/06/16-09:44:48.748 c3b94 Delete type=0 #81
+2025/06/16-09:45:19.747 c3b94 Compacting 1@1 + 1@2 files
+2025/06/16-09:45:19.757 c3b94 Generated table #87@1: 316 keys, 73878 bytes
+2025/06/16-09:45:19.757 c3b94 Compacted 1@1 + 1@2 files => 73878 bytes
+2025/06/16-09:45:19.761 c3b94 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/16-09:45:19.761 c3b94 Delete type=2 #83
+2025/06/16-09:45:19.762 c3b94 Delete type=2 #86
+2025/06/16-09:51:05.903 c3b94 Level-0 table #89: started
+2025/06/16-09:51:05.918 c3b94 Level-0 table #89: 1909461 bytes OK
+2025/06/16-09:51:05.920 c3b94 Delete type=0 #85
+2025/06/16-09:59:05.614 c3b92 Compacting 1@1 + 1@2 files
+2025/06/16-09:59:05.639 c3b92 Generated table #90@1: 321 keys, 72781 bytes
+2025/06/16-09:59:05.640 c3b92 Compacted 1@1 + 1@2 files => 72781 bytes
+2025/06/16-09:59:05.645 c3b92 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/16-09:59:05.647 c3b92 Delete type=2 #89
+2025/06/16-09:59:05.648 c3b92 Delete type=2 #87
+2025/06/16-10:15:08.007 c3b94 Level-0 table #92: started
+2025/06/16-10:15:08.020 c3b94 Level-0 table #92: 1691053 bytes OK
+2025/06/16-10:15:08.023 c3b94 Delete type=0 #88
+2025/06/16-10:18:05.943 c3b92 Compacting 1@1 + 1@2 files
+2025/06/16-10:18:05.955 c3b92 Generated table #93@1: 334 keys, 78288 bytes
+2025/06/16-10:18:05.955 c3b92 Compacted 1@1 + 1@2 files => 78288 bytes
+2025/06/16-10:18:05.957 c3b92 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/16-10:18:05.958 c3b92 Delete type=2 #92
+2025/06/16-10:18:05.958 c3b92 Delete type=2 #90
+2025/06/16-11:24:03.012 c3b94 Level-0 table #95: started
+2025/06/16-11:24:03.025 c3b94 Level-0 table #95: 1536342 bytes OK
+2025/06/16-11:24:03.027 c3b94 Delete type=0 #91
+2025/06/16-11:34:50.545 c3b92 Compacting 1@1 + 1@2 files
+2025/06/16-11:34:50.557 c3b92 Generated table #96@1: 412 keys, 173756 bytes
+2025/06/16-11:34:50.557 c3b92 Compacted 1@1 + 1@2 files => 173756 bytes
+2025/06/16-11:34:50.560 c3b92 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/16-12:49:25.487 c3b94 Level-0 table #98: started
+2025/06/16-12:49:25.507 c3b94 Level-0 table #98: 1293172 bytes OK
+2025/06/16-12:49:25.510 c3b94 Delete type=0 #94
+2025/06/16-12:49:25.510 c3b94 Delete type=2 #95
+2025/06/16-12:49:25.511 c3b94 Delete type=2 #93
+2025/06/16-13:07:59.069 c3b92 Compacting 1@1 + 1@2 files
+2025/06/16-13:07:59.079 c3b92 Generated table #99@1: 423 keys, 129196 bytes
+2025/06/16-13:07:59.079 c3b92 Compacted 1@1 + 1@2 files => 129196 bytes
+2025/06/16-13:07:59.081 c3b92 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/16-13:07:59.081 c3b92 Delete type=2 #98
+2025/06/16-13:07:59.081 c3b92 Delete type=2 #96
+2025/06/16-13:27:15.877 c3b94 Level-0 table #101: started
+2025/06/16-13:27:15.898 c3b94 Level-0 table #101: 1388746 bytes OK
+2025/06/16-13:27:15.903 c3b94 Delete type=0 #97
+2025/06/16-13:27:17.918 c3bb7 Compacting 1@1 + 1@2 files
+2025/06/16-13:27:17.926 c3bb7 Generated table #102@1: 445 keys, 175381 bytes
+2025/06/16-13:27:17.926 c3bb7 Compacted 1@1 + 1@2 files => 175381 bytes
+2025/06/16-13:27:17.929 c3bb7 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/16-13:27:17.929 c3bb7 Delete type=2 #101
+2025/06/16-13:27:17.930 c3bb7 Delete type=2 #99
+2025/06/16-13:34:34.705 c3b94 Level-0 table #104: started
+2025/06/16-13:34:34.720 c3b94 Level-0 table #104: 1453100 bytes OK
+2025/06/16-13:34:34.722 c3b94 Delete type=0 #100
+2025/06/16-13:35:18.289 c3b94 Compacting 1@1 + 1@2 files
+2025/06/16-13:35:18.295 c3b94 Generated table #105@1: 405 keys, 77163 bytes
+2025/06/16-13:35:18.295 c3b94 Compacted 1@1 + 1@2 files => 77163 bytes
+2025/06/16-13:35:18.296 c3b94 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/16-13:35:18.297 c3b94 Delete type=2 #102
+2025/06/16-13:35:18.297 c3b94 Delete type=2 #104
+2025/06/16-13:42:27.619 c3b94 Level-0 table #107: started
+2025/06/16-13:42:27.634 c3b94 Level-0 table #107: 1260817 bytes OK
+2025/06/16-13:42:27.636 c3b94 Delete type=0 #103
+2025/06/16-13:42:47.816 c3b92 Compacting 1@1 + 1@2 files
+2025/06/16-13:42:47.823 c3b92 Generated table #108@1: 375 keys, 68331 bytes
+2025/06/16-13:42:47.823 c3b92 Compacted 1@1 + 1@2 files => 68331 bytes
+2025/06/16-13:42:47.825 c3b92 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/16-13:42:47.825 c3b92 Delete type=2 #105
+2025/06/16-13:42:47.826 c3b92 Delete type=2 #107
+2025/06/16-13:52:00.675 c3b94 Level-0 table #110: started
+2025/06/16-13:52:00.686 c3b94 Level-0 table #110: 980967 bytes OK
+2025/06/16-13:52:00.689 c3b94 Delete type=0 #106
+2025/06/16-13:52:20.506 c3b92 Compacting 1@1 + 1@2 files
+2025/06/16-13:52:20.512 c3b92 Generated table #111@1: 409 keys, 79841 bytes
+2025/06/16-13:52:20.512 c3b92 Compacted 1@1 + 1@2 files => 79841 bytes
+2025/06/16-13:52:20.514 c3b92 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/16-13:52:20.515 c3b92 Delete type=2 #110
+2025/06/16-13:52:20.515 c3b92 Delete type=2 #108
+2025/06/16-14:00:42.551 c3b94 Level-0 table #113: started
+2025/06/16-14:00:42.565 c3b94 Level-0 table #113: 1271028 bytes OK
+2025/06/16-14:00:42.567 c3b94 Delete type=0 #109
+2025/06/16-14:00:48.780 c3b94 Compacting 1@1 + 1@2 files
+2025/06/16-14:00:48.789 c3b94 Generated table #114@1: 400 keys, 71455 bytes
+2025/06/16-14:00:48.789 c3b94 Compacted 1@1 + 1@2 files => 71455 bytes
+2025/06/16-14:00:48.791 c3b94 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/16-14:00:48.791 c3b94 Delete type=2 #111
+2025/06/16-14:00:48.791 c3b94 Delete type=2 #113

@@ -1,0 +1,4 @@
+2025/06/17-12:41:49.427 c3b94 Creating DB /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_login.ionos.co.uk_0.indexeddb.leveldb since it was missing.
+2025/06/17-12:41:49.430 c3b94 Reusing MANIFEST /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_login.ionos.co.uk_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/17-12:41:49.436 c3bb8 Manual compaction at level-0 from '\x00\x01\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x02\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/06/17-12:41:49.438 c3b94 Manual compaction at level-0 from '\x00\x02\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x03\x00\x00\x00' @ 0 : 0; will stop at (end)

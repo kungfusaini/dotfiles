@@ -1,0 +1,6 @@
+2025/06/16-15:05:36.936 c3b94 Creating DB /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_www.paypal.com_0.indexeddb.leveldb since it was missing.
+2025/06/16-15:05:36.940 c3b94 Reusing MANIFEST /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_www.paypal.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/16-15:05:38.996 c3b94 Level-0 table #5: started
+2025/06/16-15:05:38.997 c3b94 Level-0 table #5: 1292 bytes OK
+2025/06/16-15:05:39.000 c3b94 Delete type=0 #3
+2025/06/16-15:05:39.000 c3b94 Manual compaction at level-0 from (begin) .. (end); will stop at (end)

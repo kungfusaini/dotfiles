@@ -1,0 +1,1 @@
+(self.webpackChunk=self.webpackChunk||[]).push([[3930],{94559:(a,e,n)=>{n.r(e),n.d(e,{Ebay:()=>u});var u,t=n(45282),b=n(8791),k=n(72043),r=n(3479),y=n(74425);!function(a){a.page=(0,k.$W)({name:"ebay",domain:y.rA},[b.T.textarea("Ebay",(()=>({createLayout:a=>new t.K(a)}))),...r.k.newLayoutRules])}(u||(u={}))}}]);

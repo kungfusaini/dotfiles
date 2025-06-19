@@ -1,0 +1,1 @@
+(self.webpackChunk=self.webpackChunk||[]).push([[114],{13773:(e,a,n)=>{n.r(a),n.d(a,{Netsfere:()=>t});var t,i=n(1314),r=n(8791),s=n(21980),d=n(74425),f=n(72043);!function(e){e.page=(0,f.$W)({name:"netsfere",domain:d.Ox},[r.T.textarea("Netsfere",(e=>({validationRules:s.u,createLayout:()=>new i.A7(e.field,{pretendFieldPositioned:!0})})))])}(t||(t={}))}}]);

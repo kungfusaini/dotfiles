@@ -1,0 +1,49 @@
+{
+   "background": {
+      "page": "pdfHandler.html"
+   },
+   "content_scripts": [ {
+      "all_frames": true,
+      "css": [ "contentstyle.css" ],
+      "js": [ "contentscript.js" ],
+      "matches": [ "http://*/*", "https://*/*", "ftp://*/*", "file://*/*" ],
+      "run_at": "document_start"
+   } ],
+   "content_security_policy": "script-src 'self' 'unsafe-eval' chrome-extension://hfjbmagddngcpeloejdejnfgbamkjaeg/ chrome-extension://aibcglbfblnogfjhbcmmpobjhnomhcdo/; object-src 'self'",
+   "description": "A PDF Viewer supporting Vimium C shortcuts.",
+   "file_browser_handlers": [ {
+      "default_title": "Open with PDF Viewer",
+      "file_filters": [ "filesystem:*.pdf" ],
+      "id": "open-as-pdf"
+   } ],
+   "icons": {
+      "128": "icon128.png",
+      "16": "icon16.png",
+      "48": "icon48.png"
+   },
+   "incognito": "split",
+   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAgovMP7ldL5IKEUS8V/kLHbEIug4P57rb+yvrCOTbsdDtZssvDezWK8hlYBzsFa/fbz72HbLZSIOM7Z+btMUmriPmVBwtEvk3QxfEE2mCQ8O8PVNJKH8k1xosVYyM4GolXR3Zbzmk2LxsbIlppGJFuom080MIKanJYN51QZ1napQ+1rSvFfuJ1gPcFtLejRqHPFddk1juNW4g1RY5X/LFTFfxUeSBhCN81+4BuYGqbrUQsEMpx/LQ3rdAUnKyaIx39v/0rV+2Y0Es+aVqZBH1uRZrW1Wl7jf1kR+7uW7VvHxnxP9cEbkIfpSJPOx32IlWYUKGd2xM6OgxRbGkcepwKQIDAQAB",
+   "manifest_version": 2,
+   "minimum_chrome_version": "76",
+   "name": "PDF Viewer for Vimium C",
+   "options_page": "options/options.html",
+   "options_ui": {
+      "chrome_style": true,
+      "page": "options/options.html"
+   },
+   "page_action": {
+      "default_icon": {
+         "19": "icon19.png",
+         "38": "icon38.png"
+      },
+      "default_popup": "pageActionPopup.html",
+      "default_title": "Show PDF URL"
+   },
+   "permissions": [ "fileBrowserHandler", "webRequest", "webRequestBlocking", "\u003Call_urls>", "tabs", "webNavigation", "storage" ],
+   "storage": {
+      "managed_schema": "preferences_schema.json"
+   },
+   "update_url": "https://clients2.google.com/service/update2/crx",
+   "version": "2.15.349",
+   "web_accessible_resources": [ "content/web/viewer.html", "icon16.png", "icon48.png", "http:/*", "https:/*", "ftp:/*", "file:/*", "chrome-extension:/*", "blob:*", "data:*", "filesystem:/*", "drive:*" ]
+}

@@ -1,0 +1,6 @@
+2025/06/13-09:36:54.622 c3b92 Creating DB /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_www.twitch.tv_0.indexeddb.leveldb since it was missing.
+2025/06/13-09:36:54.626 c3b92 Reusing MANIFEST /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_www.twitch.tv_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/13-09:37:26.645 c3b94 Level-0 table #5: started
+2025/06/13-09:37:26.646 c3b94 Level-0 table #5: 858 bytes OK
+2025/06/13-09:37:26.648 c3b94 Delete type=0 #3
+2025/06/13-09:37:26.649 c3b94 Manual compaction at level-0 from (begin) .. (end); will stop at (end)

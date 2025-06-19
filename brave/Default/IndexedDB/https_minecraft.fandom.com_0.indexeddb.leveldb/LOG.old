@@ -1,0 +1,6 @@
+2025/06/12-12:35:48.556 c3b92 Creating DB /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_minecraft.fandom.com_0.indexeddb.leveldb since it was missing.
+2025/06/12-12:35:48.563 c3b92 Reusing MANIFEST /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_minecraft.fandom.com_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/12-12:38:45.698 c3b92 Level-0 table #5: started
+2025/06/12-12:38:45.700 c3b92 Level-0 table #5: 18994 bytes OK
+2025/06/12-12:38:45.702 c3b92 Delete type=0 #3
+2025/06/12-12:38:45.703 c3b92 Manual compaction at level-0 from (begin) .. (end); will stop at (end)

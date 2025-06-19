@@ -1,0 +1,64 @@
+2025/06/17-12:42:00.319 c3b92 Reusing MANIFEST /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_login.ionos.co.uk_0.indexeddb.leveldb/MANIFEST-000001
+2025/06/17-12:42:00.320 c3b92 Recovering log #3
+2025/06/17-12:42:00.320 c3b92 Reusing old log /Users/sumeet/Library/Application Support/BraveSoftware/Brave-Browser/Default/IndexedDB/https_login.ionos.co.uk_0.indexeddb.leveldb/000003.log 
+2025/06/17-12:42:00.330 c3b92 Level-0 table #5: started
+2025/06/17-12:42:00.331 c3b92 Level-0 table #5: 2078 bytes OK
+2025/06/17-12:42:00.332 c3b92 Delete type=0 #3
+2025/06/17-12:42:00.333 c3b92 Manual compaction at level-0 from '\x00\x04\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x05\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/06/17-12:42:03.764 c3b92 Level-0 table #7: started
+2025/06/17-12:42:03.765 c3b92 Level-0 table #7: 662 bytes OK
+2025/06/17-12:42:03.770 c3b92 Delete type=0 #4
+2025/06/17-12:42:03.770 c3b92 Manual compaction at level-0 from '\x00\x05\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x06\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/06/17-12:42:08.475 c3bb9 Level-0 table #9: started
+2025/06/17-12:42:08.477 c3bb9 Level-0 table #9: 662 bytes OK
+2025/06/17-12:42:08.479 c3bb9 Delete type=0 #6
+2025/06/17-12:42:08.480 c3bb7 Manual compaction at level-0 from '\x00\x06\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x07\x00\x00\x00' @ 0 : 0; will stop at '\x00\x06\x00\x00\x05' @ 135 : 1
+2025/06/17-12:42:08.480 c3bb7 Compacting 1@0 + 1@1 files
+2025/06/17-12:42:08.486 c3bb7 Generated table #10@0: 13 keys, 672 bytes
+2025/06/17-12:42:08.486 c3bb7 Compacted 1@0 + 1@1 files => 672 bytes
+2025/06/17-12:42:08.487 c3bb7 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/06/17-12:42:08.487 c3bb7 Delete type=2 #9
+2025/06/17-12:42:08.487 c3b92 Manual compaction at level-0 from '\x00\x06\x00\x00\x05' @ 135 : 1 .. '\x00\x07\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/06/17-12:42:12.965 c3bb8 Manual compaction at level-0 from '\x00\x07\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x08\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/06/17-12:42:33.711 c3b92 Level-0 table #12: started
+2025/06/17-12:42:33.714 c3b92 Level-0 table #12: 874 bytes OK
+2025/06/17-12:42:33.715 c3b92 Delete type=2 #7
+2025/06/17-12:42:33.716 c3b92 Delete type=0 #8
+2025/06/17-12:42:33.716 c3b92 Manual compaction at level-0 from '\x00\x08\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x09\x00\x00\x00' @ 0 : 0; will stop at '\x00\x08\x00\x00\x05' @ 173 : 1
+2025/06/17-12:42:33.716 c3b92 Compacting 1@0 + 1@1 files
+2025/06/17-12:42:33.717 c3b92 Generated table #13@0: 21 keys, 748 bytes
+2025/06/17-12:42:33.718 c3b92 Compacted 1@0 + 1@1 files => 748 bytes
+2025/06/17-12:42:33.719 c3b92 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/06/17-12:42:33.719 c3b92 Delete type=2 #12
+2025/06/17-12:42:33.720 c3b92 Manual compaction at level-0 from '\x00\x08\x00\x00\x05' @ 173 : 1 .. '\x00\x09\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/06/17-12:42:37.379 c3b92 Level-0 table #15: started
+2025/06/17-12:42:37.381 c3b92 Level-0 table #15: 661 bytes OK
+2025/06/17-12:42:37.384 c3b92 Delete type=0 #11
+2025/06/17-12:42:37.384 c3b92 Delete type=2 #10
+2025/06/17-12:42:37.385 c3b92 Manual compaction at level-0 from '\x00\x09\x00\x00\x00' @ 72057594037927935 : 1 .. '\x00\x0a\x00\x00\x00' @ 0 : 0; will stop at '\x00\x09\x00\x00\x05' @ 192 : 1
+2025/06/17-12:42:37.385 c3b92 Compacting 1@0 + 1@1 files
+2025/06/17-12:42:37.386 c3b92 Generated table #16@0: 25 keys, 784 bytes
+2025/06/17-12:42:37.387 c3b92 Compacted 1@0 + 1@1 files => 784 bytes
+2025/06/17-12:42:37.388 c3b92 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/06/17-12:42:37.389 c3b92 Delete type=2 #15
+2025/06/17-12:42:37.389 c3b92 Manual compaction at level-0 from '\x00\x09\x00\x00\x05' @ 192 : 1 .. '\x00\x0a\x00\x00\x00' @ 0 : 0; will stop at (end)
+2025/06/17-13:25:25.390 c3b94 Level-0 table #18: started
+2025/06/17-13:25:25.393 c3b94 Level-0 table #18: 249 bytes OK
+2025/06/17-13:25:25.396 c3b94 Delete type=0 #14
+2025/06/17-13:25:25.396 c3b94 Delete type=2 #13
+2025/06/17-13:25:25.396 c3b94 Manual compaction at level-0 from (begin) .. (end); will stop at '\x00\x00\x00\x002\x02\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00' @ 206 : 0
+2025/06/17-13:25:25.396 c3b94 Compacting 1@0 + 1@1 files
+2025/06/17-13:25:25.397 c3b94 Generated table #19@0: 27 keys, 801 bytes
+2025/06/17-13:25:25.397 c3b94 Compacted 1@0 + 1@1 files => 801 bytes
+2025/06/17-13:25:25.398 c3b94 compacted to: files[ 0 1 1 0 0 0 0 ]
+2025/06/17-13:25:25.399 c3b94 Delete type=2 #16
+2025/06/17-13:25:25.399 c3b94 Delete type=2 #18
+2025/06/17-13:25:25.399 c3b94 Manual compaction at level-0 from '\x00\x00\x00\x002\x02\x10\x01\x00\x00\x00\x00\x00\x00\x00\x00' @ 206 : 0 .. (end); will stop at (end)
+2025/06/17-13:25:25.399 c3b94 Manual compaction at level-1 from (begin) .. (end); will stop at '\x00\x00\x00\x00\xc9\x1b\x00h\x00t\x00t\x00p\x00s\x00_\x00l\x00o\x00g\x00i\x00n\x00.\x00i\x00o\x00n\x00o\x00s\x00.\x00c\x00o\x00.\x00u\x00k\x00_\x000\x00@\x0017\x00v\x00a\x00l\x00i\x00d\x00a\x00t\x00e\x00-\x00b\x00r\x00o\x00w\x00s\x00e\x00r\x00-\x00c\x00o\x00n\x00t\x00e\x00x\x00t\x00-\x00f\x00o\x00r\x00-\x00i\x00n\x00d\x00e\x00x\x00e\x00d\x00d\x00b\x00-\x00a\x00n\x00a\x00l\x00y\x00t\x00i\x00c\x00s\x00-\x00m\x00o\x00d\x00u\x00l\x00e' @ 196 : 0
+2025/06/17-13:25:25.399 c3b94 Compacting 1@1 + 1@2 files
+2025/06/17-13:25:25.401 c3b94 Generated table #20@1: 21 keys, 957 bytes
+2025/06/17-13:25:25.401 c3b94 Compacted 1@1 + 1@2 files => 957 bytes
+2025/06/17-13:25:25.401 c3b94 compacted to: files[ 0 0 1 0 0 0 0 ]
+2025/06/17-13:25:25.402 c3b94 Delete type=2 #5
+2025/06/17-13:25:25.402 c3b94 Delete type=2 #19
+2025/06/17-13:25:25.402 c3b94 Manual compaction at level-1 from '\x00\x00\x00\x00\xc9\x1b\x00h\x00t\x00t\x00p\x00s\x00_\x00l\x00o\x00g\x00i\x00n\x00.\x00i\x00o\x00n\x00o\x00s\x00.\x00c\x00o\x00.\x00u\x00k\x00_\x000\x00@\x0017\x00v\x00a\x00l\x00i\x00d\x00a\x00t\x00e\x00-\x00b\x00r\x00o\x00w\x00s\x00e\x00r\x00-\x00c\x00o\x00n\x00t\x00e\x00x\x00t\x00-\x00f\x00o\x00r\x00-\x00i\x00n\x00d\x00e\x00x\x00e\x00d\x00d\x00b\x00-\x00a\x00n\x00a\x00l\x00y\x00t\x00i\x00c\x00s\x00-\x00m\x00o\x00d\x00u\x00l\x00e' @ 196 : 0 .. (end); will stop at (end)
