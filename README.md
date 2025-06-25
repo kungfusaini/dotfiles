@@ -21,4 +21,7 @@ The bread and butter of this whole thing. Nix flake config should be at `.config
 Obsidian files should go in the root of the vault in the obsidian folder, in my case:
 `~/codex/.obsidian/`
 
+### Stats
+This is the config for the macos app stats. You will have to load this config manually using the import feature
+
 I would like to create a script on my system with will update this repo, but I guess that's what home-manager does, so I will revisit this once I have all of my dotfiles done!
