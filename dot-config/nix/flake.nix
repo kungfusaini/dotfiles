@@ -21,14 +21,19 @@
           pkgs.aerospace
           pkgs.bitwarden
           pkgs.brave
+          pkgs.cowsay
           pkgs.hidden-bar
+          pkgs.htop
 	  pkgs.iina
           pkgs.karabiner-elements
 	  pkgs.neovim
+	  pkgs.nix-search-cli
           pkgs.obsidian
           pkgs.pyenv
           pkgs.raycast
+	  pkgs.spotify-player
           pkgs.stats
+          pkgs.stow
           pkgs.the-unarchiver
           pkgs.tldr
           pkgs.tmux
@@ -72,8 +77,10 @@
 		trackpad.Clicking = true;
 		controlcenter.Bluetooth = true;
 		controlcenter.Sound = true;
-		controlcenter.BatteryShowPercentage = true;
-		NSGlobalDomain._HIHideMenuBar = true;
+		controlcenter.BatteryShowPercentage = false;
+		menuExtraClock.ShowDate = 2; 
+		NSGlobalDomain._HIHideMenuBar = false;
+		menuExtraClock.IsAnalog = true;
 		
 		# Undocumented Settings
 		CustomUserPreferences = {
