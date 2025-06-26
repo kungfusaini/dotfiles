@@ -20,4 +20,4 @@ _darcs
 ^/LICENSE.*
 ^/COPYING
 
-\stats 	     # for stats menu bar, needs to be loaded manually
+stats 	     # for stats menu bar, needs to be loaded manually
