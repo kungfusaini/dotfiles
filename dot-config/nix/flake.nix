@@ -25,7 +25,6 @@
           pkgs.hidden-bar
           pkgs.htop
 	  pkgs.iina
-          pkgs.karabiner-elements
 	  pkgs.neovim
 	  pkgs.nix-search-cli
           pkgs.obsidian
@@ -59,7 +58,8 @@
 		casks = [
 			 "itsycal" # this didn't work in nix as it needs to go into the application folder
 			 "time-out"
-			"activitywatch"
+			 "activitywatch"
+			 "karabiner-elements" # this didn't work with nix as it didn't ask for permissions correctly
 			];
 		};
 

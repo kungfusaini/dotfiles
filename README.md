@@ -26,4 +26,5 @@ Obsidian files should go in the root of the vault in the obsidian folder, in my 
 ### Stats
 This is the config for the macos app stats. You will have to load this config manually using the import feature
 
-
+### Karabiner-Elements
+It already uses .config, so nice :)
