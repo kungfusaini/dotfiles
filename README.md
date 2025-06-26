@@ -6,7 +6,7 @@ This is my very cool dotfiles repo in which I wish to keep as much system config
 * Being able to jump across systems with ease
 * Having a bunch of things installed on my system that becomes tedious to track down and remove. 
 
-It is managed by using the gnu util [stow](https://www.gnu.org/software/stow/)
+It is possible to use nix home manager for this, but I felt it was a bit overly complicated just for managing a few dotfiles. I use gnu [stow](https://www.gnu.org/software/stow/) instead.
 
 Here is a list of all the dotfiles I have in this repo.
 
@@ -14,10 +14,10 @@ Here is a list of all the dotfiles I have in this repo.
 This is simply a clone of important files in `~/Library/Application Support/BraveSoftware/Brave-Browser/Default/`, namely History, Bookmarks and Extensions. Backing up extensions like this is a bit silly since I am only interested in what extensions I need and their configs, but this will suffice for now.
 
 ### Git
-Simple git config that should live in `~/.config/git/config`
+Simple git config
 
 ### Nix
-The bread and butter of this whole thing. Nix flake config should be at `.config/nix/flake.nix`
+The bread and butter of my whole home setup. Nix flake config should be at `.config/nix/flake.nix`
 
 ### Obsidian
 Obsidian files should go in the root of the vault in the obsidian folder, in my case:
