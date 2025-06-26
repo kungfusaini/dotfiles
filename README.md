@@ -6,10 +6,12 @@ This is my very cool dotfiles repo in which I wish to keep as much system config
 * Being able to jump across systems with ease
 * Having a bunch of things installed on my system that becomes tedious to track down and remove. 
 
-Here is a list of all the dotfiles I have in this repo, as well as their respective system locations. I aim to use [nix-home-manager](https://github.com/nix-community/home-manager) to make sure all these files go to their correct place!
+It is managed by using the gnu util [stow](https://www.gnu.org/software/stow/)
+
+Here is a list of all the dotfiles I have in this repo.
 
 ### Brave
-This is simply a clone of `~/Library/Application Support/BraveSoftware/Brave-Browser/Default/` with `../Service Worker/CacheStorage` removed. Yes, a bit crude, as I only care about themes, bookmarks and extensions (+ their configs) but it serves the purpose for now.
+This is simply a clone of important files in `~/Library/Application Support/BraveSoftware/Brave-Browser/Default/`, namely History, Bookmarks and Extensions. Backing up extensions like this is a bit silly since I am only interested in what extensions I need and their configs, but this will suffice for now.
 
 ### Git
 Simple git config that should live in `~/.config/git/config`
@@ -24,4 +26,4 @@ Obsidian files should go in the root of the vault in the obsidian folder, in my 
 ### Stats
 This is the config for the macos app stats. You will have to load this config manually using the import feature
 
-I would like to create a script on my system with will update this repo, but I guess that's what home-manager does, so I will revisit this once I have all of my dotfiles done!
+
