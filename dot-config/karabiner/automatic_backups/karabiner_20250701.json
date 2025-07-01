@@ -1,4 +1,5 @@
 {
+    "machine_specific": { "krbn-empty-machine-identifier": { "enable_multitouch_extension": true } },
     "profiles": [
         {
             "name": "kiraMBP",
