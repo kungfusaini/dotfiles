@@ -1,1 +1,4 @@
 dot-config/htop
+
+dot-config/zsh/.zcompdump
+dot-config/zsh/.zsh_sessions

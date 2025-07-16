@@ -1,9 +1,7 @@
 RCS
 .+,v
 
-CVS
-\.\#.+       # CVS conflict files / emacs lock files
-\.cvsignore
+CVS \.\#.+       # CVS conflict files / emacs lock files \.cvsignore
 
 \.svn
 _darcs
@@ -21,7 +19,3 @@ _darcs
 ^/COPYING
 
 stats 	     # for stats menu bar, needs to be loaded manually
-
-
-dot-config/zsh/.zsh_sessions/	# for zsh auto comp
-dot-config/zsh/.zcompdump

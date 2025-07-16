@@ -15,17 +15,10 @@ if [[ -f "$ZDOTDIR/conf/prompt.zsh" ]]; then
     source "$ZDOTDIR/conf/prompt.zsh"
 fi
 
-# Use XDG dirs for completion and history files
-## Ensure Zsh state directory exists for history
- [ -d "$XDG_STATE_HOME"/zsh ] || mkdir -p "$XDG_STATE_HOME"/zsh
- HISTFILE="$XDG_STATE_HOME"/zsh/history
+# Use XDG dirs for history
+[ -d "$XDG_STATE_HOME/zsh" ] || mkdir -p "$XDG_STATE_HOME/zsh"
+HISTFILE="$XDG_STATE_HOME/zsh/history"
 
-## Ensure Zsh cache directory exists for completion cache
- [ -d "$XDG_CACHE_HOME"/zsh ] || mkdir -p "$XDG_CACHE_HOME"/zsh
- zstyle ':completion:*' cache-path "$XDG_CACHE_HOME"/zsh/zcompcache
-
-## Initialize completion system
- compinit -d "$XDG_CACHE_HOME"/zsh/zcompdump-$ZSH_VERSION
-
-
-
+# Completion cache setup
+[ -d "$XDG_CACHE_HOME/zsh" ] || mkdir -p "$XDG_CACHE_HOME/zsh"
+zstyle ':completion:*' cache-path "$XDG_CACHE_HOME/zsh/zcompcache"
