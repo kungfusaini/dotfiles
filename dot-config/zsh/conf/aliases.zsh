@@ -1,5 +1,5 @@
 ########## ZSH Aliases ##########
-alias rspwn="zsh ; clear; cd ~"
+alias rspwn="exit; zsh ; clear; cd ~"
 ### Base ###
 alias zshedit="vim "$ZDOTDIR"/.zshrc"
 alias zenvedit="vim "$HOME"/.zshenv"
@@ -21,3 +21,8 @@ alias gin="git pull"
 ########## Config Aliases ##########
 alias dotfiles="cd ~/.dotfiles"
 alias config="cd ~/.config"
+
+########## NIX Aliases ##########
+alias nixedit="vim ~/.config/nix/flake.nix"
+alias nixbuild="sudo darwin-rebuild switch --flake ~/.config/nix"
+alias nixrspwn="nix flake update --flake ~/.config/nix; nixbuild"
