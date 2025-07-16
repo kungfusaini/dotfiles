@@ -17,6 +17,7 @@ alias gb="git branch --v"
 alias gp="git push"
 alias gpf="git push --force"
 alias gin="git pull"
+alias gcm="git commit -m"
 
 ########## Config Aliases ##########
 alias dotfiles="cd ~/.dotfiles"
