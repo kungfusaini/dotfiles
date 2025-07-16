@@ -23,5 +23,5 @@ _darcs
 stats 	     # for stats menu bar, needs to be loaded manually
 
 
-dot-config/zsh/.zsh_sessions
+dot-config/zsh/.zsh_sessions/	# for zsh auto comp
 dot-config/zsh/.zcompdump
