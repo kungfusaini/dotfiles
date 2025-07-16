@@ -6,12 +6,12 @@ This is my very cool dotfiles repo in which I wish to keep as much system config
 * Being able to jump across systems with ease
 * Having a bunch of things installed on my system that becomes tedious to track down and remove. 
 
-It is possible to use nix home manager for this, but I felt it was a bit overly complicated just for managing a few dotfiles. I use gnu [stow](https://www.gnu.org/software/stow/) instead.
+It is possible to use nix home manager for this, but I felt it was a bit overly complicated just for managing a few dotfiles. I use gnu [stow](https://www.gnu.org/software/stow/) instead. This is implemented using `stow ~/dotfiles --dotfiles`
 
 Here is a list of all the dotfiles I have in this repo.
 
 ### Brave
-This is simply a clone of important files in `~/Library/Application Support/BraveSoftware/Brave-Browser/Default/`, namely History, Bookmarks and Extensions. Backing up extensions like this is a bit silly since I am only interested in what extensions I need and their configs, but this will suffice for now.
+This is simply a clone of important files in `~/Library/Application Support/BraveSoftware/Brave-Browser/Default/`, namely Bookmarks and Extensions. Backing up extensions like this is a bit silly since I am only interested in what extensions I need and their configs, but this will suffice for now.
 
 ### Git
 Simple git config
@@ -28,3 +28,6 @@ This is the config for the macos app stats. You will have to load this config ma
 
 ### Karabiner-Elements
 It already uses .config, so nice :)
+
+### ZSH Config
+Enviroment variables are handled by .zshenv, and a modular appraoch to managment can be found within the 
