@@ -21,3 +21,7 @@ _darcs
 ^/COPYING
 
 stats 	     # for stats menu bar, needs to be loaded manually
+
+
+dot-config/zsh/.zsh_sessions
+dot-config/zsh/.zcompdump
