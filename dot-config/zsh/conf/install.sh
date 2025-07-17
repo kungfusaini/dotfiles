@@ -3,4 +3,5 @@
 cd ./plugins
 git clone https://github.com/zsh-users/zsh-syntax-highlighting.git
 git clone https://github.com/zsh-users/zsh-autosuggestions
+git clone https://github.com/junegunn/fzf-git.sh.git
 
