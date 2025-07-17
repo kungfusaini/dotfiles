@@ -1,5 +1,5 @@
 ########## ZSH Aliases ##########
-alias rspwn="clear; zsh; cd ~"
+alias rspwn="clear; cd ~; zsh"
 ### Base ###
 alias zconf="vim "$ZDOTDIR"/.zshrc"
 alias zenv="vim "$HOME"/.zshenv"
@@ -18,6 +18,7 @@ alias gp="git push"
 alias gpf="git push --force"
 alias gin="git pull"
 alias gcm="git commit -m"
+alias ga="git add"
 
 ########## Config Aliases ##########
 alias dotfiles="cd ~/.dotfiles"
