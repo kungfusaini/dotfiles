@@ -1,8 +1,8 @@
 ########## ZSH Aliases ##########
-alias rspwn="exit; zsh ; clear; cd ~"
+alias rspwn="clear; zsh; cd ~"
 ### Base ###
-alias zshedit="vim "$ZDOTDIR"/.zshrc"
-alias zenvedit="vim "$HOME"/.zshenv"
+alias zconf="vim "$ZDOTDIR"/.zshrc"
+alias zenv="vim "$HOME"/.zshenv"
 alias zmods="cd "$ZDOTDIR"/conf/; ls"
 ### Modules ###
 alias zalias="vim "$ZDOTDIR"/conf/aliases.zsh"

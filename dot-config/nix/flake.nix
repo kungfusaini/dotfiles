@@ -19,6 +19,7 @@
         [ 
           pkgs.alt-tab-macos
           pkgs.aerospace
+          pkgs.atuin
           pkgs.bitwarden
           pkgs.brave
           pkgs.cowsay
