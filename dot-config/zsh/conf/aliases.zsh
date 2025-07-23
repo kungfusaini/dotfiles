@@ -23,6 +23,8 @@ alias ga="git add"
 ########## Config Aliases ##########
 alias dotfiles="cd ~/.dotfiles"
 alias config="cd ~/.config"
+alias aerospace="vim ~/.config/aerospace/.aerospace.toml"
+alias kitty="vim ~/.config/kitty/kitty.conf"
 
 ########## NIX Aliases ##########
 alias nixedit="vim ~/.config/nix/flake.nix"
