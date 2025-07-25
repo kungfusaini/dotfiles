@@ -41,6 +41,7 @@
           pkgs.tmux
           pkgs.vscode
           pkgs.whatsapp-for-mac
+          pkgs.yazi
         ];
 	
 	# TODO: fonts!
