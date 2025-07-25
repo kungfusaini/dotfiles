@@ -1,5 +1,5 @@
 ########## ZSH Aliases ##########
-alias rspwn="clear; cd ~; zsh"
+alias rspwn="cd ~; source ~/.zshenv; source $ZDOTDIR/.zshrc; clear;"
 ### Base ###
 alias zconf="vim "$ZDOTDIR"/.zshrc"
 alias zenv="vim "$HOME"/.zshenv"
