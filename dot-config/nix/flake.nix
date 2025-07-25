@@ -107,11 +107,9 @@
       # Necessary for using flakes on this system.
       nix.settings.experimental-features = "nix-command flakes";
 
-      # Enable Zsh...
+      # Enable Zsh
       programs.zsh = {
       	enable = true;
-      	# ... but disable completion for using zsh-autocomplete plugin
-      	 # enableCompletion = false;
       };
 
       # Set Git commit hash for darwin-version.
