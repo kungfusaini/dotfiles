@@ -21,3 +21,5 @@ eval "$(pyenv init --path)"
 
 # Defaults
 export EDITOR=vim
+
+source $ZDOTDIR/.zshrc

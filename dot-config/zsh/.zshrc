@@ -17,5 +17,5 @@ done
 HISTFILE="$XDG_STATE_HOME/zsh/history"
 
 # Completion cache setup
-[ -d "$XDG_CACHE_HOME/zsh" ] || mkdir -p "$XDG_CACHE_HOME/zsh"
+# [ -d "$XDG_CACHE_HOME/zsh" ] || mkdir -p "$XDG_CACHE_HOME/zsh"
 zstyle ':completion:*' cache-path "$XDG_CACHE_HOME/zsh/zcompcache"

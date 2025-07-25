@@ -1,9 +1,8 @@
 ########## ZSH Aliases ##########
-alias rspwn="cd ~; source ~/.zshenv; source $ZDOTDIR/.zshrc; clear;"
+alias rspwn="clear; cd ~; source ~/.zshenv"
 ### Base ###
 alias zconf="vim "$ZDOTDIR"/.zshrc"
 alias zenv="vim "$HOME"/.zshenv"
-alias zmods="cd "$ZDOTDIR"/conf/; ls"
 ### Modules ###
 alias zalias="vim "$ZDOTDIR"/conf/aliases.zsh"
 alias zplug="vim "$ZDOTDIR"/conf/plugins.zsh"
@@ -33,3 +32,4 @@ alias nixrspwn="nix flake update --flake ~/.config/nix; nixbuild"
  
 ########## Shell Aliases ##########
 alias cat="bat"
+alias cd="z"

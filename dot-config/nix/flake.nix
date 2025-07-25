@@ -42,6 +42,7 @@
           pkgs.vscode
           pkgs.whatsapp-for-mac
           pkgs.yazi
+          pkgs.zoxide
         ];
 	
 	# TODO: fonts!
@@ -106,9 +107,12 @@
       # Necessary for using flakes on this system.
       nix.settings.experimental-features = "nix-command flakes";
 
-      # Enable alternative shell support in nix-darwin.
-      programs.zsh.enable = true;
-      # programs.fish.enable = true;
+      # Enable Zsh...
+      programs.zsh = {
+      	enable = true;
+      	# ... but disable completion for using zsh-autocomplete plugin
+      	 # enableCompletion = false;
+      };
 
       # Set Git commit hash for darwin-version.
       system.configurationRevision = self.rev or self.dirtyRev or null;
