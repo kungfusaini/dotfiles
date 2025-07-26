@@ -17,3 +17,26 @@ function y() {
 	rm -f -- "$tmp"
 }
 
+function restart() {
+	echo -n "Are you sure you want to restart? [y/n]: "
+	read selection
+	if [[ $selection == y ]]; then
+		echo "Restarting..."
+		sudo shutdown -r now
+	else
+		echo "Abandoining"
+	fi
+}
+
+function shutdown() {
+	echo -n "Are you sure you want to shutdown? [y/n]: "
+	read selection
+	if [[ $selection == y ]]; then
+		echo "Shutting down..."
+		sudo shutdown now
+	else
+		echo "Abandoining"
+	fi
+}
+
+
