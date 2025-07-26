@@ -33,7 +33,7 @@ function shutdown() {
 	read selection
 	if [[ $selection == y ]]; then
 		echo "Shutting down..."
-		sudo shutdown now
+		sudo shutdown -h now
 	else
 		echo "Abandoining"
 	fi
