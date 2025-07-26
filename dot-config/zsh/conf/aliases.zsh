@@ -34,3 +34,4 @@ alias nixrspwn="nix flake update --flake ~/.config/nix; nixbuild"
 ########## Shell Aliases ##########
 alias cat="bat"
 alias cd="z"
+alias vim="nvim"
