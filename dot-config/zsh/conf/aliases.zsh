@@ -18,6 +18,7 @@ alias gpf="git push --force"
 alias gin="git pull"
 alias gcm="git commit -m"
 alias ga="git add"
+alias gaa="git add ." # Git add all
 
 ########## Config Aliases ##########
 alias dotfiles="cd ~/.dotfiles"
