@@ -34,7 +34,6 @@
           pkgs.obsidian
           pkgs.pyenv
           pkgs.raycast
-	  pkgs.spotify-player
           pkgs.stow
           pkgs.the-unarchiver
           pkgs.tldr
@@ -43,6 +42,15 @@
           pkgs.whatsapp-for-mac
           pkgs.yazi
           pkgs.zoxide
+
+	   (pkgs.spotify-player.override {
+      withAudioBackend = "portaudio";
+      withMediaControl = true;
+      withImage = true;
+      withNotify = true;
+      withStreaming = true;
+      withFuzzy = true;
+    })
         ];
 	
 	# TODO: fonts!
