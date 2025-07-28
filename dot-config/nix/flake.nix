@@ -34,6 +34,7 @@
           pkgs.obsidian
           pkgs.pyenv
           pkgs.raycast
+          # pkgs.rustc
           pkgs.stow
           pkgs.the-unarchiver
           pkgs.tldr
@@ -42,15 +43,6 @@
           pkgs.whatsapp-for-mac
           pkgs.yazi
           pkgs.zoxide
-
-	   (pkgs.spotify-player.override {
-      withAudioBackend = "portaudio";
-      withMediaControl = true;
-      withImage = true;
-      withNotify = true;
-      withStreaming = true;
-      withFuzzy = true;
-    })
         ];
 	
 	# TODO: fonts!
@@ -71,6 +63,7 @@
 
 		brews = [
 			"pyenv-virtualenv"
+			"spotify_player" # was broken in nix
 		];
 
 		casks = [
