@@ -15,40 +15,41 @@
       nixpkgs.config.allowUnfree = true;
       # List packages installed in system profile. To search by name, run:
       # $ nix-env -qaP | grep wget
-      environment.systemPackages =
+      environment.systemPackages = with pkgs;
         [ 
-          pkgs.alt-tab-macos
-          pkgs.aerospace
-          pkgs.atuin
-          pkgs.bat
-          pkgs.bitwarden
-          pkgs.brave
-          pkgs.cowsay
-	  pkgs.fzf
-          pkgs.hidden-bar
-          pkgs.htop
-	  pkgs.iina
-	  pkgs.kitty
-	  pkgs.neovim
-	  pkgs.nix-search-cli
-          pkgs.obsidian
-          pkgs.pyenv
-          pkgs.raycast
-          pkgs.stow
-          pkgs.the-unarchiver
-          pkgs.tldr
-          pkgs.tmux
-          pkgs.vscode
-          pkgs.whatsapp-for-mac
-          pkgs.yazi
-          pkgs.zoxide
+          alt-tab-macos
+          aerospace
+          atuin
+          bat
+          bitwarden
+          brave
+          cowsay
+	  fastfetch
+	  fzf
+          hidden-bar
+          htop
+	  iina
+	  kitty
+	  neovim
+	  nix-search-cli
+          obsidian
+          pyenv
+          raycast
+	  starship
+          stow
+          the-unarchiver
+          tldr
+          tmux
+          vscode
+          whatsapp-for-mac
+          yazi
+          zoxide
         ];
 	
-	# TODO: fonts!
-	# fonts.packages =
-	# [
-	#   pkgs.nerd-fonts-jetbrains-mono
-	# ];
+	fonts.packages = with pkgs;
+	[
+	  nerd-fonts.profont
+	];
 
 	# TODO: move this to the readme when I make it	{
 	# regular brew packages

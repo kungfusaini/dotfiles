@@ -15,3 +15,5 @@ done
 # Use XDG dirs for history
 [ -d "$XDG_STATE_HOME/zsh" ] || mkdir -p "$XDG_STATE_HOME/zsh"
 HISTFILE="$XDG_STATE_HOME/zsh/history"
+
+source $ZDOTDIR/conf/startup.zsh

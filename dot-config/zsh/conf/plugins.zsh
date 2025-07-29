@@ -1,7 +1,10 @@
 PLUGIN_DIR=/Users/sumeet/.config/zsh/conf/plugins
 
+export ATUIN_NOBIND="true"
 eval "$(atuin init zsh)"
+
 eval "$(zoxide init zsh)"
+
 source <(fzf --zsh)
 
 source "$PLUGIN_DIR/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"
@@ -13,4 +16,6 @@ bindkey -M vicmd -r "^G" # Unbind list-expand in command mode (allowed in insert
 
 bindkey -M viins '^ ' autosuggest-accept
 bindkey -M vicmd '^ ' autosuggest-accept
+bindkey -M viins '^h' atuin-search
+bindkey -M vicmd '^h' atuin-search
 
