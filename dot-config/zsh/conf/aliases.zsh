@@ -24,7 +24,8 @@ alias gaa="git add ." # Git add all
 alias dotfiles="cd ~/.dotfiles"
 alias config="cd ~/.config"
 alias aerospace="vim ~/.config/aerospace/aerospace.toml"
-alias kitty="vim ~/.config/kitty/kitty.conf"
+alias kittyedit="vim ~/.config/kitty/kitty.conf"
+alias hammer="vim ~/.config/hammerspoon/init.lua"
 
 ########## NIX Aliases ##########
 alias nixedit="vim ~/.config/nix/flake.nix"
