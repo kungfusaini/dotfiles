@@ -1,5 +1,8 @@
 PLUGIN_DIR=/Users/sumeet/.config/zsh/conf/plugins
 
+eval "$(starship init zsh)"
+export STARSHIP_CONFIG=$XDG_CONFIG_HOME/starship/starship.toml
+
 export ATUIN_NOBIND="true"
 eval "$(atuin init zsh)"
 
