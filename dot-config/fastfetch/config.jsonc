@@ -75,6 +75,11 @@
             "keyColor": "yellow"
         },
         "break",
+	{
+            "type": "custom",
+            "format": "\u001b[90m┌──────────────────────Terminal──────────────────────┐"
+        },
+
         {
             "type": "de",
             "key": " DE",
