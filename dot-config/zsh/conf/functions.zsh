@@ -40,3 +40,7 @@ function shutdown() {
 }
 
 
+# Function to pipe a command's help output to bat
+function rd() {
+    "$@" | bat --paging=always -l help
+}
