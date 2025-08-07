@@ -21,6 +21,7 @@
           aerospace
           atuin
           bat
+	  blueutil
           bitwarden
           brave
           cowsay

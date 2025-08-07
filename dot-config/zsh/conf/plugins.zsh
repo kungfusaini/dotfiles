@@ -17,7 +17,8 @@ source "$PLUGIN_DIR/fzf-git.sh/fzf-git.sh"
 
 bindkey -M vicmd -r "^G" # Unbind list-expand in command mode (allowed in insert mode)
 
-bindkey -M viins '^ ' autosuggest-accept
+# Ensure keyboard->shortcuts->inputsources are turned off if this doesn't work !
+bindkey -M viins '^ ' autosuggest-accept 
 bindkey -M vicmd '^ ' autosuggest-accept
 bindkey -M viins '^h' atuin-search
 bindkey -M vicmd '^h' atuin-search
