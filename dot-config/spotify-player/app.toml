@@ -1,5 +1,8 @@
 theme = "dracula"
-client_id = "277717868e7746cbb5d63f45923ca548"
+# Note: as of 22/08/25
+# client_id = "277717868e7746cbb5d63f45923ca548" ~ This doesn't work due to spotify changing their api
+# But neither does the default config ! Broken for now
+client_id = "65b708073fc0480ea92a077233ca87bd"
 client_port = 8080
 login_redirect_uri = "http://127.0.0.1:8989/login"
 playback_format = """
