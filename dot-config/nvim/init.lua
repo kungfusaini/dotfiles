@@ -1,11 +1,17 @@
 require("config.lazy")
 
+require("gitsigns").setup({
+	numhl = true,
+	signcolumn = false,
+})
+
 vim.cmd.colorscheme("gruvbox")
 
 vim.opt.clipboard = "unnamedplus"
 vim.opt["tabstop"] = 4
 vim.opt["shiftwidth"] = 4
 vim.opt.foldlevel = 99
+vim.opt.signcolumn = "number"
 
 vim.wo.relativenumber = true
 vim.opt.foldenable = true
