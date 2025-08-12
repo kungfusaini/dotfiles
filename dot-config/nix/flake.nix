@@ -17,34 +17,34 @@
       # $ nix-env -qaP | grep wget
       environment.systemPackages = with pkgs;
         [ 
-          alt-tab-macos
-          aerospace
-          atuin
-          bat
-	  blueutil
-          bitwarden
-          brave
-          cowsay
-	  fastfetch
-	  fzf
-          hidden-bar
-          htop
-	  iina
-	  kitty
-	  neovim
-	  nix-search-cli
-          obsidian
-          pyenv
-          raycast
-	  starship
-          stow
-          the-unarchiver
-          tldr
-          tmux
-          vscode
-          whatsapp-for-mac
-          yazi
-          zoxide
+        	alt-tab-macos
+        	aerospace
+        	atuin
+        	bat
+			blueutil
+          	bitwarden
+          	brave
+          	cowsay
+	  		fastfetch
+			fzf
+          	hidden-bar
+          	htop
+	  		iina
+	  		kitty
+	  		neovim
+	  		nix-search-cli
+          	obsidian
+          	pyenv
+          	raycast
+	  		starship
+          	stow
+          	the-unarchiver
+          	tldr
+          	tmux
+          	vscode
+          	whatsapp-for-mac
+          	yazi
+          	zoxide
         ];
 	
 	fonts.packages = with pkgs;
@@ -76,6 +76,7 @@
 			"nordvpn"
 			"openmtp"
 			"stats"
+			"stremio"
 			"time-out"
 			];
 		};
