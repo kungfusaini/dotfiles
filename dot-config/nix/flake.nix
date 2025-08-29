@@ -24,6 +24,7 @@
 			blueutil
           	bitwarden
           	brave
+			cmake
           	cowsay
 	  		fastfetch
 			fzf
@@ -32,6 +33,7 @@
 	  		iina
 	  		kitty
 	  		neovim
+			nil
 	  		nix-search-cli
           	obsidian
           	pyenv
