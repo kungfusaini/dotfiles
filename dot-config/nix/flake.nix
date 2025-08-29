@@ -63,6 +63,8 @@
 		onActivation.upgrade = true;
 
 		brews = [
+			"basedpyright"
+			"lua-language-server"
 			"pyenv-virtualenv"
 			"spotify_player" # was broken in nix
 		];
