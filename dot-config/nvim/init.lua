@@ -1,3 +1,5 @@
+vim.g.mapleader = "<Space>"
+
 require("config.lazy")
 
 require("gitsigns").setup({
@@ -35,14 +37,10 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
   end,
 })
 
-vim.keymap.set('n', 'K', function()
-  local cursor_pos = vim.api.nvim_win_get_cursor(0)
-  local current_line = cursor_pos[1] - 1 -- Convert to 0-indexed line number
-  local diagnostics = vim.diagnostic.get(0, { lnum = current_line })
+vim.keymap.set('n', '<leader>d', function()
+  vim.lsp.buf.hover()
+end, { desc = "Show documentation" })
 
-  if #diagnostics > 0 then
-    vim.diagnostic.open_float()
-  else
-    vim.lsp.buf.hover()
-  end
-end, { desc = "Show documentation or diagnostics" })
+vim.keymap.set('n', '<leader>e', function()
+  vim.diagnostic.open_float()
+end, { desc = "Show diagnostics" })
