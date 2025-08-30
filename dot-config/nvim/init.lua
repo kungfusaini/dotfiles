@@ -1,8 +1,8 @@
 require("config.lazy")
 
 require("gitsigns").setup({
-	numhl = false,
-	signcolumn = false,
+  numhl = true,
+  signcolumn = true,
 })
 
 vim.cmd.colorscheme("gruvbox")
@@ -22,9 +22,9 @@ vim.o.statuscolumn = "%!v:lua.require('config.statuscolumn').myStatuscolumn()";
 vim.api.nvim_create_autocmd("BufWinLeave", {
   pattern = "*",
   callback = function()
-	  if vim.fn.haslocaldir() == 1 then
-		  vim.cmd("mkview")
-	end
+    if vim.fn.haslocaldir() == 1 then
+      vim.cmd("mkview")
+    end
   end,
 })
 
@@ -37,7 +37,7 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
 
 vim.keymap.set('n', 'K', function()
   local cursor_pos = vim.api.nvim_win_get_cursor(0)
-  local current_line = cursor_pos[1] - 1  -- Convert to 0-indexed line number
+  local current_line = cursor_pos[1] - 1 -- Convert to 0-indexed line number
   local diagnostics = vim.diagnostic.get(0, { lnum = current_line })
 
   if #diagnostics > 0 then
