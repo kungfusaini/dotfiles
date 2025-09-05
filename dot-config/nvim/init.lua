@@ -22,6 +22,13 @@ vim.opt.foldmethod = "syntax"
 vim.o.statuscolumn = "%!v:lua.require('config.statuscolumn').myStatuscolumn()";
 
 -- Functions
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "help",
+  callback = function()
+    vim.wo.statuscolumn = " "
+  end,
+})
+
 vim.api.nvim_create_autocmd("BufWinLeave", {
   pattern = "*",
   callback = function()
