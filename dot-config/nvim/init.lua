@@ -21,6 +21,7 @@ vim.opt.foldmethod = "syntax"
 
 vim.o.statuscolumn = "%!v:lua.require('config.statuscolumn').myStatuscolumn()";
 
+-- Functions
 vim.api.nvim_create_autocmd("BufWinLeave", {
   pattern = "*",
   callback = function()
@@ -37,6 +38,7 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
   end,
 })
 
+-- Keymaps
 vim.keymap.set('n', '<leader>d', function()
   vim.lsp.buf.hover()
 end, { desc = "Show documentation" })
@@ -44,3 +46,5 @@ end, { desc = "Show documentation" })
 vim.keymap.set('n', '<leader>e', function()
   vim.diagnostic.open_float()
 end, { desc = "Show diagnostics" })
+
+vim.keymap.set("n", "<leader>o", "<cmd>AerialToggle right<CR>")
