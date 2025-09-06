@@ -5,7 +5,14 @@ return {
   end,
   config = function()
     require("nvim-treesitter.configs").setup({
-      ensure_installed = { "markdown", "markdown_inline" },
+      ensure_installed = {
+        "cpp",
+        "java",
+        "lua",
+        "python",
+        "markdown",
+        "markdown_inline",
+      },
 
       sync_install = false,
 

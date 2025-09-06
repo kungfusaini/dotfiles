@@ -45,6 +45,28 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
   end,
 })
 
+-- Markdown Functions
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "markdown",
+  callback = function()
+    vim.keymap.set("n", "<leader>c", ":lua require('toggle-checkbox').toggle()<CR>", {
+      buffer = true, -- This makes it local to the markdown buffer
+      desc = "Toggle markdown checkbox"
+    })
+  end
+})
+
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "markdown",
+  callback = function()
+    vim.keymap.set("n", "<leader>t", function()
+      local line = vim.api.nvim_get_current_line()
+      local indent = line:match("^(%s*)")
+      vim.api.nvim_set_current_line(indent .. "- [ ] " .. line:gsub("^%s*", ""))
+    end, { buffer = true, desc = "Insert checkbox preserving indentation" })
+  end
+})
+
 -- Keymaps
 vim.keymap.set('n', '<leader>d', function()
   vim.lsp.buf.hover()
