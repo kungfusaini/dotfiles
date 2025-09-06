@@ -39,6 +39,7 @@
             htop
             iina
             kitty
+            marksman
             neovim
             nil
             nix-search-cli

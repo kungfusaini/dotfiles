@@ -20,6 +20,7 @@ return {
       require("lspconfig").basedpyright.setup {}
       require("lspconfig").clangd.setup {}
       require("lspconfig").lua_ls.setup {}
+      require("lspconfig").marksman.setup {}
       require("lspconfig").nil_ls.setup {}
 
       vim.api.nvim_create_autocmd('LspAttach', {

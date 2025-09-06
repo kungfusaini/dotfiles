@@ -54,4 +54,8 @@ vim.keymap.set('n', '<leader>e', function()
   vim.diagnostic.open_float()
 end, { desc = "Show diagnostics" })
 
+vim.keymap.set('n', 'gd', function()
+  vim.lsp.buf.definition()
+end, { desc = "Go to def" })
+
 vim.keymap.set("n", "<leader>o", "<cmd>AerialToggle right<CR>")
