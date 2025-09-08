@@ -52,6 +52,7 @@
             the-unarchiver
             tldr
             tmux
+            tree
             whatsapp-for-mac
             yazi
             zoxide

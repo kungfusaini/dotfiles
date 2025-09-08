@@ -81,3 +81,6 @@ vim.keymap.set('n', 'gd', function()
 end, { desc = "Go to def" })
 
 vim.keymap.set("n", "<leader>o", "<cmd>AerialToggle right<CR>")
+
+-- Toggle spellcheck
+vim.keymap.set('n', '<leader>sp', require('spellcheck-mode').toggle_spellcheck, { desc = 'Toggle spellcheck' })
