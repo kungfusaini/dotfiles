@@ -21,7 +21,7 @@ vim.opt.foldmethod = "syntax"
 
 vim.o.statuscolumn = "%!v:lua.require('config.statuscolumn').myStatuscolumn()";
 
--- Functions
+----------- Functions -----------
 vim.api.nvim_create_autocmd("FileType", {
   pattern = "help",
   callback = function()
@@ -46,11 +46,12 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
 })
 
 -- Markdown Functions
+
 vim.api.nvim_create_autocmd("FileType", {
   pattern = "markdown",
   callback = function()
     vim.keymap.set("n", "<leader>c", ":lua require('toggle-checkbox').toggle()<CR>", {
-      buffer = true, -- This makes it local to the markdown buffer
+      buffer = true,
       desc = "Toggle markdown checkbox"
     })
   end
@@ -67,7 +68,8 @@ vim.api.nvim_create_autocmd("FileType", {
   end
 })
 
--- Keymaps
+----------- Keymaps -----------
+
 vim.keymap.set('n', '<leader>d', function()
   vim.lsp.buf.hover()
 end, { desc = "Show documentation" })
@@ -82,5 +84,4 @@ end, { desc = "Go to def" })
 
 vim.keymap.set("n", "<leader>o", "<cmd>AerialToggle right<CR>")
 
--- Toggle spellcheck
 vim.keymap.set('n', '<leader>sp', require('spellcheck-mode').toggle_spellcheck, { desc = 'Toggle spellcheck' })
