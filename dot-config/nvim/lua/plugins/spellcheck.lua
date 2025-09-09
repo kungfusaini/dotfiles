@@ -7,7 +7,7 @@ return {
         next_error = 'n',
         prev_error = 'p',
         suggestions = '<Space>',
-        add_to_dict = 'A'
+        add_to_dict = 'D'
       },
       options = {
         default_lang = 'en_gb',

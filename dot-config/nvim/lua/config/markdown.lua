@@ -58,11 +58,23 @@ M.fold_level_2 = function()
   vim.api.nvim_win_set_cursor(0, cur_pos)
 end
 
+M.insert_time_heading = function()
+  vim.api.nvim_put({ '## ' .. os.date('%H:%M:%S') }, 'l', true, true)
+end
+
 -- Configure all markdown keymaps
 M.setup = function()
   vim.api.nvim_create_autocmd("FileType", {
     pattern = "markdown",
     callback = function()
+      -- Set buffer-specific options (buffer-local)
+      vim.bo.textwidth = 110
+      vim.wo.linebreak = true
+      vim.bo.formatoptions = vim.bo.formatoptions .. 't'
+      vim.bo.wrapmargin = 0
+
+      -- Set window-specific options (window-local)
+
       vim.keymap.set("n", "<leader>c", M.toggle_checkbox, {
         buffer = true,
         desc = "Toggle markdown checkbox"
@@ -81,6 +93,11 @@ M.setup = function()
       vim.keymap.set("n", "<leader>fa", M.fold_level_2, {
         buffer = true,
         desc = "Fold up to level 2 (h2 and below)"
+      })
+
+      vim.keymap.set("n", "<leader>t", M.insert_time_heading, {
+        buffer = true,
+        desc = "Insert a h2 with the current time"
       })
     end
   })
