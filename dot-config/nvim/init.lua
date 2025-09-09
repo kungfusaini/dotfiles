@@ -5,7 +5,9 @@ require("gitsigns").setup({
   signcolumn = true,
 })
 vim.cmd.colorscheme("gruvbox")
+
 require("config.markdown").setup()
+require("config.folds").setup()
 
 vim.opt.clipboard = "unnamedplus"
 vim.opt["tabstop"] = 4

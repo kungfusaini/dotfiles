@@ -1,17 +1,5 @@
 local M = {}
 
-vim.api.nvim_set_hl(0, 'Folded', {
-  bg = "#552506",
-  bold = true,
-})
-
-vim.opt.foldenable = true
-vim.opt.foldmethod = "expr"
-vim.opt.foldexpr = "v:lua.vim.treesitter.foldexpr()"
-vim.opt.foldlevel = 99
-vim.opt.foldtext = ''
-vim.opt.fillchars = { fold = ' ' }
-
 -- Toggle checkbox function
 M.toggle_checkbox = function()
   local line = vim.api.nvim_get_current_line()
@@ -32,17 +20,6 @@ M.insert_checkbox = function()
   vim.api.nvim_set_current_line(indent .. "- [ ] " .. line:gsub("^%s*", ""))
 end
 
--- Enter key to toggle fold under cursor
-M.toggle_fold_or_insert = function()
-  local line = vim.api.nvim_get_current_line()
-  -- Check if we're on a fold marker
-  if line:match("^#+ .+") then
-    vim.cmd("normal! za")
-  else
-    vim.cmd("normal! a")
-  end
-end
-
 -- Fold up to level 2 (h2 and below)
 M.fold_level_2 = function()
   -- Save current cursor position
@@ -58,6 +35,27 @@ M.fold_level_2 = function()
   vim.api.nvim_win_set_cursor(0, cur_pos)
 end
 
+-- Toggle all H2 folds
+M.toggle_all_h2_folds = function()
+  local cur_pos = vim.api.nvim_win_get_cursor(0)
+
+  vim.cmd("normal! gg")
+
+  while true do
+    local found = vim.fn.search("^## ", "W")
+    if found == 0 then break end
+    vim.cmd("normal! za")
+  end
+
+  -- Restore cursor position
+  vim.api.nvim_win_set_cursor(0, cur_pos)
+end
+
+-- Open all folds
+M.open_all_folds = function()
+  vim.opt.foldlevel = 99
+end
+
 M.insert_time_heading = function()
   vim.api.nvim_put({ '## ' .. os.date('%H:%M:%S') }, 'l', true, true)
 end
@@ -67,13 +65,16 @@ M.setup = function()
   vim.api.nvim_create_autocmd("FileType", {
     pattern = "markdown",
     callback = function()
-      -- Set buffer-specific options (buffer-local)
       vim.bo.textwidth = 110
       vim.wo.linebreak = true
       vim.bo.formatoptions = vim.bo.formatoptions .. 't'
       vim.bo.wrapmargin = 0
 
       -- Set window-specific options (window-local)
+      vim.wo.wrap = true
+
+      -- Fold all H2 headings on enter
+      M.fold_level_2()
 
       vim.keymap.set("n", "<leader>c", M.toggle_checkbox, {
         buffer = true,
@@ -85,19 +86,19 @@ M.setup = function()
         desc = "Insert checkbox preserving indentation"
       })
 
-      vim.keymap.set("n", "<CR>", M.toggle_fold_or_insert, {
-        buffer = true,
-        desc = "Toggle fold or insert new line"
-      })
-
-      vim.keymap.set("n", "<leader>fa", M.fold_level_2, {
-        buffer = true,
-        desc = "Fold up to level 2 (h2 and below)"
-      })
-
       vim.keymap.set("n", "<leader>t", M.insert_time_heading, {
         buffer = true,
         desc = "Insert a h2 with the current time"
+      })
+
+      vim.keymap.set("n", "<leader>fa", M.toggle_all_h2_folds, {
+        buffer = true,
+        desc = "Toggle all H2 folds"
+      })
+
+      vim.keymap.set("n", "<leader>fA", M.open_all_folds, {
+        buffer = true,
+        desc = "Open all folds"
       })
     end
   })
