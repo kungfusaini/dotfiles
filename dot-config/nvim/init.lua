@@ -1,23 +1,19 @@
 vim.g.mapleader = "<Space>"
-
 require("config.lazy")
-
 require("gitsigns").setup({
   numhl = true,
   signcolumn = true,
 })
-
 vim.cmd.colorscheme("gruvbox")
+require("config.markdown").setup()
 
 vim.opt.clipboard = "unnamedplus"
 vim.opt["tabstop"] = 4
 vim.opt["shiftwidth"] = 4
-vim.opt.foldlevel = 99
 vim.opt.signcolumn = "number"
 
 vim.wo.relativenumber = true
-vim.opt.foldenable = true
-vim.opt.foldmethod = "syntax"
+
 
 vim.o.statuscolumn = "%!v:lua.require('config.statuscolumn').myStatuscolumn()";
 
@@ -43,29 +39,6 @@ vim.api.nvim_create_autocmd("BufWinEnter", {
   callback = function()
     vim.cmd("silent! loadview")
   end,
-})
-
--- Markdown Functions
-
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = "markdown",
-  callback = function()
-    vim.keymap.set("n", "<leader>c", ":lua require('toggle-checkbox').toggle()<CR>", {
-      buffer = true,
-      desc = "Toggle markdown checkbox"
-    })
-  end
-})
-
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = "markdown",
-  callback = function()
-    vim.keymap.set("n", "<leader>t", function()
-      local line = vim.api.nvim_get_current_line()
-      local indent = line:match("^(%s*)")
-      vim.api.nvim_set_current_line(indent .. "- [ ] " .. line:gsub("^%s*", ""))
-    end, { buffer = true, desc = "Insert checkbox preserving indentation" })
-  end
 })
 
 ----------- Keymaps -----------

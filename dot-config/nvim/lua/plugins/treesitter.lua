@@ -13,18 +13,16 @@ return {
         "markdown",
         "markdown_inline",
       },
-
       sync_install = false,
-
       ignore_install = {},
-
       auto_install = true,
-
       highlight = {
         enable = true,
         additional_vim_regex_highlighting = { "markdown" },
       },
-
+      folds = {
+        enable = true,
+      },
       modules = {},
     })
   end
