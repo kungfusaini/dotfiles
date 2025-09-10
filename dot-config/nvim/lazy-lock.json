@@ -10,7 +10,7 @@
   "nvim-lspconfig": { "branch": "master", "commit": "c8b90ae5cbe21d547b342b05c9266dcb8ca0de8f" },
   "nvim-treesitter": { "branch": "master", "commit": "42fc28ba918343ebfd5565147a42a26580579482" },
   "nvim-web-devicons": { "branch": "master", "commit": "6e51ca170563330e063720449c21f43e27ca0bc1" },
-  "render-markdown.nvim": { "branch": "main", "commit": "63e0705b2e6caf500f01626181d74a33df17ce8e" },
+  "render-markdown.nvim": { "branch": "main", "commit": "44cbac697e50ae32e4644652da08cf692b9a5a57" },
   "spellcheck-mode.nvim": { "branch": "main", "commit": "fe31020631f3eef7265be2b6ee265f56c0050002" },
   "toggle-checkbox.nvim": { "branch": "main", "commit": "58f958a2dcfb974963d4bb772ad8c3d8a1c62774" }
 }

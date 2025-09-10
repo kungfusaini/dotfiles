@@ -30,7 +30,7 @@ alias hammer="vim ~/.config/hammerspoon/init.lua"
 ########## NIX Aliases ##########
 alias nixedit="vim ~/.config/nix/flake.nix"
 alias nixbuild="sudo darwin-rebuild switch --flake ~/.config/nix"
-alias nixrspwn="nix flake update --flake ~/.config/nix; nixbuild"
+alias nixrspwn="nix flake update --flake ~/.config/nix; nixbuild; brew upgrade"
  
 ########## Shell Aliases ##########
 alias cat="bat"
