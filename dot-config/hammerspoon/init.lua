@@ -19,6 +19,14 @@ hs.hotkey.bind(modifiers, "d", function()
 	}):start()
 end)
 
+-- Open spotify
+hs.hotkey.bind(modifiers, "m", function()
+	hs.task.new("/bin/zsh", nil, {
+		"-c",
+		"kitty --single-instance --directory /home/ssaini -e zsh -i -c 'spotify_player'"
+	}):start()
+end)
+
 -- Brave: open a new browser window
 hs.hotkey.bind(modifiers, "b", function()
 	hs.osascript.applescript([[
