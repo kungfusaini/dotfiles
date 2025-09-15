@@ -3,7 +3,7 @@
 
 local modifiers = { "cmd", "alt" }
 
-hs.hotkey.bind(modifiers, "t", function()
+hs.hotkey.bind(modifiers, "k", function()
 	hs.task.new("/bin/zsh", nil, { "-c", "kitty --single-instance --directory /home/ssaini" }):start()
 end)
 
@@ -24,6 +24,14 @@ hs.hotkey.bind(modifiers, "m", function()
 	hs.task.new("/bin/zsh", nil, {
 		"-c",
 		"kitty --single-instance --directory /home/ssaini -e zsh -i -c 'spotify_player'"
+	}):start()
+end)
+
+-- Open compass
+hs.hotkey.bind(modifiers, "c", function()
+	hs.task.new("/bin/zsh", nil, {
+		"-c",
+		"kitty --single-instance --directory /home/ssaini -e zsh -i -c 'compass'"
 	}):start()
 end)
 

@@ -1,5 +1,13 @@
 local M = {}
 
+-- Auto refresh folds
+vim.api.nvim_create_autocmd({ "BufEnter", "BufRead" }, {
+  pattern = "*.md",
+  callback = function()
+    vim.cmd("normal! zx")
+  end
+})
+
 -- Toggle checkbox function
 M.toggle_checkbox = function()
   local line = vim.api.nvim_get_current_line()
@@ -76,6 +84,7 @@ M.setup = function()
       -- Fold all H2 headings on enter
       M.fold_level_2()
 
+
       vim.keymap.set("n", "<leader>c", M.toggle_checkbox, {
         buffer = true,
         desc = "Toggle markdown checkbox"
@@ -86,7 +95,7 @@ M.setup = function()
         desc = "Insert checkbox preserving indentation"
       })
 
-      vim.keymap.set("n", "<leader>t", M.insert_time_heading, {
+      vim.keymap.set("n", "<leader>ti", M.insert_time_heading, {
         buffer = true,
         desc = "Insert a h2 with the current time"
       })

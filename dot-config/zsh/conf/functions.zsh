@@ -57,6 +57,11 @@ function today() {
   nvim "$file"
 }
 
+# open compass
+function compass() {
+  local file=~/codex/compass.md
+  nvim "$file"
+}
 
 function jqp() {	
 cd ~/codex/
