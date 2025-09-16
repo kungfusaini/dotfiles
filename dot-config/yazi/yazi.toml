@@ -1,0 +1,12 @@
+[opener]
+zathura = [
+    { run = 'zathura "$@"', desc = "Open with Zathura", for = "unix" }
+]
+
+[open]
+rules = [
+    { mime = "application/pdf", use = "zathura" },
+    { name = "*.pdf", use = "zathura" },
+    { name = "*.ps", use = "zathura" },
+    { name = "*.eps", use = "zathura" }
+]

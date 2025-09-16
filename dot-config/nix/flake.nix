@@ -56,6 +56,7 @@
             tree
             whatsapp-for-mac
             yazi
+            zathura
             zoxide
           ];
 
