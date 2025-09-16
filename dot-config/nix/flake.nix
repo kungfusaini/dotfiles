@@ -52,6 +52,7 @@
             the-unarchiver
             tldr
             tmux
+            transmission_4-qt
             tree
             whatsapp-for-mac
             yazi

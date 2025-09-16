@@ -30,7 +30,8 @@ vim.api.nvim_create_autocmd("FileType", {
 vim.api.nvim_create_autocmd("BufWinLeave", {
   pattern = "*",
   callback = function()
-    if vim.fn.haslocaldir() == 1 then
+    -- Only save view if the buffer has a name
+    if vim.fn.haslocaldir() == 1 and vim.fn.bufname('') ~= '' then
       vim.cmd("mkview")
     end
   end,
@@ -39,10 +40,12 @@ vim.api.nvim_create_autocmd("BufWinLeave", {
 vim.api.nvim_create_autocmd("BufWinEnter", {
   pattern = "*",
   callback = function()
-    vim.cmd("silent! loadview")
+    -- Check if the buffer has a name before loading view
+    if vim.fn.bufname('') ~= '' then
+      vim.cmd("silent! loadview")
+    end
   end,
 })
-
 ----------- Keymaps -----------
 
 vim.keymap.set('n', '<leader>d', function()
