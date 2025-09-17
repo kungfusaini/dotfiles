@@ -70,46 +70,48 @@ end
 
 -- Configure all markdown keymaps
 M.setup = function()
-  vim.api.nvim_create_autocmd("FileType", {
+  local setup_buffer = function()
+    vim.bo.textwidth = 110
+    vim.wo.linebreak = true
+    vim.bo.formatoptions = vim.bo.formatoptions .. 't'
+    vim.bo.wrapmargin = 0
+
+    -- Set window-specific options (window-local)
+    vim.wo.wrap = true
+
+    -- Fold all H2 headings on enter
+    M.fold_level_2()
+
+    vim.keymap.set("n", "<leader>c", M.toggle_checkbox, {
+      buffer = true,
+      desc = "Toggle markdown checkbox"
+    })
+
+    vim.keymap.set("n", "<leader>t", M.insert_checkbox, {
+      buffer = true,
+      desc = "Insert checkbox preserving indentation"
+    })
+
+    vim.keymap.set("n", "<leader>ti", M.insert_time_heading, {
+      buffer = true,
+      desc = "Insert a h2 with the current time"
+    })
+
+    vim.keymap.set("n", "<leader>fa", M.toggle_all_h2_folds, {
+      buffer = true,
+      desc = "Toggle all H2 folds"
+    })
+
+    vim.keymap.set("n", "<leader>fA", M.open_all_folds, {
+      buffer = true,
+      desc = "Open all folds"
+    })
+  end
+
+  -- Set up for both FileType and BufEnter events
+  vim.api.nvim_create_autocmd({ "FileType", "BufEnter" }, {
     pattern = "markdown",
-    callback = function()
-      vim.bo.textwidth = 110
-      vim.wo.linebreak = true
-      vim.bo.formatoptions = vim.bo.formatoptions .. 't'
-      vim.bo.wrapmargin = 0
-
-      -- Set window-specific options (window-local)
-      vim.wo.wrap = true
-
-      -- Fold all H2 headings on enter
-      M.fold_level_2()
-
-
-      vim.keymap.set("n", "<leader>c", M.toggle_checkbox, {
-        buffer = true,
-        desc = "Toggle markdown checkbox"
-      })
-
-      vim.keymap.set("n", "<leader>t", M.insert_checkbox, {
-        buffer = true,
-        desc = "Insert checkbox preserving indentation"
-      })
-
-      vim.keymap.set("n", "<leader>ti", M.insert_time_heading, {
-        buffer = true,
-        desc = "Insert a h2 with the current time"
-      })
-
-      vim.keymap.set("n", "<leader>fa", M.toggle_all_h2_folds, {
-        buffer = true,
-        desc = "Toggle all H2 folds"
-      })
-
-      vim.keymap.set("n", "<leader>fA", M.open_all_folds, {
-        buffer = true,
-        desc = "Open all folds"
-      })
-    end
+    callback = setup_buffer
   })
 end
 

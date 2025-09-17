@@ -3,7 +3,7 @@
 
 local modifiers = { "cmd", "alt" }
 
-hs.hotkey.bind(modifiers, "k", function()
+hs.hotkey.bind(modifiers, "t", function()
 	hs.task.new("/bin/zsh", nil, { "-c", "kitty --single-instance --directory /home/ssaini" }):start()
 end)
 

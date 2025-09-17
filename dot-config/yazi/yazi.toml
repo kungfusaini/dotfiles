@@ -5,8 +5,15 @@ zathura = [
 
 [open]
 rules = [
+	# Custom pdf rule
     { mime = "application/pdf", use = "zathura" },
     { name = "*.pdf", use = "zathura" },
-    { name = "*.ps", use = "zathura" },
-    { name = "*.eps", use = "zathura" }
+    
+    # Default rules
+    { mime = "inode/directory", use = "cd" },
+    { mime = "text/*", use = "edit" },
+    { mime = "image/*", use = "open" },
+    { mime = "video/*", use = "open" },
+    { mime = "audio/*", use = "open" },
+    { use = "open" }
 ]
