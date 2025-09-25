@@ -17,11 +17,12 @@ return {
       },
     },
     config = function()
-      require("lspconfig").basedpyright.setup {}
-      require("lspconfig").clangd.setup {}
-      require("lspconfig").lua_ls.setup {}
-      require("lspconfig").marksman.setup {}
-      require("lspconfig").nil_ls.setup {}
+      local servers = { "basedpyright", "clangd", "lua_ls", "marksman", "nil_ls" }
+
+      for _, name in ipairs(servers) do
+        -- loads server config from lsp/<server>.lua if present
+        vim.lsp.enable(name)
+      end
 
       vim.api.nvim_create_autocmd('LspAttach', {
         group = vim.api.nvim_create_augroup('my.lsp', {}),
