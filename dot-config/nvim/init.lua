@@ -60,6 +60,18 @@ vim.keymap.set('n', 'gd', function()
   vim.lsp.buf.definition()
 end, { desc = "Go to def" })
 
-vim.keymap.set("n", "<leader>o", "<cmd>AerialToggle right<CR>")
+vim.keymap.set("n", "<leader>o",
+  "<cmd>AerialToggle right<CR>")
 
-vim.keymap.set('n', '<leader>sp', require('spellcheck-mode').toggle_spellcheck, { desc = 'Toggle spellcheck' })
+vim.keymap.set('n', '<leader>sp',
+  require('spellcheck-mode').toggle_spellcheck,
+  { desc = 'Toggle spellcheck' })
+
+vim.keymap.set('n', '<leader>gd', function()
+    if next(require('diffview.lib').views) == nil then
+      vim.cmd('DiffviewOpen')
+    else
+      vim.cmd('DiffviewClose')
+    end
+  end,
+  { desc = "Toggle Diffview" })
