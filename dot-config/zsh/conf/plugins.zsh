@@ -8,6 +8,8 @@ eval "$(atuin init zsh)"
 
 eval "$(zoxide init zsh)"
 
+eval "$(direnv hook zsh)" 
+
 source <(fzf --zsh)
 
 source "$PLUGIN_DIR/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh"

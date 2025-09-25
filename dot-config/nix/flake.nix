@@ -33,6 +33,7 @@
             brave
             cmake
             cowsay
+            direnv
             fastfetch
             fzf
             hidden-bar
@@ -42,6 +43,7 @@
             marksman
             neovim
             nil
+            nix-direnv
             nix-search-cli
             obsidian
             pdftk
