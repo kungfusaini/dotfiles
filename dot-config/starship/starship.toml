@@ -9,6 +9,7 @@ $directory\
 $git_branch\
 $git_status\
 [](bg:color_green fg:color_aqua)\
+$python\
 [](bg:color_yellow fg:color_green)\
 [](bg:color_orange fg:color_yellow)\
 [](color_orange)\
@@ -47,6 +48,10 @@ format = '[[ $symbol $branch ](fg:color_fg0 bg:color_aqua)]($style)'
 [git_status]
 style = "bg:color_aqua"
 format = '[[($all_status$ahead_behind )](fg:color_fg0 bg:color_aqua)]($style)'
+
+[python]
+format = '[(  $virtualenv )]($style)'
+style = 'fg:color_fg0 bg:color_green'
 
 [line_break]
 disabled = false
