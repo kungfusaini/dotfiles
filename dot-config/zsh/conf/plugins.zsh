@@ -20,7 +20,8 @@ source "$PLUGIN_DIR/zsh-autosuggestions/zsh-autosuggestions.zsh"
 # This is custom so doesn't get overritten by git pull to update plugins
 source "$SCRIPT_DIR/fzf-git.sh"
 
-bindkey -M vicmd -r "^G" # Unbind list-expand in command mode (allowed in insert mode)
+bindkey -M vicmd -r "^G" # Unbind list-expand in command mode
+bindkey -M viins -r "^G" # Unbind list-expand in ins mode 
 
 # Ensure keyboard->shortcuts->inputsources are turned off if this doesn't work !
 bindkey -M viins '^ ' autosuggest-accept 
