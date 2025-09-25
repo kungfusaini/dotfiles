@@ -32,7 +32,9 @@ alias nixedit="vim ~/.config/nix/flake.nix"
 alias nixbuild="sudo darwin-rebuild switch --flake ~/.config/nix"
 alias nixrspwn="nix flake update --flake ~/.config/nix; nixbuild; brew upgrade"
  
-########## Shell Aliases ##########
+########## Tool Aliases ##########
 alias cat="bat"
 alias cd="z"
 alias vim="nvim"
+alias c="pbcopy"
+alias p="pbpaste"
