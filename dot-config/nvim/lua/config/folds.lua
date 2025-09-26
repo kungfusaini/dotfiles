@@ -32,7 +32,7 @@ M.setup = function()
     desc = "Open all folds"
   })
 
-  vim.keymap.set("n", ";", toggle_fold_or_insert, {
+  vim.keymap.set("n", "'", toggle_fold_or_insert, {
     buffer = true,
     desc = "Toggle fold or insert new line"
   })

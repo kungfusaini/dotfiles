@@ -21,11 +21,14 @@ M.toggle_checkbox = function()
   end
 end
 
--- Insert checkbox preserving indentation
+-- Insert checkbox on a new line preserving indentation
 M.insert_checkbox = function()
   local line = vim.api.nvim_get_current_line()
   local indent = line:match("^(%s*)")
-  vim.api.nvim_set_current_line(indent .. "- [ ] " .. line:gsub("^%s*", ""))
+  local row = vim.api.nvim_win_get_cursor(0)[1] - 1
+  vim.api.nvim_buf_set_lines(0, row + 1, row + 1, false, { indent .. "- [ ]  " })
+  vim.api.nvim_win_set_cursor(0, { row + 2, #(indent .. "- [ ]  ") })
+  vim.cmd("startinsert")
 end
 
 -- Fold up to level 2 (h2 and below)
