@@ -75,3 +75,8 @@ vim.keymap.set('n', '<leader>gd', function()
     end
   end,
   { desc = "Toggle Diffview" })
+
+
+vim.keymap.set('n', '<leader>lu', function()
+  vim.cmd('Lazy update')
+end, { desc = "Update Lazy Plugins" })
