@@ -22,14 +22,22 @@ vim.api.nvim_set_hl(0, 'Folded', {
   bold = true,
 })
 
-M.open_all_folds = function()
-  vim.opt.foldlevel = 99
+M.toggle_all_folds = function()
+  local current_level = vim.opt.foldlevel:get()
+
+  if current_level >= 99 then
+    vim.opt.foldlevel = 0
+    print("All folds closed (foldlevel=0)")
+  else
+    vim.opt.foldlevel = 99
+    print("All folds opened (foldlevel=99)")
+  end
 end
 
 M.setup = function()
-  vim.keymap.set("n", "<leader>fA", M.open_all_folds, {
+  vim.keymap.set("n", "<leader>fA", M.toggle_all_folds, {
     buffer = true,
-    desc = "Open all folds"
+    desc = "Toggle all folds"
   })
 
   vim.keymap.set("n", "'", toggle_fold_or_insert, {
@@ -37,6 +45,5 @@ M.setup = function()
     desc = "Toggle fold or insert new line"
   })
 end
-
 
 return M
