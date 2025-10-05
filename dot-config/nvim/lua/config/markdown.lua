@@ -62,11 +62,6 @@ M.toggle_all_h2_folds = function()
   vim.api.nvim_win_set_cursor(0, cur_pos)
 end
 
--- Open all folds
-M.open_all_folds = function()
-  vim.opt.foldlevel = 99
-end
-
 M.insert_time_heading = function()
   vim.api.nvim_put({ '## ' .. os.date('%H:%M:%S') }, 'l', true, true)
 end
@@ -103,11 +98,6 @@ M.setup = function()
     vim.keymap.set("n", "<leader>fa", M.toggle_all_h2_folds, {
       buffer = true,
       desc = "Toggle all H2 folds"
-    })
-
-    vim.keymap.set("n", "<leader>fA", M.open_all_folds, {
-      buffer = true,
-      desc = "Open all folds"
     })
   end
 
