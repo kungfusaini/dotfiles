@@ -17,7 +17,7 @@ return {
       },
     },
     config = function()
-      local servers = { "basedpyright", "clangd", "lua_ls", "marksman", "nil_ls" }
+      local servers = { "basedpyright", "biome", "clangd", "lua_ls", "marksman", "nil_ls" }
 
       for _, name in ipairs(servers) do
         -- loads server config from lsp/<server>.lua if present

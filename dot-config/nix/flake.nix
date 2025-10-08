@@ -29,6 +29,7 @@
             atuin
             bat
             blueutil
+            biome
             bitwarden
             brave
             cmake
