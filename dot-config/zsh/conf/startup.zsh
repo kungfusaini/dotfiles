@@ -1,4 +1,5 @@
-test -z "$TMUX" && (tmux attach || tmux new-session)
+# ~/.zshrc
+[[ -z $TMUX ]] && { tmux attach 2>/dev/null || tmux new-session -s home -c ~; }
 
 # Run fastfetch only in new tmux windows (not panes)
 if [[ -n "$TMUX" ]]; then
