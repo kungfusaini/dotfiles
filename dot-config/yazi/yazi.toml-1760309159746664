@@ -1,0 +1,18 @@
+[manager]
+adapters = [ "Kgp", "Ueberzugpp"]
+
+[opener]
+zathura = [
+    { run = 'zathura "$@"', desc = "Open with Zathura", for = "unix" }
+]
+
+iina = [
+    { run = 'open -a IINA "$@"', desc = "Open with IINA", for = "macos" }
+]
+
+[open]
+prepend_rules = [
+    { mime = "video/*", use = "iina" },
+    { mime = "audio/*", use = "iina" },
+    { mime = "application/pdf", use = "zathura" },
+]
