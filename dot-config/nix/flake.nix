@@ -82,6 +82,7 @@
               "lua-language-server"
               "pyenv-virtualenv"
               "spotify_player" # was broken in nix
+              "tpm"
             ];
 
             casks = [
