@@ -26,6 +26,7 @@ alias config="cd ~/.config"
 alias aerospace="vim ~/.config/aerospace/aerospace.toml"
 alias kittyedit="vim ~/.config/kitty/kitty.conf"
 alias hammer="vim ~/.config/hammerspoon/init.lua"
+alias tmuxconf="vim ~/.config/tmux/tmux.conf"
 
 ########## NIX Aliases ##########
 alias nixedit="vim ~/.config/nix/flake.nix"

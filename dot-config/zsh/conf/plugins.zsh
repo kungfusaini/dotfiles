@@ -26,6 +26,7 @@ bindkey -M viins -r "^G" # Unbind list-expand in ins mode
 # Ensure keyboard->shortcuts->inputsources are turned off if this doesn't work !
 bindkey -M viins '^ ' autosuggest-accept 
 bindkey -M vicmd '^ ' autosuggest-accept
+
 bindkey -M viins '^h' atuin-search
 bindkey -M vicmd '^h' atuin-search
 
