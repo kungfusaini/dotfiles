@@ -45,24 +45,6 @@ function rd() {
     "$@" | bat --paging=always -l help
 }
 
-# open/create daily note
-function today() {
-  local date=$(date +"%Y-%m-%d")
-  local file=~/codex/Journal/${date}.md
-
-  if ! [ -f "$file" ]; then
-    echo "# ${date}" > "$file"
-  fi
-
-  nvim "$file"
-}
-
-# open compass
-function compass() {
-  local file=~/codex/compass.md
-  nvim "$file"
-}
-
 function jqp() {	
 cd ~/codex/
   git add .

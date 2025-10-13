@@ -8,6 +8,7 @@ vim.cmd.colorscheme("gruvbox")
 
 require("config.markdown").setup()
 require("config.folds").setup()
+require("config.functions").setup()
 
 vim.opt.clipboard = "unnamedplus"
 vim.opt["tabstop"] = 4
@@ -75,7 +76,6 @@ vim.keymap.set('n', '<leader>gd', function()
     end
   end,
   { desc = "Toggle Diffview" })
-
 
 vim.keymap.set('n', '<leader>lu', function()
   vim.cmd('Lazy update')

@@ -35,7 +35,7 @@ M.toggle_all_folds = function()
 end
 
 M.setup = function()
-  vim.keymap.set("n", "<leader>tA", M.toggle_all_folds, {
+  vim.keymap.set("n", "<leader>|", M.toggle_all_folds, {
     buffer = true,
     desc = "Toggle all folds"
   })
