@@ -27,6 +27,9 @@ bindkey -M viins -r "^G" # Unbind list-expand in ins mode
 bindkey -M viins '^ ' autosuggest-accept 
 bindkey -M vicmd '^ ' autosuggest-accept
 
-bindkey -M viins '^h' atuin-search
-bindkey -M vicmd '^h' atuin-search
+bindkey -M viins '^[[A' atuin-search
+bindkey -M vicmd '^[[A' atuin-search
+# bindkey -M viins '^[OA' atuin-search
+# bindkey -M vicmd '^[OA' atuin-search
+
 
