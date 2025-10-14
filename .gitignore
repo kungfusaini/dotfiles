@@ -4,5 +4,6 @@ dot-config/zsh/.zcompdump
 dot-config/zsh/.zsh_sessions
 dot-config/zsh/conf/plugins
 dot-config/tmux/plugins
+dot-config/tmux/tmp
 
 

@@ -36,6 +36,7 @@
             cowsay
             direnv
             fastfetch
+            fortune
             fzf
             hidden-bar
             htop
