@@ -12,9 +12,7 @@ return {
       options = {
         default_lang = 'en_gb',
         max_suggestions = 10,
-        auto_enable_filetypes = {
-          'markdown', 'gitcommit', 'text', 'tex'
-        },
+        auto_enable_filetypes = {},
         spell_options = 'camel'
       }
     })
