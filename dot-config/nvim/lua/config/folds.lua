@@ -36,12 +36,10 @@ end
 
 M.setup = function()
   vim.keymap.set("n", "<leader>|", M.toggle_all_folds, {
-    buffer = true,
     desc = "Toggle all folds"
   })
 
   vim.keymap.set("n", "\\", toggle_fold_or_insert, {
-    buffer = true,
     desc = "Toggle fold or insert new line"
   })
 end
