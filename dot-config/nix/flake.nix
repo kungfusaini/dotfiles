@@ -82,6 +82,7 @@
               "basedpyright"
               "lua-language-server"
               "pyenv-virtualenv"
+              "opencode"
               "spotify_player" # was broken in nix
               "tpm"
             ];
