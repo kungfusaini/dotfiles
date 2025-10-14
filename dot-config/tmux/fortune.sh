@@ -24,7 +24,8 @@ age=$((current_time - file_mtime))
 
 # Update cache if --fresh was given OR the cache is stale / missing
 if [ "$FORCE_FRESH" -eq 1 ] || [ ! -f "$CACHE_FILE" ] || [ "$age" -gt "$CACHE_SECONDS" ]; then
-    fortune -s -n 30 | tr -d '\n' > "$CACHE_FILE"
+	f=$(fortune -s -n 30 | tr -d '\n')
+    printf "%s" "$f" > "$CACHE_FILE"
 fi
 
-cat "$CACHE_FILE"
+printf '%30.30s' "$(cat "$CACHE_FILE")"
