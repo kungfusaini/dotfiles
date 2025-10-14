@@ -29,7 +29,4 @@ bindkey -M vicmd '^ ' autosuggest-accept
 
 bindkey -M viins '^[[A' atuin-search
 bindkey -M vicmd '^[[A' atuin-search
-# bindkey -M viins '^[OA' atuin-search
-# bindkey -M vicmd '^[OA' atuin-search
-
 
