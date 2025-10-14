@@ -20,5 +20,6 @@
   "smart-splits.nvim": { "branch": "master", "commit": "c697ea84309db323e4da82d29c1f23304e6910be" },
   "spellcheck-mode.nvim": { "branch": "main", "commit": "fe31020631f3eef7265be2b6ee265f56c0050002" },
   "toggle-checkbox.nvim": { "branch": "main", "commit": "58f958a2dcfb974963d4bb772ad8c3d8a1c62774" },
+  "undotree": { "branch": "master", "commit": "0f1c9816975b5d7f87d5003a19c53c6fd2ff6f7f" },
   "yazi.nvim": { "branch": "main", "commit": "3f81faf0cf838acb312f0f0d75ac1a8ac69166ed" }
 }
