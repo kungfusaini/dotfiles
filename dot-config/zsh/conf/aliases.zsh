@@ -40,5 +40,5 @@ alias c="pbcopy"
 alias p="pbpaste"
 
 ########## Network Aliases ##########
-alias ssh="kitty +kitten ssh"
+# alias ssh="kitty +kitten ssh"
 
