@@ -1,7 +1,6 @@
 return
 {
   'mrjones2014/smart-splits.nvim',
-  commit = 'c697ea84309db323e4da82d29c1f23304e6910be',
   config = function()
     vim.keymap.set('n', '<C-left>', require('smart-splits').resize_left)
     vim.keymap.set('n', '<C-down>', require('smart-splits').resize_down)
