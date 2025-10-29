@@ -33,8 +33,10 @@
             bitwarden
             brave
             cmake
+            colima
             cowsay
             direnv
+            docker
             fastfetch
             fortune
             fzf
