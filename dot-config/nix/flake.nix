@@ -30,7 +30,7 @@
             bat
             blueutil
             biome
-            bitwarden
+            bitwarden-desktop
             brave
             cmake
             colima
@@ -82,6 +82,7 @@
 
             brews = [
               "basedpyright"
+              "gh"
               "lua-language-server"
               "pyenv-virtualenv"
               "opencode"
@@ -140,6 +141,10 @@
             enable = true;
           };
 
+          services.openssh = {
+            enable = true;
+          };
+
           # Set Git commit hash for darwin-version.
           system.configurationRevision = self.rev or self.dirtyRev or null;
 
@@ -154,6 +159,7 @@
 
           # The platform the configuration will be used on.
           nixpkgs.hostPlatform = "x86_64-darwin";
+
         };
     in
     {
