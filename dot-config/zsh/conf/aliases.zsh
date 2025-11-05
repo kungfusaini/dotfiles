@@ -19,6 +19,7 @@ alias gin="git pull"
 alias gcm="git commit -m"
 alias ga="git add"
 alias gaa="git add ." # Git add all
+alias gl="git log"
 
 ########## Config Aliases ##########
 alias dotfiles="cd ~/.dotfiles"
