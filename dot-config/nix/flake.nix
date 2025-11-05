@@ -42,6 +42,7 @@
             fzf
             hidden-bar
             htop
+            hugo
             iina
             kitty
             marksman
