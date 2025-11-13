@@ -1,0 +1,7 @@
+{
+  "emph": {
+    "prefix": "emph",
+    "body": ["{{< emph >}}$1{{< /emph >}}"],
+    "description": "Emphasis shortcode"
+  }
+}
