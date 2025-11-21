@@ -43,3 +43,8 @@ alias p="pbpaste"
 ########## Network Aliases ##########
 # alias ssh="kitty +kitten ssh"
 
+########## Project Aliases ##########
+alias aether-up="cd /Users/sumeet/matrix/web/aether; docker compose -f docker-compose.yml -f docker-compose-dev.yml up --build"
+
+########## Action Aliases ##########
+alias colima-rspwn="colima delete --force && colima start"
