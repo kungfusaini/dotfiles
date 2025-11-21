@@ -1,0 +1,58 @@
+# Google Cloud credentials and logs
+gcloud/credentials.db
+gcloud/application_default_credentials.json
+gcloud/legacy_credentials/
+gcloud/logs/
+gcloud/access_tokens.db
+gcloud/config_sentinel
+gcloud/default_configs.db
+gcloud/gce
+gcloud/active_config
+gcloud/.last_survey_prompt.yaml
+
+# Common credential files
+*.boto
+*.adc.json
+*.db
+
+# Log files
+*.log
+logs/
+
+# Cache and temporary files
+.cache/
+tmp/ temp/ *.tmp
+*.temp
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Node modules (for any JavaScript-based tools)
+node_modules/
+
+# Backup files
+*.bak
+*.backup
+automatic_backups/
+
+# Zsh completion files
+.zcompdump*
+
+# Tmux resurrect files
+tmux/resurrect/
+
+# Yazi temporary files
+yazi/yazi.toml-*
