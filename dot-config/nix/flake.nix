@@ -87,6 +87,7 @@
               "lua-language-server"
               "pyenv-virtualenv"
               "opencode"
+              "pngpaste"
               "spotify_player" # was broken in nix
               "tpm"
             ];
