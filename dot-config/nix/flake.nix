@@ -95,6 +95,7 @@
             casks = [
               "activitywatch"
               "calibre"
+              "claude-code"
               "gimp"
               "hammerspoon"
               "inkscape"
