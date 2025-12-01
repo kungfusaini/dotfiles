@@ -3,7 +3,7 @@
     "prefix": "emph",
     "body": ["{{< emph >}}$1{{< /emph >}}"],
     "description": "Emphasis shortcode"
-  }
+  },
   "caption": {
     "prefix": "caption",
     "body": ["{{< caption >}}$1{{< /caption >}}"],
