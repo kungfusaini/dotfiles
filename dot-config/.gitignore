@@ -54,5 +54,8 @@ automatic_backups/
 # Tmux resurrect files
 tmux/resurrect/
 
+# Don't need as using colima
+docker/
+
 # Yazi temporary files
 yazi/yazi.toml-*
