@@ -1,0 +1,6 @@
+news.version=3.4.2
+
+data.location=~/.local/share/task
+hooks.location=~/.config/task/hooks
+
+include theme/gruvbox-dark.theme

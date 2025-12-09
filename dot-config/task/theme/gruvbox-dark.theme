@@ -1,0 +1,70 @@
+###############################################################################
+#  Gruvbox-Dark theme for Taskwarrior  (256-colour version)
+#  Palette: 
+#  red=#cc241d, color124
+#  light-red=#fb4934, color167
+#  green=#98971a, color106
+#  yellow=#d79921, color 172
+#  blue=#458588, color66
+#  light-blue=#83a598, color109
+#  purple=#b16286, color132
+#  aqua=#689d6a, color72
+#  orange=#d65d0e, color166
+#  light-orange=#fe8019, color208
+#  dark-grey=#282828, color235
+#  med-grey=#665c52, color241
+#  light-grey=#928374, color245
+#  black=#1d2021, color234
+#
+###############################################################################
+
+rule.precedence.color=deleted,completed,active,keyword.,tag.,project.,overdue,scheduled,due.today,due,blocked,blocking,recurring,tagged,uda.
+
+color.active=on color166
+color.alternate=on color235
+color.blocked=on color8
+color.blocking=color234 on color8 
+color.burndown.done=on color106
+color.burndown.pending=on color208
+color.burndown.started=on color172
+color.calendar.due=color234 on color124 
+color.calendar.due.today=color245 on color124 
+color.calendar.holiday=color234 on color172 
+color.calendar.overdue=color234 on color167 
+color.calendar.scheduled=color72 on color241 
+color.calendar.today=color241 on color72
+color.calendar.weekend=on color241 
+color.calendar.weeknumber=color66
+color.completed=
+color.debug=color72
+color.deleted=
+color.due=color124
+color.due.today=color124
+color.error=on color124
+color.footnote=color166
+color.header=color166
+color.history.add=color234 on color124 
+color.history.delete=color234 on color172 
+color.history.done=color234 on color106 
+color.label=
+color.label.sort=
+color.overdue=color167
+color.project.none=
+color.recurring=color66
+color.scheduled=on color109
+color.summary.background=color245
+color.summary.bar=color234 on color72
+color.sync.added=color106
+color.sync.changed=color172
+color.sync.rejected=color124
+color.tag.next=color106
+color.tag.none=
+color.tagged=
+color.uda.priority.H=color245
+color.uda.priority.L=color235
+color.uda.priority.M=color241
+color.undo.after=color106
+color.undo.before=color124
+color.until=
+color.warning=color124
+
