@@ -99,6 +99,13 @@ M.setup = function()
       buffer = true,
       desc = "Toggle all H2 folds"
     })
+
+        vim.keymap.set("n", "<leader>cn", function()
+      require("scripts.note_creator").create_note_interactive()
+    end, {
+      buffer = true,
+      desc = "Create note from wiki-link"
+    })
   end
 
   -- Set up for both FileType and BufEnter events
