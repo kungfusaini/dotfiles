@@ -56,6 +56,8 @@
             raycast
             starship
             stow
+            taskwarrior3
+            taskwarrior-tui
             the-unarchiver
             tldr
             tmux
