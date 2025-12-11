@@ -39,6 +39,7 @@ alias cd="z"
 alias vim="nvim"
 alias c="pbcopy"
 alias p="pbpaste"
+alias t="task"
 
 ########## Network Aliases ##########
 # alias ssh="kitty +kitten ssh"

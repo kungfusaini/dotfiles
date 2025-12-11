@@ -4,3 +4,9 @@ data.location=~/.local/share/task
 hooks.location=~/.config/task/hooks
 
 include theme/gruvbox-dark.theme
+context.home.read=+home
+context.home.write=+home
+context.arcane.read=+arcane
+context.arcane.write=+arcane
+context.matrix.read=+martix
+context.matrix.write=+martix
