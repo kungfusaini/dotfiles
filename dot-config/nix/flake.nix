@@ -59,6 +59,7 @@
             taskwarrior3
             taskwarrior-tui
             the-unarchiver
+            timewarrior
             tldr
             tmux
             transmission_4-qt
