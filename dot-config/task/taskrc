@@ -4,6 +4,10 @@ data.location=~/.local/share/task
 hooks.location=~/.config/task/hooks
 
 include theme/gruvbox-dark.theme
+
+uda.note.type=string
+uda.note.label=Note
+
 context.home.read=+home
 context.home.write=+home
 context.arcane.read=+arcane
