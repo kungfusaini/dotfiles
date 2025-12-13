@@ -1,0 +1,69 @@
+#!/bin/bash
+# task-note - Task note management with vertical tmux split
+#
+TASK_ID=$1
+ACTION=$2
+NOTE_PATH=$3
+show_usage() {
+    echo "Usage: task-note <task_id> <action> [note_path]"
+    echo "Actions:"
+    echo "  add <path>    - Add note path to task"
+    echo "  open          - Open note for task in vertical tmux split"
+    echo "  show          - Show note path for task"
+    exit 1
+}
+
+if [ -z "$TASK_ID" ] || [ -z "$ACTION" ]; then
+    show_usage
+fi
+
+case "$ACTION" in
+    "add")
+        if [ -z "$NOTE_PATH" ]; then
+            echo "Error: Note path required for add action"
+            exit 1
+        fi
+        # Expand and validate path
+        eval "EXPANDED_PATH=$NOTE_PATH"
+        if [ -f "$EXPANDED_PATH" ]; then
+            task $TASK_ID modify note:"$NOTE_PATH"
+            echo "Added note '$NOTE_PATH' to task $TASK_ID"
+        else
+            echo "Error: Note file not found: $EXPANDED_PATH"
+            exit 1
+        fi
+        ;;
+    "open")
+        NOTE_PATH=$(task _get $TASK_ID.note)
+        if [ -z "$NOTE_PATH" ]; then
+            echo "No note found for task $TASK_ID"
+            exit 1
+        fi
+        eval "EXPANDED_PATH=$NOTE_PATH"
+        if [ -f "$EXPANDED_PATH" ]; then
+            if [ -n "$TMUX" ]; then
+                # Vertical split in note's directory, pane stays open
+                NOTE_DIR=$(dirname "$EXPANDED_PATH")
+                tmux split-window -v -c "$NOTE_DIR" "$EDITOR '$EXPANDED_PATH'"
+            else
+                # Fallback to regular opening if not in tmux
+                $EDITOR "$EXPANDED_PATH"
+            fi
+        else
+            echo "Error: Note file not found: $EXPANDED_PATH"
+            exit 1
+        fi
+        ;;
+    "show")
+        NOTE_PATH=$(task _get $TASK_ID.note)
+        if [ -z "$NOTE_PATH" ]; then
+            echo "No note found for task $TASK_ID"
+        else
+            echo "Task $TASK_ID note: $NOTE_PATH"
+        fi
+        ;;
+    *)
+        echo "Error: Unknown action '$ACTION'"
+        show_usage
+        ;;
+esac

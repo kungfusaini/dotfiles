@@ -1,5 +1,6 @@
 PLUGIN_DIR=/Users/sumeet/.config/zsh/conf/plugins
 SCRIPT_DIR=/Users/sumeet/.config/zsh/conf/scripts
+export PATH="$SCRIPT_DIR:$PATH"
 
 eval "$(starship init zsh)"
 export STARSHIP_CONFIG=$XDG_CONFIG_HOME/starship/starship.toml
