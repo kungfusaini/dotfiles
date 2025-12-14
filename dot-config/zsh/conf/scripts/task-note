@@ -44,7 +44,7 @@ case "$ACTION" in
             if [ -n "$TMUX" ]; then
                 # Vertical split in note's directory, pane stays open
                 NOTE_DIR=$(dirname "$EXPANDED_PATH")
-                tmux split-window -v -c "$NOTE_DIR" "$EDITOR '$EXPANDED_PATH'"
+                tmux split-window -h -c "$NOTE_DIR" "$EDITOR '$EXPANDED_PATH'"
             else
                 # Fallback to regular opening if not in tmux
                 $EDITOR "$EXPANDED_PATH"
