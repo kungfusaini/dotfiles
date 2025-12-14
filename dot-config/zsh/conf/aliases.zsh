@@ -40,6 +40,7 @@ alias vim="nvim"
 alias c="pbcopy"
 alias p="pbpaste"
 alias t="task"
+alias tn="task-note"
 
 ########## Network Aliases ##########
 # alias ssh="kitty +kitten ssh"
