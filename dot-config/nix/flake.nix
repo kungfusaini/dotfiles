@@ -58,6 +58,7 @@
             stow
             taskwarrior3
             taskwarrior-tui
+            telegram-desktop
             the-unarchiver
             timewarrior
             tldr
