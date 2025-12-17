@@ -52,3 +52,34 @@ cd ~/codex/
   git push
 }
 
+# Path completion for task-note starting from ~/codex/
+_task-note() {
+  if [[ $CURRENT -eq 3 ]]; then
+    _path_files -W ~/codex/
+  else
+    _default
+  fi
+}
+compdef _task-note task-note
+
+function tunnel-status() {
+  if launchctl list 2>/dev/null | grep -q "reverse-ssh-tunnel"; then
+    local pid=$(launchctl list | grep "reverse-ssh-tunnel" | awk '{print $1}')
+    echo "Reverse SSH tunnel is running (PID: $pid)"
+  else
+    echo "Reverse SSH tunnel is not running"
+  fi
+}
+
+function tunnel-restart() {
+  echo -n "Restart reverse SSH tunnel? [y/n]: "
+  read selection
+  if [[ $selection == y ]]; then
+    launchctl unload ~/Library/LaunchAgents/org.nixos.reverse-ssh-tunnel.plist 2>/dev/null
+    launchctl load ~/Library/LaunchAgents/org.nixos.reverse-ssh-tunnel.plist
+    echo "Tunnel restarted"
+  else
+    echo "Aborted"
+  fi
+}
+
