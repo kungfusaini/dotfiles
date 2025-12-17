@@ -23,15 +23,29 @@ case "$ACTION" in
             echo "Error: Note path required for add action"
             exit 1
         fi
-        # Expand and validate path
-        eval "EXPANDED_PATH=$NOTE_PATH"
-        if [ -f "$EXPANDED_PATH" ]; then
-            task $TASK_ID modify note:"$NOTE_PATH"
-            echo "Added note '$NOTE_PATH' to task $TASK_ID"
+        
+        # Resolve path - prepend ~/codex/ to relative paths
+        if [[ "$NOTE_PATH" != /* && "$NOTE_PATH" != ~* ]]; then
+            FULL_PATH="$HOME/codex/$NOTE_PATH"
+            DISPLAY_NOTE_PATH="~/codex/$NOTE_PATH"
         else
-            echo "Error: Note file not found: $EXPANDED_PATH"
-            exit 1
+            FULL_PATH="$NOTE_PATH"
+            DISPLAY_NOTE_PATH="$NOTE_PATH"
         fi
+        
+        # Expand for actual file operations
+        eval "EXPANDED_PATH=$FULL_PATH"
+        
+        # Create directories and file if they don't exist
+        if [ ! -f "$EXPANDED_PATH" ]; then
+            mkdir -p "$(dirname "$EXPANDED_PATH")"
+            touch "$EXPANDED_PATH"
+            echo "Created new note file: $DISPLAY_NOTE_PATH"
+        fi
+        
+        # Add to task
+        task $TASK_ID modify note:"$DISPLAY_NOTE_PATH"
+        echo "Added note '$DISPLAY_NOTE_PATH' to task $TASK_ID"
         ;;
     "open")
         NOTE_PATH=$(task _get $TASK_ID.note)
