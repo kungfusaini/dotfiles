@@ -55,6 +55,9 @@ cd ~/codex/
 # Path completion for task-note starting from ~/codex/
 _task-note() {
   if [[ $CURRENT -eq 3 ]]; then
+    local actions=(add open show)
+    _describe 'command actions' actions
+  elif [[ $CURRENT -eq 4 ]]; then
     _path_files -W ~/codex/
   else
     _default
