@@ -65,6 +65,7 @@
             tmux
             transmission_4-qt
             tree
+            vscode
             whatsapp-for-mac
             yazi
             zathura
