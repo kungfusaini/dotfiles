@@ -1,6 +1,6 @@
 [opener]
-zathura = [
-    { run = 'zathura "$@"', desc = "Open with Zathura", for = "unix" }
+sioyek = [
+    { run = 'sioyek "$@"', desc = "Open with Sioyek", for = "unix" }
 ]
 
 iina = [
@@ -11,5 +11,5 @@ iina = [
 prepend_rules = [
     { mime = "video/*", use = "iina" },
     { mime = "audio/*", use = "iina" },
-    { mime = "application/pdf", use = "zathura" },
+    { mime = "application/pdf", use = "sioyek" },
 ]

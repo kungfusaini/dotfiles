@@ -66,6 +66,7 @@
             pdftk
             pyenv
             raycast
+            sioyek
             starship
             stow
             taskwarrior3
@@ -83,7 +84,6 @@
             vscode
             whatsapp-for-mac
             yazi
-            zathura
             zoxide
           ];
 
