@@ -4,11 +4,13 @@ require("gitsigns").setup({
   numhl = true,
   signcolumn = true,
 })
-vim.cmd.colorscheme("gruvbox")
-
 require("config.markdown").setup()
 require("config.folds").setup()
 require("config.functions").setup()
+
+
+----------- Options -----------
+vim.cmd.colorscheme("gruvbox")
 
 vim.opt.clipboard = "unnamedplus"
 vim.opt["tabstop"] = 4
@@ -17,8 +19,16 @@ vim.opt.signcolumn = "number"
 
 vim.wo.relativenumber = true
 
-
 vim.o.statuscolumn = "%!v:lua.require('config.statuscolumn').myStatuscolumn()";
+
+vim.opt.wrap = true
+vim.opt.linebreak = true
+vim.opt.breakindent = true
+vim.opt.showbreak = "↳ "
+
+-- Remap j and k for using visual lines
+vim.keymap.set('n', 'j', "v:count == 0 ? 'gj' : 'j'", { expr = true, silent = true })
+vim.keymap.set('n', 'k', "v:count == 0 ? 'gk' : 'k'", { expr = true, silent = true })
 
 ----------- Functions -----------
 vim.api.nvim_create_autocmd("FileType", {
@@ -80,3 +90,5 @@ vim.keymap.set('n', '<leader>gd', function()
 vim.keymap.set('n', '<leader>lu', function()
   vim.cmd('Lazy update')
 end, { desc = "Update Lazy Plugins" })
+
+--------------------------------

@@ -69,14 +69,6 @@ end
 -- Configure all markdown keymaps
 M.setup = function()
   local setup_buffer = function()
-    vim.bo.textwidth = 110
-    vim.wo.linebreak = true
-    vim.bo.formatoptions = vim.bo.formatoptions .. 't'
-    vim.bo.wrapmargin = 0
-
-    -- Set window-specific options (window-local)
-    vim.wo.wrap = true
-
     -- Fold all H2 headings on enter
     M.fold_level_2()
 
@@ -100,7 +92,7 @@ M.setup = function()
       desc = "Toggle all H2 folds"
     })
 
-        vim.keymap.set("n", "<leader>cn", function()
+    vim.keymap.set("n", "<leader>cn", function()
       require("scripts.note_creator").create_note_interactive()
     end, {
       buffer = true,
