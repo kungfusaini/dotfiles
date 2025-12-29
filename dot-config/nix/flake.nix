@@ -82,7 +82,6 @@
             tree-sitter
             unrar
             vscode
-            whatsapp-for-mac
             yazi
             zoxide
           ];
@@ -127,6 +126,7 @@
               "stats"
               "stremio"
               "time-out"
+              "whatsapp"
             ];
           };
 
