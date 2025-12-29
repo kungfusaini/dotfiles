@@ -26,5 +26,6 @@
   "undotree": { "branch": "master", "commit": "178d19e00a643f825ea11d581b1684745d0c4eda" },
   "vim-ipython-cell": { "branch": "master", "commit": "b56c5246f5c4c1e30e7e4fc1876a8bd3cef6f3ce" },
   "vim-slime": { "branch": "main", "commit": "3fb77a9d1d3dd3abfbdbd4840eb20947f39f688b" },
+  "vimtex": { "branch": "master", "commit": "f5c37462c690da9a0d05cd12a7b9595b10b56200" },
   "yazi.nvim": { "branch": "main", "commit": "d666962582840f889161109cf970d311c7a447d0" }
 }

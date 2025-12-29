@@ -15,9 +15,21 @@
       nixpkgs,
       nix-homebrew,
     }:
+
     let
       configuration =
         { pkgs, ... }:
+        let
+          texConf = pkgs.texlive.combine {
+            inherit (pkgs.texlive) scheme-small;
+            inherit (pkgs.texlive)
+              latexmk
+              contract
+              enumitem
+              cleveref
+              ;
+          };
+        in
         {
 
           nixpkgs.config.allowUnfree = true;
@@ -59,12 +71,15 @@
             taskwarrior3
             taskwarrior-tui
             telegram-desktop
+            texConf
             the-unarchiver
             timewarrior
             tldr
             tmux
             transmission_4-qt
             tree
+            tree-sitter
+            unrar
             vscode
             whatsapp-for-mac
             yazi
@@ -90,8 +105,8 @@
               "basedpyright"
               "gh"
               "lua-language-server"
-              "pyenv-virtualenv"
               "opencode"
+              "pyenv-virtualenv"
               "pngpaste"
               "spotify_player" # was broken in nix
               "tpm"
