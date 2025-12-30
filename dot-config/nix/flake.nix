@@ -23,6 +23,7 @@
           texConf = pkgs.texlive.combine {
             inherit (pkgs.texlive) scheme-small;
             inherit (pkgs.texlive)
+              multirow
               latexmk
               contract
               enumitem
