@@ -59,3 +59,6 @@ docker/
 
 # Yazi temporary files
 yazi/yazi.toml-*
+
+# Don't really care
+ipython/*
