@@ -86,3 +86,25 @@ function tunnel-restart() {
   fi
 }
 
+# Create a new Python project with modular environment setup
+pyproj() {
+  if [[ -z "$1" ]]; then
+    echo "Usage: pyproj <project-name>"
+    return 1
+  fi
+  
+  local script_path="$ZDOTDIR/conf/scripts/pyproj"
+  if [[ -f "$script_path" ]]; then
+    "$script_path" "$1"
+  else
+    echo "Error: pyproj script not found at $script_path"
+    return 1
+  fi
+}
+
+# Tab completion for pyproj
+_pyproj() {
+  _description 'create new python project'
+  _message 'project name'
+}
+compdef _pyproj pyproj
