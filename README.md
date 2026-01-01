@@ -1,40 +1,61 @@
 # My Dotfiles
 
-This is my very cool dotfiles repo in which I wish to keep as much system configuration as possible. I have had issues in the past with a couple of things, which I hope this approach to configuration will address.
-* Messing up a config and not being able to go back easily
-* Wanting to just try something without installing it
-* Being able to jump across systems with ease
-* Having a bunch of things installed on my system that becomes tedious to track down and remove. 
+This repository contains my system configuration files, managed with GNU Stow. This approach addresses several common issues:
+* Easy recovery from messed up configurations
+* Quick experimentation without permanent installation
+* Seamless system transitions
+* Clean tracking and removal of software
 
-asdf
-It is possible to use nix home manager for this, but I felt it was a bit overly complicated just for managing a few dotfiles. I use gnu [stow](https://www.gnu.org/software/stow/) instead. This is implemented using `stow ~/dotfiles --dotfiles`
+## Setup
 
-Here is a non-exhaustive list of all the dotfiles I have in this repo.
+I use GNU [Stow](https://www.gnu.org/software/stow/) to manage dotfiles. To set up:
+```bash
+stow ~/dotfiles --dotfiles
+```
 
-## Brave
-This is simply a clone of important files in `~/Library/Application Support/BraveSoftware/Brave-Browser/Default/`, namely Bookmarks and Extensions. Backing up extensions like this is a bit silly since I am only interested in what extensions I need and their configs, but this will suffice for now.
+While Nix Home Manager is an alternative, I find Stow simpler for managing a focused set of dotfiles.
 
-## Git
-Simple git config
+## Configurations
 
-asdffeaw
-## Nix
-The bread and butter of my whole home setup. Nix flake config should be at `.config/nix/flake.nix`
+### Window Manager
+- **Aerospace** - Tiling window manager configuration (`dot-config/aerospace/`)
 
-## Neovim
-So, I decided to set up neovim from scratch. This repo contains all my plugins, keybindings and config!
+### Development Tools
+- **Neovim** - Lua-based configuration with plugins, keybindings, and custom scripts (`dot-config/nvim/`)
+- **Git** - Git configuration (`dot-config/git/`)
+- **GitHub CLI** - gh configuration and hosts (`dot-config/gh/`)
 
-## Obsidian
-Obsidian files should go in the root of the vault in the obsidian folder, in my case:
-`~/codex/.obsidian/`
+### Terminal
+- **Kitty** - Terminal emulator with themes, shortcuts, and quick access configs (`dot-config/kitty/`)
+- **Starship** - Custom prompt configuration (`dot-config/starship/`)
+- **ZSH** - Modular shell configuration with aliases, functions, and plugins (`dot-config/zsh/`)
+- **Tmux** - Terminal multiplexer with status bar and keybindings (`dot-config/tmux/`)
 
-## Stats
-This is the config for the MacOS app stats. You will have to load this config manually using the import feature
+### Productivity
+- **Taskwarrior** - Task management with custom themes and hooks (`dot-config/task/`)
+- **Timewarrior** - Time tracking configuration (`dot-config/timewarrior/`)
+- **Atuin** - Shell history management (`dot-config/atuin/`)
 
-## Karabiner-Elements
-It already uses .config, so nice :)
+### Utilities
+- **Fastfetch** - System information tool configuration (`dot-config/fastfetch/`)
+- **Karabiner-Elements** - Keyboard customization (`dot-config/karabiner/`)
+- **Hammerspoon** - macOS automation framework (`dot-config/hammerspoon/`)
+- **Raycast** - Launcher extensions (`dot-config/raycast/`)
+- **Yazi** - File manager configuration (`dot-config/yazi/`)
 
-## ZSH Config
-Environment variables are handled by .zshenv, and a modular approach to management can be found within the 
+### Applications
+- **Obsidian** - Note-taking app configuration (`codex/dot-obsidian/`)
+- **Sioyek** - PDF viewer preferences (`dot-config/sioyek/`)
+- **Spotify Player** - CLI client configuration (`dot-config/spotify-player/`)
+- **Stats** - macOS system monitor config (`stats/`)
+- **Brave** - Browser bookmarks and extensions (`Library/Application Support/BraveSoftware/`)
 
-adsfad
+### Graphics
+- **Inkscape** - Vector graphics editor preferences (`dot-config/inkscape/`)
+
+### Nix
+- **Nix** - Declarative package management with flake configuration (`dot-config/nix/`)
+
+### Miscellaneous
+- **npm** - Node.js package manager configuration (`dot-config/npm/`)
+- **Wallpapers** - Custom wallpaper collection (`wallpapers/`)
