@@ -68,6 +68,7 @@
             pyenv
             raycast
             sioyek
+            spotify
             starship
             stow
             taskwarrior3
@@ -122,6 +123,7 @@
               "itsycal" # this didn't work in nix as it needs to go into the application folder
               "karabiner-elements" # this didn't work with nix as it didn't ask for permissions correctly
               "libreoffice"
+              "monitorcontrol"
               "nordvpn"
               "openemu"
               "openmtp"
