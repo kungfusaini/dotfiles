@@ -125,6 +125,7 @@
               "nordvpn"
               "openemu"
               "openmtp"
+              "raspberry-pi-imager"
               "stats"
               "stremio"
               "time-out"
