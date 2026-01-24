@@ -9,4 +9,6 @@ dot-config/tmux/tmp
 
 dot-config/colima/
 
+dot-config/ipython/profile_default/history.sqlite
+
 

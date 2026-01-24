@@ -60,6 +60,7 @@
             kitty
             marksman
             neovim
+            netlify-cli
             nil
             nix-direnv
             nix-search-cli
