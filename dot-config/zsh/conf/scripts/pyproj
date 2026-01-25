@@ -39,6 +39,14 @@ check_dependencies() {
             return 1
         fi
     done
+    
+    # Check for nix-direnv (recommended for performance)
+    if ! command -v "nix-direnv" &> /dev/null && ! [ -f "/usr/share/nix-direnv/direnvrc" ]; then
+        print_info "Warning: nix-direnv not found. Install for instant environment loading:"
+        print_info "  On macOS: brew install nix-direnv"
+        print_info "  Then add: echo 'source /usr/share/nix-direnv/direnvrc' > ~/.config/direnv/direnvrc"
+    fi
+    
     print_success "All dependencies are available"
 }
 
@@ -66,30 +74,32 @@ validate_project_name() {
 
 # Function to create flake.nix
 create_flake_nix() {
-    local project_name="$1"
     cat > flake.nix << EOF
 {
+  description = "Python development environment";
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   inputs.flake-utils.url = "github:numtide/flake-utils";
 
-  outputs =
-    {
-      self,
-      nixpkgs,
-      flake-utils,
-    }:
-    flake-utils.lib.eachDefaultSystem (
-      system:
+  outputs = { self, nixpkgs, flake-utils }:
+    flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.\${system};
       in
       {
         devShells.default = pkgs.mkShell {
-          packages = with pkgs; [
+          buildInputs = with pkgs; [
             python3
             python3Packages.pip
+            python3Packages.virtualenv
             git
+            # Add system dependencies for python packages here (e.g., zlib, libxml2)
+            stdenv.cc.cc.lib
           ];
+          
+          # This helps pip find system libraries
+          shellHook = ''
+            export LD_LIBRARY_PATH=\${pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]}
+          '';
         };
       }
     );
@@ -100,20 +110,23 @@ EOF
 
 # Function to create .envrc
 create_envrc() {
-    local project_name="$1"
     cat > .envrc << EOF
+# Use nix-direnv for instant loading
 use flake
-source .$project_name/bin/activate
-dotenv
+
+# Automatically create and activate venv
+if [ ! -d .venv ]; then
+  python -m venv .venv
+fi
+source .venv/bin/activate
 EOF
-    print_success "Created .envrc"
+    print_success "Created .envrc with auto-venv"
 }
 
 # Function to create .gitignore
 create_gitignore() {
-    local project_name="$1"
     cat > .gitignore << EOF
-.$project_name/
+.venv/
 .env
 EOF
     print_success "Created .gitignore"
@@ -159,16 +172,15 @@ main() {
     # Step 5: Create project files
     print_step "Creating project configuration files..."
     
-    create_flake_nix "$project_name"
-    create_envrc "$project_name"
-    create_gitignore "$project_name"
+    create_flake_nix
+    create_envrc
+    create_gitignore
     create_requirements_txt
     create_env_file
     
-    # Step 6: Create Python virtual environment
-    print_step "Creating Python virtual environment..."
-    python -m venv ".$project_name"
-    print_success "Created virtual environment '.$project_name'"
+    # Step 6: Create Python virtual environment (will be auto-created by .envrc)
+    print_step "Setting up virtual environment (will auto-activate when cd'd into)..."
+    print_success "Virtual environment will be created automatically on first cd"
     
     # Step 7: Allow direnv
     print_step "Setting up direnv..."
@@ -186,15 +198,15 @@ main() {
     print_success "🎉 Python project '$project_name' created successfully!"
     echo
     print_info "Next steps:"
-    echo "  cd $project_name          # Enter project directory"
-    echo "  pip install <package>     # Install Python packages"
+    echo "  cd $project_name          # Enter project directory (auto-activates .venv)"
+    echo "  pip install <package>     # Install Python packages directly with pip"
     echo "  pip freeze > requirements.txt  # Update requirements.txt when ready"
-    echo "  direnv allow               # Reload .envrc if needed"
+    echo "  direnv allow               # Only needed if you modify .envrc or flake.nix"
     echo
     print_info "Project structure:"
     echo "  $project_name/"
-    echo "  ├── .$project_name/       # Python virtual environment"
-    echo "  ├── .envrc                 # Direnv configuration"
+    echo "  ├── .venv/                 # Python virtual environment (auto-created)"
+    echo "  ├── .envrc                 # Direnv configuration with auto-venv"
     echo "  ├── .gitignore             # Git ignore rules"
     echo "  ├── flake.nix              # Nix flake for system dependencies"
     echo "  └── requirements.txt       # Python dependencies (empty)"
