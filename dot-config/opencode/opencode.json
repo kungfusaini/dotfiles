@@ -1,0 +1,47 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+
+  "enabled_providers": ["nanogpt","opencodezen"],
+
+  "provider": {
+    "nanogpt": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "NanoGPT",
+      "options": {
+        "baseURL": "https://nano-gpt.com/api/v1"
+      },
+      "models": {
+        "kimi-k2.5": {
+          "name": "Kimi K2.5",
+          "limit": { "context": 200000, "output": 32000 }
+        },
+        "deepseek-v3.2": {
+          "name": "DeepSeek V3.2",
+          "limit": { "context": 163000, "output": 65500 },
+          "variants": {
+            "standard": {
+              "model": "nanogpt/deepseek/deepseek-v3.2"
+            },
+            "thinking": {
+              "model": "nanogpt/deepseek/deepseek-v3.2:thinking"
+              }
+            }
+          }
+        }
+      }
+    },
+    "opencodezen": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "OpenCode Zen",
+      "options": {
+        "baseURL": "https://opencode.ai/zen/v1"
+      },
+      "models": {
+        "big-pickle": {
+          "name": "Big Pickle",
+          "limit": { "context": 32000, "output": 8000 }
+        }
+      }
+  	},
+  }
+}
