@@ -30,6 +30,22 @@
               cleveref
               ;
           };
+
+          # Until it gets released lol
+          ocx = pkgs.stdenv.mkDerivation rec {
+            pname = "ocx";
+            version = "1.4.6";
+            src = pkgs.fetchurl {
+              url = "https://github.com/kdcokenny/ocx/releases/download/v${version}/ocx-darwin-x64";
+              sha256 = "280578a90dad5bc067c7009b885777d79c6677eb88ce16523131d298b8fec3aa";
+            };
+            dontUnpack = true;
+            installPhase = ''
+              mkdir -p $out/bin
+              cp $src $out/bin/ocx
+              chmod +x $out/bin/ocx
+            '';
+          };
         in
         {
 
@@ -65,6 +81,7 @@
             nix-direnv
             nix-search-cli
             obsidian
+            ocx
             pdftk
             pyenv
             raycast
