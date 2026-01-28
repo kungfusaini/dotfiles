@@ -19,17 +19,13 @@
           "name": "DeepSeek V3.2",
           "limit": { "context": 163000, "output": 65500 },
           "variants": {
-            "standard": {
-              "model": "nanogpt/deepseek/deepseek-v3.2"
-            },
             "thinking": {
               "model": "nanogpt/deepseek/deepseek-v3.2:thinking"
               }
             }
           }
         }
-      }
-    },
+      },
     "opencodezen": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "OpenCode Zen",
