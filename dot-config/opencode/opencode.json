@@ -13,7 +13,29 @@
       "models": {
         "kimi-k2.5": {
           "name": "Kimi K2.5",
-          "limit": { "context": 200000, "output": 32000 }
+          "limit": { "context": 200000, "output": 32000 },
+          "variants": {
+            "thinking": {
+              "model": "moonshotai/kimi-k2.5:thinking"
+              }
+            }
+        },
+        "gpt-oss-120b": {
+          "name": "Speed Demon (GPT OSS 120B)",
+          "limit": { "context": 128000, "output": 16400 },
+        },
+        "glm-4.7": {
+          "name": "GLM 4.7",
+          "limit": { "context": 200000, "output": 65500 },
+          "variants": {
+            "thinking": {
+              "model": "zai-org/glm-4.7:thinking"
+              }
+            }
+        },
+        "arcee-ai/trinity-large": {
+          "name": "Trinity Large",
+          "limit": { "context": 131100, "output": 65500 },
         },
         "deepseek-v3.2": {
           "name": "DeepSeek V3.2",
