@@ -1,8 +1,9 @@
 {
   "$schema": "https://opencode.ai/config.json",
-
-  "enabled_providers": ["nanogpt","opencodezen"],
-
+  "enabled_providers": [
+    "nanogpt",
+    "opencodezen"
+  ],
   "provider": {
     "nanogpt": {
       "npm": "@ai-sdk/openai-compatible",
@@ -13,41 +14,56 @@
       "models": {
         "kimi-k2.5": {
           "name": "Kimi K2.5",
-          "limit": { "context": 200000, "output": 32000 },
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          },
           "variants": {
             "thinking": {
               "model": "moonshotai/kimi-k2.5:thinking"
-              }
             }
+          }
         },
         "gpt-oss-120b": {
           "name": "Speed Demon (GPT OSS 120B)",
-          "limit": { "context": 128000, "output": 16400 },
+          "limit": {
+            "context": 128000,
+            "output": 16400
+          }
         },
         "glm-4.7": {
           "name": "GLM 4.7",
-          "limit": { "context": 200000, "output": 65500 },
+          "limit": {
+            "context": 200000,
+            "output": 65500
+          },
           "variants": {
             "thinking": {
               "model": "zai-org/glm-4.7:thinking"
-              }
             }
+          }
         },
         "arcee-ai/trinity-large": {
           "name": "Trinity Large",
-          "limit": { "context": 131100, "output": 65500 },
+          "limit": {
+            "context": 131100,
+            "output": 65500
+          }
         },
         "deepseek-v3.2": {
           "name": "DeepSeek V3.2",
-          "limit": { "context": 163000, "output": 65500 },
+          "limit": {
+            "context": 163000,
+            "output": 65500
+          },
           "variants": {
             "thinking": {
               "model": "nanogpt/deepseek/deepseek-v3.2:thinking"
-              }
             }
           }
         }
-      },
+      }
+    },
     "opencodezen": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "OpenCode Zen",
@@ -57,9 +73,15 @@
       "models": {
         "big-pickle": {
           "name": "Big Pickle",
-          "limit": { "context": 32000, "output": 8000 }
+          "limit": {
+            "context": 32000,
+            "output": 8000
+          }
         }
       }
-  	},
-  }
+    }
+  },
+  "plugin": [
+    "oh-my-opencode@latest"
+  ]
 }
