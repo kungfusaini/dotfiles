@@ -12,35 +12,25 @@
         "baseURL": "https://nano-gpt.com/api/v1"
       },
       "models": {
-        "kimi-k2.5": {
-          "name": "Kimi K2.5",
+        "moonshotai/kimi-k2.5:thinking": {
+          "name": "Kimi K2.5 Thinking",
           "limit": {
             "context": 200000,
             "output": 32000
-          },
-          "variants": {
-            "thinking": {
-              "model": "moonshotai/kimi-k2.5:thinking"
-            }
           }
         },
-        "gpt-oss-120b": {
-          "name": "Speed Demon (GPT OSS 120B)",
+        "deepseek/deepseek-v3.2": {
+          "name": "DeepSeek V3.2",
           "limit": {
-            "context": 128000,
-            "output": 16400
+            "context": 163000,
+            "output": 65500
           }
         },
-        "glm-4.7": {
-          "name": "GLM 4.7",
+        "zai-org/glm-4.7:thinking": {
+          "name": "GLM 4.7 Thinking",
           "limit": {
             "context": 200000,
             "output": 65500
-          },
-          "variants": {
-            "thinking": {
-              "model": "zai-org/glm-4.7:thinking"
-            }
           }
         },
         "arcee-ai/trinity-large": {
@@ -50,16 +40,32 @@
             "output": 65500
           }
         },
-        "deepseek-v3.2": {
-          "name": "DeepSeek V3.2",
+        "openai/gpt-oss-120b": {
+          "name": "Speed Demon (GPT OSS 120B)",
           "limit": {
-            "context": 163000,
-            "output": 65500
-          },
-          "variants": {
-            "thinking": {
-              "model": "nanogpt/deepseek/deepseek-v3.2:thinking"
-            }
+            "context": 128000,
+            "output": 16400
+          }
+        },
+        "nousresearch/hermes-4-70b": {
+          "name": "Hermes 4 70B",
+          "limit": {
+            "context": 128000,
+            "output": 8200
+          }
+        },
+        "qwen3-vl-235b-a22b-thinking": {
+          "name": "Qwen 3 VL Thinking",
+          "limit": {
+            "context": 32000,
+            "output": 32000
+          }
+        },
+        "mistralai/mistral-large-3-675b-instruct-2512": {
+          "name": "Mistral Large 3 Instruct",
+          "limit": {
+            "context": 262100,
+            "output": 256000
           }
         }
       }
@@ -77,11 +83,12 @@
             "context": 32000,
             "output": 8000
           }
+        },
+        "gpt-5-nano": {
+          "name": "GPT 5 Nano",
         }
       }
     }
   },
-  "plugin": [
-    "oh-my-opencode@latest"
-  ]
+  "plugin": ["notify"]
 }
