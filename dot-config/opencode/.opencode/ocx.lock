@@ -16,7 +16,7 @@
         ".opencode/plugin/kdco-primitives/terminal-detect.ts",
         ".opencode/plugin/kdco-primitives/index.ts"
       ],
-      "installedAt": "2026-02-03T10:41:47.957Z"
+      "installedAt": "2026-02-03T11:45:19.973Z"
     },
     "kdco/notify": {
       "registry": "kdco",
@@ -25,7 +25,7 @@
       "files": [
         ".opencode/plugin/notify.ts"
       ],
-      "installedAt": "2026-02-03T10:41:47.957Z"
+      "installedAt": "2026-02-03T11:45:19.973Z"
     }
   }
 }
