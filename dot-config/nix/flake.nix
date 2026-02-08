@@ -69,6 +69,7 @@
             fastfetch
             fortune
             fzf
+            harper
             hidden-bar
             htop
             hugo
