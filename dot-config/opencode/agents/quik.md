@@ -2,11 +2,10 @@
 description: Fast-response agent for simple UI tweaks, styling, and minor text changes.
 mode: primary
 model: nanogpt/openai/gpt-oss-120b
-temperature: 0.2
 tools:
   edit: true
   bash: true
-  write: false
+  write: true
 ---
 
 # Role

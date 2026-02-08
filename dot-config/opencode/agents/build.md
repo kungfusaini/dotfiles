@@ -1,8 +1,6 @@
 ---
 description: Executes specific code changes, handles refactoring, and runs tests to verify implementations.
 mode: primary
-model: nanogpt/deepseek/deepseek-v3.2
-temperature: 0.2
 tools:
     edit: true
     write: true

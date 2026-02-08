@@ -1,8 +1,6 @@
 ---
 description: Deeply plans code changes and clarifies requirements
 mode: primary
-model: nanogpt/moonshotai/kimi-k2.5:thinking
-temperature: 0.3
 tools:
   write: false
   edit: false
@@ -21,4 +19,3 @@ Plans should:
 - Respect the existing code and extend where possible
 - If very large, have milestones that can be implemented one by one
 
-You must use the Explore subagent to look around and understand the codebase before planning.
