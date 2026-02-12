@@ -1,9 +1,5 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "enabled_providers": [
-    "nanogpt",
-    "opencodezen"
-  ],
   "provider": {
     "nanogpt": {
       "npm": "@ai-sdk/openai-compatible",
@@ -44,6 +40,40 @@
             "context": 200000,
             "output": 131100
           }
+        },
+
+        "qwen/qwen3-coder-next": {
+          "name": "Qwen 3 Coder Next",
+          "limit": {
+            "context": 262100,
+            "output": 65500
+          }
+        },
+
+        "stepfun-ai/step-3.5-flash": {
+          "name": "Step 3.5 Flash",
+          "limit": {
+            "context": 256000,
+            "output": 256000
+          },
+		  "variants":{
+		  	"thinking":{
+				"model":"stepfun-ai/step-3.5-flash:thinking"
+		  	}
+		  }
+        },
+
+        "zai-org/glm-5": {
+          "name": "GLM 5",
+          "limit": {
+            "context": 200000,
+            "output": 128000
+          },
+		  "variants":{
+		  	"thinking":{
+				"model":"zai-org/glm-5:thinking"
+		  	}
+		  }
         },
 
         "zai-org/glm-4.7": {
