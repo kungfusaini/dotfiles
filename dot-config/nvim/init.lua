@@ -67,16 +67,20 @@ vim.keymap.set('n', '<leader>e', function()
   vim.diagnostic.open_float()
 end, { desc = "Show diagnostics" })
 
+vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, { desc = "Code Actions" })
+
+-- Jump to next diagnostic (error/hint/suggestion)
+vim.keymap.set('n', ']d', vim.diagnostic.goto_next, { desc = "Next Diagnostic" })
+
+-- Jump to previous diagnostic
+vim.keymap.set('n', '[d', vim.diagnostic.goto_prev, { desc = "Prev Diagnostic" })
+
 vim.keymap.set('n', 'gd', function()
   vim.lsp.buf.definition()
 end, { desc = "Go to def" })
 
 vim.keymap.set("n", "<leader>o",
   "<cmd>AerialToggle right<CR>")
-
-vim.keymap.set('n', '<leader>sp',
-  require('spellcheck-mode').toggle_spellcheck,
-  { desc = 'Toggle spellcheck' })
 
 vim.keymap.set('n', '<leader>gd', function()
     if next(require('diffview.lib').views) == nil then

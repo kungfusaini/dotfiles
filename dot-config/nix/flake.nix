@@ -76,6 +76,7 @@
             iina
             kitty
             marksman
+			mkcert
             neovim
             netlify-cli
             nil

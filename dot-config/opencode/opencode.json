@@ -42,6 +42,14 @@
           }
         },
 
+        "minimax/minimax-m2.5-official": {
+          "name": "Minimax M2.5 Official",
+          "limit": {
+            "context": 204800,
+            "output": 131100
+          }
+        },
+
         "qwen/qwen3-coder-next": {
           "name": "Qwen 3 Coder Next",
           "limit": {
