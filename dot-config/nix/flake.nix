@@ -67,6 +67,7 @@
             direnv
             docker
             fastfetch
+			ffmpeg
             fortune
             fzf
             harper

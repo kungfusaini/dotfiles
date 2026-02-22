@@ -42,8 +42,8 @@
           }
         },
 
-        "minimax/minimax-m2.5-official": {
-          "name": "Minimax M2.5 Official",
+        "minimax/minimax-m2.5": {
+          "name": "Minimax M2.5",
           "limit": {
             "context": 204800,
             "output": 131100
