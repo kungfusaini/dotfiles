@@ -91,3 +91,4 @@ vim.api.nvim_create_autocmd('LspAttach', {
 vim.keymap.set('n', '<leader>sp', toggle_harper_diagnostics, { desc = "Toggle Harper diagnostics (silent)" })
       end
 }
+}
