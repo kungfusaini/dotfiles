@@ -1,137 +1,33 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "nanogpt": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "NanoGPT",
-      "options": {
-        "baseURL": "https://nano-gpt.com/api/v1"
-      },
-      "models": {
-        "moonshotai/kimi-k2.5": {
-          "name": "Kimi K2.5",
-          "limit": {
-            "context": 200000,
-            "output": 32000
-          },
-		  "variants":{
-		  	"thinking":{
-				"model":"moonshotai/kimi-k2.5:thinking"
-		  	}
-		  }
-        },
-
-        "deepseek/deepseek-v3.2": {
-          "name": "Kimi K2.5",
-          "limit": {
-            "context": 163000,
-            "output": 65500
-          },
-		  "variants":{
-		  	"thinking":{
-				"model":"deepseek/deepseek-v3.2:thinking"
-		  	}
-		  }
-        },
-
-        "minimax/minimax-m2.1": {
-          "name": "minimax-m2.1",
-          "limit": {
-            "context": 200000,
-            "output": 131100
-          }
-        },
-
-        "minimax/minimax-m2.5": {
-          "name": "Minimax M2.5",
-          "limit": {
-            "context": 204800,
-            "output": 131100
-          }
-        },
-
-        "qwen/qwen3-coder-next": {
-          "name": "Qwen 3 Coder Next",
-          "limit": {
-            "context": 262100,
-            "output": 65500
-          }
-        },
-
-        "stepfun-ai/step-3.5-flash": {
-          "name": "Step 3.5 Flash",
-          "limit": {
-            "context": 256000,
-            "output": 256000
-          },
-		  "variants":{
-		  	"thinking":{
-				"model":"stepfun-ai/step-3.5-flash:thinking"
-		  	}
-		  }
-        },
-
-        "zai-org/glm-5": {
-          "name": "GLM 5",
-          "limit": {
-            "context": 200000,
-            "output": 128000
-          },
-		  "variants":{
-		  	"thinking":{
-				"model":"zai-org/glm-5:thinking"
-		  	}
-		  }
-        },
-
-        "zai-org/glm-4.7": {
-          "name": "GLM 4.7",
-          "limit": {
-            "context": 200000,
-            "output": 65500
-          },
-		  "variants":{
-		  	"thinking":{
-				"model":"zai-org/glm-4.7:thinking"
-		  	}
-		  }
-        },
-
-        "arcee-ai/trinity-large": {
-          "name": "Trinity Large",
-          "limit": {
-            "context": 131100,
-            "output": 65500
-          }
-        },
-
-        "openai/gpt-oss-120b": {
-          "name": "Speed Demon (GPT OSS 120B)",
-          "limit": {
-            "context": 128000,
-            "output": 16400
-          }
-        }
-      }
-    },
-    "opencodezen": {
-      "npm": "@ai-sdk/openai-compatible",
-      "name": "OpenCode Zen",
-      "options": {
-        "baseURL": "https://opencode.ai/zen/v1"
-      },
-      "models": {
-        "big-pickle": {
-          "name": "Big Pickle",
-          "limit": {
-            "context": 32000,
-            "output": 8000
-          }
-        },
-        "gpt-5-nano": {
-          "name": "GPT 5 Nano",
-        }
-      }
+  "default_agent": "normal",
+  "enabled_providers": [
+    "opencode",
+    "openai"
+  ],
+  "plugin": [
+    "@mohak34/opencode-notifier@0.2.5"
+  ],
+  "mcp": {
+    "chrome-devtools": {
+      "type": "local",
+      "enabled": false,
+      "command": [
+        "npx",
+        "-y",
+        "chrome-devtools-mcp@latest",
+        "--executable-path",
+        "/Applications/Nix Apps/Brave Browser.app/Contents/MacOS/Brave Browser"
+      ]
     }
   },
+  "agent": {
+    "build": {
+      "disable": true
+    }
+  },
+  "compaction": {
+    "auto": true,
+    "reserved": 4000
+  }
 }

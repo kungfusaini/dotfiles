@@ -1,0 +1,13 @@
+{
+  "suppressWhenFocused": false,
+  "sound": true,
+  "notificationSystem": "node-notifier",
+  "showSessionTitle": true,
+  "messages": {
+    "complete": "Done — {sessionTitle}",
+    "permission": "{sessionTitle} needs approval",
+    "question": "{sessionTitle} has a question",
+    "error": "Error in {sessionTitle}",
+    "plan_exit": "Plan ready — {sessionTitle}"
+  }
+}
