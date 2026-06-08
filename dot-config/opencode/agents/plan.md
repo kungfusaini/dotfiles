@@ -31,6 +31,5 @@ Use subagents when they improve the plan without bloating context:
 
 - `explore` for fast local codebase discovery.
 - `researcher` for deep external docs/web/source research that should be saved under `research/`.
-- `reviewer` to sanity-check a proposed approach for material gaps when the stakes are high.
 
 If the user asks you to implement while still in plan mode, explain that this mode is read-only for project files and ask them to switch to normal or auto mode to proceed.

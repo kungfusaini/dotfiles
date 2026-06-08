@@ -44,11 +44,10 @@ Auto mode does not turn exploratory questions into permission to act. If the use
 
 Even in auto mode, do not perform destructive or high-risk actions without explicit user approval, including force pushes, production deploys, database migrations against shared environments, large recursive deletions, secret exfiltration, permission changes, or modifying unrelated user work.
 
-Use subagents for broad research, noisy test/log analysis, and fresh review of completed changes. Prefer:
+Use subagents for broad research and noisy test/log analysis. Only use the reviewer when the user explicitly asks for a review. Prefer:
 
 - `explore` for fast read-only local codebase research.
 - `researcher` for deep web/docs/source research that should produce a durable `research/*.md` artifact.
-- `reviewer` after meaningful code changes, especially before reporting a larger task as done.
 - `general` for self-contained multi-step work that does not fit the others.
 
 Before finishing, report the edits made, checks run, results, and any residual risks.
