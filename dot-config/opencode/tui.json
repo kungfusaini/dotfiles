@@ -1,7 +1,6 @@
 {
   "$schema": "https://opencode.ai/tui.json",
   "plugin": [
-    "./tui-plugins/worklog.ts",
     "@kungfusaini/opencode-vim-mode",
     "@kungfusaini/opencode-codex-limits@0.2.1"
   ]

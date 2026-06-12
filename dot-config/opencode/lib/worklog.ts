@@ -5,6 +5,7 @@ import path from "node:path"
 
 export const WORKLOG_VERSION = 1
 export const ALLOWED_TYPES = new Set(["start", "progress", "decision", "mistake", "stuck", "finish", "next", "note"])
+const RECAP_ENTRY_COUNT = 12
 
 export type WorklogState = {
   disabled: Record<string, boolean>
@@ -151,4 +152,36 @@ export function latestSummary(info: WorklogInfo) {
   if (latest.next) return latest.next
   if (latest.result) return latest.result
   return `${latest.type} update recorded`
+}
+
+function compactEntry(entry: WorklogEntry) {
+  const bits = [`- ${entry.type}: ${entry.summary}`]
+  if (entry.task) bits.push(`task=${entry.task}`)
+  if (entry.next) bits.push(`next=${entry.next}`)
+  if (entry.result) bits.push(`result=${entry.result}`)
+  if (entry.blocker) bits.push(`blocker=${entry.blocker}`)
+  if (entry.reason) bits.push(`reason=${entry.reason}`)
+  if (entry.lesson) bits.push(`lesson=${entry.lesson}`)
+  return bits.join(" | ")
+}
+
+export function worklogRecap(info: WorklogInfo) {
+  const entries = readAllEntries(info.log)
+  const recent = entries.slice(-RECAP_ENTRY_COUNT)
+  const latest = entries.at(-1)
+
+  return [
+    "Worklog recap for this project.",
+    `Worklog file: ${info.log}`,
+    `Project: ${projectLabel(info)}`,
+    latest ? `Latest status: ${latest.summary}` : "Latest status: none yet",
+    "Recent worklog entries:",
+    recent.length ? recent.map(compactEntry).join("\n") : "- none yet",
+    "Use this recap to orient yourself. Do not dump the raw entries into the user-visible response.",
+    "If deeper project history is needed later, read the worklog file above.",
+  ].join("\n")
+}
+
+export function worklogReminder(info: WorklogInfo) {
+  return `Worklog tracking is enabled. For meaningful progress, decisions, blockers, mistakes, finishes, or next steps, append a concise entry with worklog_append. If deeper project history is needed, read the project worklog file: ${info.log}`
 }

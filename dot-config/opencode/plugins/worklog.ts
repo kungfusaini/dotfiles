@@ -5,9 +5,105 @@ import {
   appendWorklogEntry,
   ensureStore,
   isDisabled,
+  latestSummary,
   projectInfo,
+  projectLabel,
+  setDisabled,
   type WorklogEntry,
+  worklogRecap,
+  worklogReminder,
 } from "../lib/worklog.js"
+
+const PENDING_COMMAND_CONTEXT_TTL_MS = 10 * 60 * 1000
+
+type PendingCommandContext = {
+  text: string
+  expiresAt: number
+}
+
+const pendingCommandContext = new Map<string, PendingCommandContext>()
+
+function clearExpiredPendingContexts() {
+  const now = Date.now()
+  for (const [sessionID, pending] of pendingCommandContext.entries()) {
+    if (pending.expiresAt <= now) pendingCommandContext.delete(sessionID)
+  }
+}
+
+function setPendingCommandContext(sessionID: string, text: string) {
+  clearExpiredPendingContexts()
+  pendingCommandContext.set(sessionID, {
+    text,
+    expiresAt: Date.now() + PENDING_COMMAND_CONTEXT_TTL_MS,
+  })
+}
+
+function getPendingCommandContext(sessionID: string) {
+  clearExpiredPendingContexts()
+  return pendingCommandContext.get(sessionID)?.text
+}
+
+function clearPendingCommandContext(sessionID: string) {
+  pendingCommandContext.delete(sessionID)
+}
+
+function setCommandResponse(parts: any[], text: string, synthetic = false) {
+  const output = parts.find((part) => part?.type === "text" && typeof part.text === "string")
+  if (output && output.type === "text" && typeof output.text === "string") {
+    output.text = text
+    if (synthetic) output.synthetic = true
+    else delete output.synthetic
+    return
+  }
+
+  parts.unshift({ type: "text", text, ...(synthetic ? { synthetic: true } : {}) })
+}
+
+function textFromParts(parts: any[]) {
+  return parts
+    .filter((part) => part?.type === "text" && !part.synthetic && !part.ignored && typeof part.text === "string")
+    .map((part) => part.text)
+    .join("\n\n")
+    .trim()
+}
+
+function worklogCommandContext(info: ReturnType<typeof ensureStore>, argumentsText: string) {
+  const label = projectLabel(info)
+
+  if (argumentsText.trim()) {
+    return {
+      userText: "/worklog",
+      systemText: "The user invoked /worklog with unsupported arguments. Respond with one line: Usage: /worklog",
+    }
+  }
+
+  const enabled = !isDisabled(info.id)
+  if (enabled) {
+    setDisabled(info.id, true)
+    return {
+      userText: "/worklog",
+      systemText: [
+        `The user invoked /worklog. Worklog tracking was disabled for project ${label}.`,
+        "No tool calls or file reads are needed for this command response.",
+        `Respond with one line: Worklog disabled · project: ${label}`,
+      ].join("\n"),
+    }
+  }
+
+  setDisabled(info.id, false)
+  return {
+    userText: "/worklog",
+    systemText: [
+      "The user invoked /worklog. Worklog tracking was enabled for this project.",
+      "Use the recap below as hidden orientation context for this response. No tool calls or file reads are needed to answer this command.",
+      worklogRecap(info),
+      "Produce a concise durable orientation summary for the user.",
+      "Do not dump raw worklog entries. Do not mention hidden context or implementation details. Do not mention the worklog path unless the user asks for it.",
+      `Start with: Worklog enabled · project: ${label}`,
+      `Include a short current status based on the recap. If no useful status exists, use: Current status: ${latestSummary(info)}`,
+    ].join("\n\n"),
+  }
+}
 
 const worklogAppendTool = tool({
   description: "Append a worklog event to the current project worklog",
@@ -61,10 +157,54 @@ const worklogAppendTool = tool({
   },
 })
 
-export const WorklogPlugin: Plugin = async () => {
+export const WorklogPlugin: Plugin = async ({ directory }) => {
   return {
     tool: {
       worklog_append: worklogAppendTool,
+    },
+    "command.execute.before": async (input, output) => {
+      if (input.command !== "worklog") return
+
+      const info = ensureStore(projectInfo(directory))
+      const response = worklogCommandContext(info, input.arguments)
+      setCommandResponse(output.parts, response.userText)
+      setPendingCommandContext(input.sessionID, response.systemText)
+    },
+    "chat.message": async (input, output) => {
+      if (getPendingCommandContext(input.sessionID)) return
+      if (textFromParts(output.parts) !== "/worklog") return
+
+      const info = ensureStore(projectInfo(directory))
+      const response = worklogCommandContext(info, "")
+      setCommandResponse(output.parts, response.userText)
+      setPendingCommandContext(input.sessionID, response.systemText)
+    },
+    "experimental.chat.system.transform": async (input, output) => {
+      if (!input.sessionID) return
+      const info = ensureStore(projectInfo(directory))
+      const pending = getPendingCommandContext(input.sessionID)
+      if (pending) {
+        output.system.push(pending)
+        return
+      }
+
+      if (!isDisabled(info.id)) output.system.push(worklogReminder(info))
+    },
+    event: async ({ event }) => {
+      const type = (event as any)?.type
+      const properties = (event as any)?.properties
+      const sessionID = properties?.sessionID
+      if (typeof sessionID !== "string") return
+
+      if (type === "command.executed" && properties?.name === "worklog") {
+        clearPendingCommandContext(sessionID)
+        return
+      }
+
+      if (type === "message.updated" && properties?.info?.role === "assistant") {
+        const finish = properties.info.finish
+        if (finish && !["tool-calls", "unknown"].includes(finish)) clearPendingCommandContext(sessionID)
+      }
     },
   }
 }
