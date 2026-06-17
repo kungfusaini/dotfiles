@@ -6,7 +6,8 @@
     "openai"
   ],
   "plugin": [
-    "@mohak34/opencode-notifier@0.2.5"
+    "@mohak34/opencode-notifier@0.2.5",
+    "@kungfusaini/opencode-worklog"
   ],
   "mcp": {
     "chrome-devtools": {
