@@ -7,7 +7,7 @@
   ],
   "plugin": [
     "@mohak34/opencode-notifier@0.2.5",
-    "@kungfusaini/opencode-worklog"
+    "file:///Users/sumeet/matrix/tools/opencode/opencode-worklog/src/index.js"
   ],
   "mcp": {
     "chrome-devtools": {
