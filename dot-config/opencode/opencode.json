@@ -1,13 +1,47 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "normal",
+  "small_model": "opencode/big-pickle",
   "enabled_providers": [
     "opencode",
-    "openai"
+    "openai",
+    "litellm"
   ],
+  "provider": {
+    "litellm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "LiteLLM",
+      "options": {
+        "baseURL": "{env:LITELLM_BASE_URL}",
+        "apiKey": "{env:LITELLM_API_KEY}"
+      },
+      "models": {
+        "native-router": {
+          "name": "native-router",
+          "tool_call": true,
+          "reasoning": true,
+          "temperature": true,
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        },
+        "model-router": {
+          "name": "model-router",
+          "tool_call": true,
+          "reasoning": true,
+          "temperature": true,
+          "limit": {
+            "context": 200000,
+            "output": 32000
+          }
+        }
+      }
+    }
+  },
   "plugin": [
     "@mohak34/opencode-notifier@0.2.5",
-    "file:///Users/sumeet/matrix/tools/opencode/opencode-worklog/src/index.js"
+    "@kungfusaini/opencode-projects"
   ],
   "mcp": {
     "chrome-devtools": {
