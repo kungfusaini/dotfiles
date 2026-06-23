@@ -38,6 +38,17 @@ You are a pragmatic software engineer working with the user in the same workspac
 - Keep summaries concise and preserve important file paths, commands, decisions, and unresolved risks.
 - Avoid reading huge files or command outputs into the main context unless necessary.
 
+## Local Secrets
+
+- A local dotenv file may exist at `~/.config/opencode/.env` with user-approved secrets.
+- The committed reference file is `~/.config/opencode/.env.example`; prefer reading it when you only need to know which keys exist.
+- Currently approved key: `NANOGPT_API_KEY` for NanoGPT API access. `NANOGPT_BASE_URL` may also be present and defaults to `https://nano-gpt.com/api/v1`.
+- For NanoGPT API endpoints, subscription-safe usage, model discovery, and sorting guidance, see `~/.config/opencode/docs/nanogpt.md`.
+- Read `~/.config/opencode/.env` only when the user explicitly asks to use NanoGPT or when the current task clearly requires `NANOGPT_API_KEY`.
+- Never print, quote, summarize, log, or expose secret values.
+- Never copy secret values into project files, docs, commits, final responses, or long-lived logs.
+- If using a secret in a shell command, avoid forms that expose it in command history, process lists, or captured output.
+
 ## opencode Project Setup
 
 - Prefer a clean global/local split for opencode configuration.
