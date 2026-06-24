@@ -3,7 +3,7 @@
   "plugin": [
     "@kungfusaini/opencode-vim-mode@0.1.3",
     "@kungfusaini/opencode-codex-limits@0.2.1",
-    "@kungfusaini/opencode-projects/tui"
+    "@kungfusaini/opencode-projects"
   ],
   "keybinds": {
     "leader": "ctrl+x",
