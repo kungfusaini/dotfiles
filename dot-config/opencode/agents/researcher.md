@@ -7,14 +7,22 @@ permission:
     "*": deny
     "research/*.md": allow
     "research/**/*.md": allow
-  bash:
-    "*": ask
-    "mkdir -p research*": allow
-  webfetch: allow
-  websearch: allow
   read: allow
   glob: allow
   grep: allow
+  list: allow
+  bash:
+    "*": ask
+    "pwd": allow
+    "ls*": allow
+    "mkdir -p research*": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "rg*": allow
+  webfetch: allow
+  websearch: allow
 ---
 
 You are a deep research specialist. Your job is to investigate thoroughly, compare sources, and return evidence-backed conclusions without flooding the main conversation.

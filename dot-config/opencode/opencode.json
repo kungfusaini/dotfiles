@@ -41,12 +41,13 @@
   },
   "plugin": [
     "@mohak34/opencode-notifier@0.2.5",
-    "@kungfusaini/opencode-projects"
+    "@kungfusaini/opencode-projects",
+	"@dietrichgebert/ponytail"
   ],
   "mcp": {
     "chrome-devtools": {
       "type": "local",
-      "enabled": false,
+      "enabled": true,
       "command": [
         "npx",
         "-y",

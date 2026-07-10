@@ -1,0 +1,69 @@
+model_list:
+  - model_name: opencode-fast
+    litellm_params:
+      model: os.environ/OPENCODE_FAST_MODEL
+      rpm: 600
+
+  - model_name: opencode-balanced
+    litellm_params:
+      model: os.environ/OPENCODE_BALANCED_MODEL
+      rpm: 300
+
+  - model_name: opencode-complex
+    litellm_params:
+      model: os.environ/OPENCODE_COMPLEX_MODEL
+      rpm: 120
+
+  - model_name: opencode-reasoning
+    litellm_params:
+      model: os.environ/OPENCODE_REASONING_MODEL
+      rpm: 60
+
+  - model_name: opencode-classifier
+    litellm_params:
+      model: os.environ/OPENCODE_CLASSIFIER_MODEL
+      rpm: 600
+
+  - model_name: native-router
+    litellm_params:
+      model: auto_router/complexity_router
+      complexity_router_config:
+        tiers:
+          SIMPLE: opencode-fast
+          MEDIUM: opencode-balanced
+          COMPLEX: opencode-complex
+          REASONING: opencode-reasoning
+        tier_boundaries:
+          simple_medium: 0.16
+          medium_complex: 0.36
+          complex_reasoning: 0.62
+        token_thresholds:
+          simple: 18
+          complex: 350
+        dimension_weights:
+          tokenCount: 0.1
+          codePresence: 0.3
+          reasoningMarkers: 0.26
+          technicalTerms: 0.22
+          simpleIndicators: 0.05
+          multiStepPatterns: 0.05
+          questionComplexity: 0.02
+      complexity_router_default_model: opencode-balanced
+
+  - model_name: model-router
+    litellm_params:
+      model: os.environ/OPENCODE_BALANCED_MODEL
+      rpm: 300
+
+litellm_settings:
+  drop_params: true
+  set_verbose: false
+  callbacks: hooks.model_router.proxy_handler_instance
+
+router_settings:
+  routing_strategy: simple-shuffle
+  num_retries: 2
+  timeout: 45
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY

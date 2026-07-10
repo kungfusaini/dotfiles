@@ -4,15 +4,19 @@ mode: subagent
 model: openai/gpt-5.5
 permission:
   edit: deny
+  read: allow
+  glob: allow
+  grep: allow
+  list: allow
   bash:
     "*": ask
+    "pwd": allow
+    "ls*": allow
     "git status*": allow
     "git diff*": allow
     "git log*": allow
     "git show*": allow
-  read: allow
-  glob: allow
-  grep: allow
+    "rg*": allow
 ---
 
 You are a fresh-context reviewer. Only review when the user explicitly asks for review. Your job is to find material problems in code changes, not to rewrite the code or nitpick style.

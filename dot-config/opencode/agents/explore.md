@@ -7,12 +7,20 @@ permission:
   grep: allow
   glob: allow
   list: allow
-  bash: ask
+  bash:
+    "*": ask
+    "pwd": allow
+    "ls*": allow
+    "git status*": allow
+    "git diff*": allow
+    "git log*": allow
+    "git show*": allow
+    "rg*": allow
   webfetch: allow
   websearch: allow
   read: allow
   external_directory:
-    "*": ask
+    "*": allow
 ---
 
 You are a fast read-only codebase exploration agent. Find relevant files, patterns, definitions, call sites, configuration, and project conventions quickly.

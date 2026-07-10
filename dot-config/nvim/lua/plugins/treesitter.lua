@@ -1,31 +1,20 @@
 return {
   "nvim-treesitter/nvim-treesitter",
-  build = function()
-    if require("nvim-treesitter.install").status().pending then
-      require("nvim-treesitter.install").update({ with_sync = true })()
-    end
-  end,
+  branch = "main",  -- Use main branch for Neovim 0.12 compatibility
+  build = ":TSUpdate",
+  lazy = false,
   config = function()
-    require("nvim-treesitter.configs").setup({
-      ensure_installed = {
-        "cpp",
-        "java",
-        "lua",
-        "python",
-        "markdown",
-        "markdown_inline",
-      },
-      sync_install = false,
-      ignore_install = {},
-      auto_install = true,
-      highlight = {
-        enable = true,
-        additional_vim_regex_highlighting = { "markdown" },
-      },
-      folds = {
-        enable = true,
-      },
-      modules = {},
+    -- New main branch setup for Neovim 0.12
+    require("nvim-treesitter").setup({
+      install_dir = vim.fn.stdpath("data") .. "/site",
+    })
+    
+    -- Enable treesitter highlighting for markdown files
+    vim.api.nvim_create_autocmd("FileType", {
+      pattern = { "markdown", "markdown_inline" },
+      callback = function()
+        vim.treesitter.start()
+      end,
     })
   end
 }

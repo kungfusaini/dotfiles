@@ -1,0 +1,90 @@
+{
+	"name": "json",
+	"publisher": "Meezilla",
+	"icon": "icon.png",
+	"displayName": "JSON",
+	"description": "Beautify JSON",
+	"repository": {
+		"type": "git",
+		"url": "git+https://gitlab.meezilla.com/Meezilla/json.git"
+	},
+	"license": "The Unlicense",
+	"version": "0.1.2",
+	"engines": {
+		"vscode": "^1.56.0"
+	},
+	"categories": [
+		"Formatters"
+	],
+	"activationEvents": [
+		"onCommand:json",
+		"onCommand:json.shortcut"
+	],
+	"contributes": {
+		"commands": [
+			{
+				"command": "json",
+				"title": "Beautify JSON"
+			}
+		],
+		"keybindings": [
+			{
+				"command": "json.shortcut",
+				"key": "ctrl+shift+j",
+				"mac": "cmd+shift+j"
+			}
+		],
+		"configuration": {
+			"title": "JSON",
+			"properties": {
+				"json.indent": {
+					"type": "string",
+					"default": "2",
+					"enum": [
+						"2",
+						"4"
+					]
+				},
+				"json.primitiveType": {
+					"type": "string",
+					"default": "keep",
+					"enum": [
+						"keep",
+						"parse"
+					],
+					"enumDescriptions": [
+						"\"1.00\"=>\"1.00\", \"true\"=>\"true\"",
+						"\"1.00\"=>1, \"true\"=>true"
+					]
+				}
+			}
+		}
+	},
+	"main": "./dist/extension.js",
+	"scripts": {
+		"vscode:prepublish": "npm run compile",
+		"compile": "rimraf ./json-*.vsix && tsc -p ./",
+		"watch": "tsc -watch -p ./",
+		"pretest": "npm run compile && npm run lint",
+		"lint": "eslint src --ext ts",
+		"pack": "vsce package",
+		"publish": "vsce publish"
+	},
+	"devDependencies": {
+		"@types/glob": "^8.0.0",
+		"@types/vscode": "^1.56.0",
+		"@typescript-eslint/eslint-plugin": "^5.37.0",
+		"@typescript-eslint/parser": "^5.37.0",
+		"eslint": "^8.23.1",
+		"glob": "^8.0.3",
+		"rimraf": "^3.0.2",
+		"typescript": "^4.8.3",
+		"vsce": "^2.11.0",
+		"vscode-test": "^1.5.0"
+	},
+	"__metadata": {
+		"installedTimestamp": 1766484053520,
+		"targetPlatform": "undefined",
+		"size": 29740
+	}
+}

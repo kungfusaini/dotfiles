@@ -42,6 +42,8 @@ alias p="pbpaste"
 alias t="task"
 alias tn="task-note"
 alias bucket="/Users/sumeet/matrix/web/bucket/bucket.py"
+alias oc="OPENCODE_FAST_BOOT=1 opencode"
+alias occ="OPENCODE_FAST_BOOT=1 OPENCODE_DISABLE_PROJECT_CONFIG=1 opencode"
 
 ########## Network Aliases ##########
 # alias ssh="kitty +kitten ssh"

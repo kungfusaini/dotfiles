@@ -28,30 +28,44 @@
               contract
               enumitem
               cleveref
+              # CV / resume packages
+              titlesec
+              marvosym
+              fontawesome5
+              microtype
               ;
           };
         in
         {
 
-          nixpkgs.config.allowUnfree = true;
+          nixpkgs.config = {
+            allowUnfree = true;
+            permittedInsecurePackages = [
+              "electron-39.8.10" # bitwarden-desktop
+              "lima-full-1.2.2"
+              "lima-additional-guestagents-1.2.2"
+            ];
+          };
           # List packages installed in system profile. To search by name, run:
           # $ nix-env -qaP | grep wget
-          environment.systemPackages = with pkgs; [
+            environment.systemPackages = with pkgs; [
             aerospace
             alt-tab-macos
+	    azure-cli
             atuin
             bat
             blueutil
             biome
             bitwarden-desktop
             brave
+            bun
             cmake
             colima
             cowsay
             direnv
-            docker
+            docker_29
             fastfetch
-			ffmpeg
+            ffmpeg
             fortune
             fzf
             harper
@@ -61,7 +75,7 @@
             iina
             kitty
             marksman
-			mkcert
+            mkcert
             neovim
             netlify-cli
             nil
@@ -72,9 +86,12 @@
             pyenv
             raycast
             sioyek
+            slack
+            sox
             spotify
             starship
             stow
+            tailscale
             taskwarrior3
             taskwarrior-tui
             telegram-desktop
@@ -83,7 +100,6 @@
             timewarrior
             tldr
             tmux
-            transmission_4-qt
             tree
             tree-sitter
             unrar
@@ -100,20 +116,30 @@
           # regular brew packages
           # system services
           # macos appstore apps # mas-cli can help with this (getting ids etc) }
-          homebrew = {
-            enable = true;
-            onActivation.cleanup = "zap"; # Removes all packages apart from the ones below
-            onActivation.autoUpdate = true;
-            onActivation.upgrade = true;
+            homebrew = {
+              enable = true;
+              onActivation.cleanup = "zap"; # Removes all packages apart from the ones below
+              onActivation.autoUpdate = true;
+              onActivation.upgrade = true;
 
-            brews = [
+              taps = [
+                "hashicorp/tap"
+              ];
+
+              brews = [
+              "hashicorp/tap/terraform"
               "basedpyright"
               "gh"
+              "libpq"
               "lua-language-server"
               "opencode"
+              "bitwarden-cli"
+              "poppler"
               "pyenv-virtualenv"
               "pngpaste"
               "spotify_player" # was broken in nix
+              "tesseract"
+              "tesseract-lang"
               "tpm"
             ];
 
@@ -122,17 +148,19 @@
               "calibre"
               "claude-code"
               "gimp"
+              "handy"
               "hammerspoon"
               "inkscape"
               "itsycal" # this didn't work in nix as it needs to go into the application folder
               "karabiner-elements" # this didn't work with nix as it didn't ask for permissions correctly
               "libreoffice"
+              "linear-linear"
               "monitorcontrol"
               "nordvpn"
               "openemu"
               "openmtp"
               "raspberry-pi-imager"
-			  "shotcut"
+              "shotcut"
               "stats"
               "stremio"
               "time-out"
@@ -169,6 +197,14 @@
 
           # Necessary for using flakes on this system.
           nix.settings.experimental-features = "nix-command flakes";
+          nix.optimise.automatic = true;
+          nix.settings.sandbox = false;
+
+          # Auto garbage collect old generations
+          nix.gc = {
+            automatic = true;
+            options = "--delete-older-than 30d";
+          };
 
           # Enable Zsh
           programs.zsh = {
@@ -181,11 +217,11 @@
 
           # WORKAROUND: `systemsetup -f -setremotelogin on` requires `Full Disk Access`
           # permission for the Application calling it
-          system.activationScripts.extraActivation.text = ''
+            system.activationScripts.extraActivation.text = ''
             if [[ "$(systemsetup -getremotelogin | sed 's/Remote Login: //')" == "Off" ]]; then
               launchctl load -w /System/Library/LaunchDaemons/ssh.plist
             fi
-          '';
+          ''; 
 
           # Reverse SSH tunnel LaunchAgent
           launchd = {

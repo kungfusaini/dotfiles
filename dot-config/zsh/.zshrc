@@ -17,3 +17,5 @@ done
 HISTFILE="$XDG_STATE_HOME/zsh/history"
 
 source $ZDOTDIR/conf/startup.zsh
+
+. "$HOME/.local/share/../bin/env"

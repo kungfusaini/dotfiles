@@ -202,6 +202,9 @@ function summarize(payload) {
     primary ? { name: limitName(primary, "Primary limit"), ...primary } : null,
     secondary ? { name: limitName(secondary, "Secondary limit"), ...secondary } : null,
   ]
+  const additionalLimits = (Array.isArray(payload.additional_rate_limits) ? payload.additional_rate_limits : [])
+    .map((limit) => summarizeAdditionalLimit(limit))
+    .filter(Boolean)
   const credits = creditsSummary(payload.credits)
 
   return {
@@ -210,7 +213,28 @@ function summarize(payload) {
     allowed: payload.rate_limit?.allowed ?? null,
     limitReached: payload.rate_limit?.limit_reached ?? null,
     limits,
+    additionalLimits,
     credits,
+  }
+}
+
+function summarizeAdditionalLimit(limit) {
+  const rateLimit = limit?.rate_limit
+  if (!rateLimit) return null
+
+  const primary = mapWindow(rateLimit.primary_window)
+  const secondary = mapWindow(rateLimit.secondary_window)
+  const limits = [
+    primary ? { name: limitName(primary, "5h limit"), ...primary } : null,
+    secondary ? { name: limitName(secondary, "Weekly limit"), ...secondary } : null,
+  ]
+
+  return {
+    name: limit.limit_name ?? limit.metered_feature ?? "Additional limit",
+    meteredFeature: limit.metered_feature ?? null,
+    allowed: rateLimit.allowed ?? null,
+    limitReached: rateLimit.limit_reached ?? null,
+    limits,
   }
 }
 
@@ -225,6 +249,19 @@ function printHuman(summary) {
   }
   for (const limit of summary.limits) {
     console.log(formatLimit(limit?.name ?? "Limit", limit))
+  }
+  for (const additionalLimit of summary.additionalLimits) {
+    console.log("")
+    console.log(additionalLimit.name)
+    if (typeof additionalLimit.allowed === "boolean") {
+      console.log(`Allowed: ${additionalLimit.allowed ? "yes" : "no"}`)
+    }
+    if (typeof additionalLimit.limitReached === "boolean") {
+      console.log(`Limit reached: ${additionalLimit.limitReached ? "yes" : "no"}`)
+    }
+    for (const limit of additionalLimit.limits) {
+      console.log(formatLimit(limit?.name ?? "Limit", limit))
+    }
   }
   if (summary.credits) console.log(`Credits: ${summary.credits}`)
   console.log(`Source: ${USAGE_URL}`)
