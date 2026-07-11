@@ -11,4 +11,33 @@ dot-config/colima/
 
 dot-config/ipython/profile_default/history.sqlite
 
+dot-config/android/adbkey
+dot-config/lipi/vision-key.json
+dot-config/npm/npmrc
+
+# Claude runtime data: transcripts/tool outputs can contain pasted env files,
+# API tokens, command output, and project-local secrets.
+dot-config/claude/.credentials.json
+dot-config/claude/.last-cleanup
+dot-config/claude/backups/
+dot-config/claude/cache/
+dot-config/claude/daemon-auth-cooldown
+dot-config/claude/daemon-auth-status.json
+dot-config/claude/daemon.log
+dot-config/claude/daemon/
+dot-config/claude/debug/
+dot-config/claude/file-history/
+dot-config/claude/history.jsonl
+dot-config/claude/jobs/
+dot-config/claude/mcp-needs-auth-cache.json
+dot-config/claude/paste-cache/
+dot-config/claude/plans/
+dot-config/claude/projects/
+dot-config/claude/session-env/
+dot-config/claude/settings.local.json
+dot-config/claude/shell-snapshots/
+dot-config/claude/tasks/
+dot-config/claude/telemetry/
+dot-config/claude/todos/
+dot-config/claude/transcripts/
 
