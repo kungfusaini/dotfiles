@@ -12,6 +12,7 @@ dot-config/colima/
 dot-config/ipython/profile_default/history.sqlite
 
 dot-config/android/adbkey
+dot-config/aether/env
 dot-config/lipi/vision-key.json
 dot-config/npm/npmrc
 
