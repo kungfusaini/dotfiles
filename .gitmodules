@@ -1,0 +1,3 @@
+[submodule "dot-pi"]
+	path = dot-pi
+	url = git@github.com:kungfusaini/pi-config.git
