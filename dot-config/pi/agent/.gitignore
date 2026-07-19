@@ -1,0 +1,6 @@
+.DS_Store
+auth.json
+sessions/
+bin/
+npm/*
+!npm/.gitignore

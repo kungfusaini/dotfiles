@@ -1,0 +1,11 @@
+{
+  "lastChangelogVersion": "0.80.6",
+  "theme": "gruvbox-dark",
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.5",
+  "defaultThinkingLevel": "medium",
+  "hideThinkingBlock": true,
+  "packages": [
+    "npm:pi-web-access"
+  ]
+}
