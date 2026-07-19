@@ -7,7 +7,6 @@ export XDG_CONFIG_DIRS="/etc/xdg"
 export XDG_DATA_DIRS="/usr/local/share:/usr/share"
 export ANDROID_USER_HOME=$XDG_CONFIG_HOME/android
 export PI_CODING_AGENT_DIR="$XDG_CONFIG_HOME/pi/agent"
-export PI_CODING_AGENT_SESSION_DIR="$XDG_STATE_HOME/pi/sessions"
 
 export LESSHISTFILE=-
 export DOCKER_CONFIG=$XDG_CONFIG_HOME/docker
