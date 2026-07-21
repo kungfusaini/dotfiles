@@ -48,10 +48,10 @@
           };
           # List packages installed in system profile. To search by name, run:
           # $ nix-env -qaP | grep wget
-            environment.systemPackages = with pkgs; [
+          environment.systemPackages = with pkgs; [
             aerospace
             alt-tab-macos
-	    azure-cli
+            azure-cli
             atuin
             bat
             blueutil
@@ -116,17 +116,17 @@
           # regular brew packages
           # system services
           # macos appstore apps # mas-cli can help with this (getting ids etc) }
-            homebrew = {
-              enable = true;
-              onActivation.cleanup = "zap"; # Removes all packages apart from the ones below
-              onActivation.autoUpdate = true;
-              onActivation.upgrade = true;
+          homebrew = {
+            enable = true;
+            onActivation.cleanup = "zap"; # Removes all packages apart from the ones below
+            onActivation.autoUpdate = true;
+            onActivation.upgrade = true;
 
-              taps = [
-                "hashicorp/tap"
-              ];
+            taps = [
+              "hashicorp/tap"
+            ];
 
-              brews = [
+            brews = [
               "hashicorp/tap/terraform"
               "basedpyright"
               "gh"
@@ -134,6 +134,7 @@
               "lua-language-server"
               "opencode"
               "bitwarden-cli"
+              "pi-coding-agent"
               "poppler"
               "pyenv-virtualenv"
               "pngpaste"
@@ -217,11 +218,11 @@
 
           # WORKAROUND: `systemsetup -f -setremotelogin on` requires `Full Disk Access`
           # permission for the Application calling it
-            system.activationScripts.extraActivation.text = ''
+          system.activationScripts.extraActivation.text = ''
             if [[ "$(systemsetup -getremotelogin | sed 's/Remote Login: //')" == "Off" ]]; then
               launchctl load -w /System/Library/LaunchDaemons/ssh.plist
             fi
-          ''; 
+          '';
 
           # Reverse SSH tunnel LaunchAgent
           launchd = {
