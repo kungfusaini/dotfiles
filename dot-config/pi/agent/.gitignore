@@ -1,5 +1,6 @@
 .DS_Store
 auth.json
+models-store.json
 sessions/
 bin/
 npm/*

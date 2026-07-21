@@ -1,7 +1,21 @@
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { resolveContext } from "./projects.ts";
+import { type SelectItem, SelectList, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import {
+	clearStreamSelection,
+	createStream,
+	ensureProject,
+	listProjects,
+	listStreams,
+	recordCurrentSessionOwner,
+	recordSessionOwner,
+	resolveContext,
+	selectProject,
+	selectStream,
+} from "./projects.ts";
 import { ensureStore, type ProjectContextInfo } from "./store.ts";
 import {
 	archivePlan,
@@ -56,8 +70,43 @@ interface TodoState {
 	updatedAt: string;
 }
 
-function contextInfo(cwd: string): ProjectContextInfo {
-	return ensureStore(resolveContext(cwd));
+function contextInfo(cwd: string, sessionID?: string): ProjectContextInfo {
+	return ensureStore(resolveContext(cwd, { sessionID }));
+}
+
+function contextInfoFromCtx(ctx: ExtensionContext): ProjectContextInfo {
+	return contextInfo(ctx.cwd, ctx.sessionManager.getSessionId());
+}
+
+function formatHomePath(value: string | undefined): string {
+	if (!value) return "";
+	const home = process.env.HOME || process.env.USERPROFILE;
+	if (!home) return value;
+	if (value === home) return "~";
+	if (value.startsWith(`${home}/`)) return `~/${value.slice(home.length + 1)}`;
+	return value;
+}
+
+function expandHomePath(value: string): string {
+	const trimmed = value.trim();
+	if (trimmed === "~") return process.env.HOME || trimmed;
+	if (trimmed.startsWith("~/")) return `${process.env.HOME || ""}/${trimmed.slice(2)}`;
+	return trimmed;
+}
+
+function workspaceLabel(info: ProjectContextInfo): string {
+	const project = info.project?.name || info.project?.id || info.id;
+	return info.stream ? `${project} / ${info.stream.name || info.stream.id}` : `${project} / Project`;
+}
+
+function workspaceDescription(info: ProjectContextInfo): string {
+	return [
+		`Scope: ${info.scope}`,
+		`Project: ${info.project?.name || info.project?.id || info.id}`,
+		info.stream ? `Stream: ${info.stream.name || info.stream.id}` : "Stream: Project scope",
+		`Root: ${formatHomePath(info.root)}`,
+		`Plans: ${formatHomePath(info.plans)}`,
+	].join("\n");
 }
 
 function unique(names: string[]): string[] {
@@ -236,6 +285,8 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 	}
 
 	function updateStatus(ctx: ExtensionContext): void {
+		const info = contextInfoFromCtx(ctx);
+		ctx.ui.setStatus("workspace", ctx.ui.theme.fg(info.stream ? "accent" : "muted", `scope:${workspaceLabel(info)}`));
 		if (planModeEnabled) ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("warning", "plan"));
 		else ctx.ui.setStatus("plan-mode", undefined);
 		updateTodoWidget(ctx);
@@ -271,6 +322,236 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		updateStatus(ctx);
 		persistState();
 	}
+
+	async function chooseFromItems(ctx: ExtensionContext, title: string, items: SelectItem[]): Promise<string | null> {
+		if (ctx.mode !== "tui") return null;
+		const selected = await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
+			const list = new SelectList(items, Math.min(Math.max(items.length, 1), 14), {
+				selectedPrefix: (s: string) => theme.fg("accent", s),
+				selectedText: (s: string) => theme.fg("accent", s),
+				description: (s: string) => theme.fg("muted", s),
+				scrollInfo: (s: string) => theme.fg("dim", s),
+				noMatch: (s: string) => theme.fg("warning", s),
+			});
+			list.onSelect = (item) => done(String(item.value));
+			list.onCancel = () => done(null);
+
+			function panelLine(content: string, innerWidth: number, paddingX = 3): string {
+				const contentWidth = Math.max(1, innerWidth - paddingX * 2);
+				const clipped = truncateToWidth(content, contentWidth, "…");
+				const padding = " ".repeat(Math.max(0, contentWidth - visibleWidth(clipped)));
+				return `${theme.fg("borderAccent", "│")}${" ".repeat(paddingX)}${clipped}${padding}${" ".repeat(paddingX)}${theme.fg("borderAccent", "│")}`;
+			}
+
+			return {
+				render(width: number) {
+					const innerWidth = Math.max(26, width - 4);
+					const top = theme.fg("borderAccent", `╭${"─".repeat(innerWidth)}╮`);
+					const bottom = theme.fg("borderAccent", `╰${"─".repeat(innerWidth)}╯`);
+					const empty = panelLine("", innerWidth);
+					const listWidth = Math.max(1, innerWidth - 6);
+					const listLines = list.render(listWidth).map((line) => panelLine(line, innerWidth));
+					return [
+						top,
+						empty,
+						panelLine(theme.fg("accent", theme.bold(title)), innerWidth),
+						empty,
+						...listLines,
+						empty,
+						panelLine(theme.fg("dim", "↑↓ navigate • type search • enter select • esc cancel"), innerWidth),
+						empty,
+						bottom,
+					];
+				},
+				invalidate() { list.invalidate(); },
+				handleInput(data: string) { list.handleInput(data); tui.requestRender(); },
+			};
+		}, { overlay: true, overlayOptions: { width: "80%", maxHeight: "85%", margin: 2 } });
+		return selected ?? null;
+	}
+
+	function directoryPickerItems(currentPath: string): SelectItem[] {
+		const current = path.resolve(currentPath);
+		let children: SelectItem[] = [];
+		try {
+			children = readdirSync(current, { withFileTypes: true })
+				.filter((entry) => entry.isDirectory())
+				.map((entry) => {
+					const fullPath = path.join(current, entry.name);
+					return {
+						value: fullPath,
+						label: `${entry.name}/`,
+						description: formatHomePath(fullPath),
+					};
+				})
+				.sort((a, b) => {
+					const aHidden = a.label.startsWith(".");
+					const bHidden = b.label.startsWith(".");
+					if (aHidden !== bHidden) return aHidden ? 1 : -1;
+					return a.label.localeCompare(b.label);
+				});
+		} catch {
+			children = [];
+		}
+		return [
+			{ value: "__use__", label: "Use this directory", description: formatHomePath(current) },
+			{ value: "__newdir__", label: "New directory here", description: `Create inside ${formatHomePath(current)}` },
+			{ value: "__manual__", label: "Type path manually", description: "Fallback for pasting or entering a path" },
+			{ value: homedir(), label: "~", description: formatHomePath(homedir()) },
+			{ value: path.dirname(current), label: "../", description: formatHomePath(path.dirname(current)) },
+			...children,
+		];
+	}
+
+	async function chooseDirectory(ctx: ExtensionContext, startPath: string): Promise<string | null> {
+		let current = path.resolve(expandHomePath(startPath));
+		while (true) {
+			const selected = await chooseFromItems(ctx, `Choose project directory · ${formatHomePath(current)}`, directoryPickerItems(current));
+			if (!selected) return null;
+			if (selected === "__use__") return current;
+			if (selected === "__newdir__") {
+				const name = await ctx.ui.input("New directory name", "my-project");
+				const cleanName = name?.trim();
+				if (!cleanName) continue;
+				if (cleanName.includes("/")) {
+					ctx.ui.notify("Directory name must not contain '/'.", "error");
+					continue;
+				}
+				const next = path.join(current, cleanName);
+				try {
+					mkdirSync(next, { recursive: true });
+					current = next;
+				} catch (error) {
+					ctx.ui.notify(`Failed to create directory: ${error instanceof Error ? error.message : String(error)}`, "error");
+				}
+				continue;
+			}
+			if (selected === "__manual__") {
+				const rawPath = await ctx.ui.input("Project path", current);
+				if (!rawPath?.trim()) continue;
+				const target = path.resolve(expandHomePath(rawPath));
+				if (!existsSync(target)) {
+					const ok = await ctx.ui.confirm("Create directory?", `${formatHomePath(target)} does not exist. Create it?`);
+					if (!ok) continue;
+					try {
+						mkdirSync(target, { recursive: true });
+					} catch (error) {
+						ctx.ui.notify(`Failed to create directory: ${error instanceof Error ? error.message : String(error)}`, "error");
+						continue;
+					}
+				}
+				try {
+					if (!statSync(target).isDirectory()) {
+						ctx.ui.notify("Path is not a directory.", "error");
+						continue;
+					}
+				} catch {
+					ctx.ui.notify("Path is not accessible.", "error");
+					continue;
+				}
+				return target;
+			}
+			current = path.resolve(selected);
+		}
+	}
+
+	async function showProjectPicker(ctx: ExtensionContext): Promise<void> {
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify("/projects requires Pi TUI interactive mode.", "error");
+			return;
+		}
+		const current = contextInfoFromCtx(ctx);
+		const projects = listProjects("active") as any[];
+		const items: SelectItem[] = [
+			{ value: "__new__", label: "New project", description: "Register a local directory" },
+			...projects.map((project) => ({
+				value: project.id,
+				label: project.id === current.project?.id ? `${project.name || project.id} (current)` : project.name || project.id,
+				description: [project.pinned ? "pinned" : undefined, formatHomePath(project.root)].filter(Boolean).join(" · "),
+			})),
+		];
+		const selected = await chooseFromItems(ctx, "Projects", items);
+		if (!selected) return;
+		if (selected === "__new__") {
+			const projectPath = await chooseDirectory(ctx, ctx.cwd);
+			if (!projectPath) return;
+			const project = ensureProject(projectPath);
+			selectProject(project.id);
+			recordSessionOwner(project, ctx.sessionManager.getSessionId());
+			updateStatus(ctx);
+			ctx.ui.notify(`Project selected: ${project.name || project.id}`, "info");
+			return;
+		}
+		const project = projects.find((item) => item.id === selected);
+		if (!project) return;
+		selectProject(project.id);
+		recordSessionOwner(project, ctx.sessionManager.getSessionId());
+		updateStatus(ctx);
+		ctx.ui.notify(`Project selected: ${project.name || project.id}`, "info");
+	}
+
+	async function showStreamPicker(ctx: ExtensionContext): Promise<void> {
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify("/streams requires Pi TUI interactive mode.", "error");
+			return;
+		}
+		const info = contextInfoFromCtx(ctx);
+		const project = info.project || ensureProject(ctx.cwd);
+		const streams = listStreams(project, "active") as any[];
+		const items: SelectItem[] = [
+			{ value: "__project__", label: info.stream ? "Project scope" : "Project scope (current)", description: "Use project-level plans and context" },
+			{ value: "__new__", label: "New stream", description: "Create a shared-workdir stream" },
+			...streams.map((stream) => ({
+				value: stream.id,
+				label: stream.id === info.stream?.id ? `${stream.name || stream.id} (current)` : stream.name || stream.id,
+				description: [stream.pinned ? "pinned" : undefined, stream.workspace?.mode, formatHomePath(stream.workspace?.path)].filter(Boolean).join(" · "),
+			})),
+		];
+		const selected = await chooseFromItems(ctx, `Streams · ${project.name || project.id}`, items);
+		if (!selected) return;
+		if (selected === "__project__") {
+			clearStreamSelection();
+			selectProject(project.id);
+			recordSessionOwner(project, ctx.sessionManager.getSessionId());
+			updateStatus(ctx);
+			ctx.ui.notify("Project scope selected", "info");
+			return;
+		}
+		if (selected === "__new__") {
+			const name = await ctx.ui.input("New stream name", "feature or task name");
+			if (!name?.trim()) return;
+			const stream = createStream(project, { name });
+			selectStream(project.id, stream.id);
+			recordSessionOwner(project, ctx.sessionManager.getSessionId(), stream.id);
+			updateStatus(ctx);
+			ctx.ui.notify(`Stream selected: ${stream.name || stream.id}`, "info");
+			return;
+		}
+		const stream = streams.find((item) => item.id === selected);
+		if (!stream) return;
+		selectStream(project.id, stream.id);
+		recordSessionOwner(project, ctx.sessionManager.getSessionId(), stream.id);
+		updateStatus(ctx);
+		ctx.ui.notify(`Stream selected: ${stream.name || stream.id}`, "info");
+	}
+
+	pi.registerCommand("projects", {
+		description: "Browse, create, and select Pi projects",
+		handler: async (_args, ctx) => showProjectPicker(ctx),
+	});
+
+	pi.registerCommand("streams", {
+		description: "Browse, create, and select streams for the current Pi project",
+		handler: async (_args, ctx) => showStreamPicker(ctx),
+	});
+
+	pi.registerCommand("project-context", {
+		description: "Show current Pi project/stream context",
+		handler: async (_args, ctx) => {
+			const info = contextInfoFromCtx(ctx);
+			ctx.ui.notify(workspaceDescription(info), "info");
+		},
+	});
 
 	pi.registerCommand("plan", {
 		description: "Toggle Pi plan mode, or use /plan <task> to enable plan mode and ask the agent to draft a durable plan",
@@ -346,7 +627,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 	pi.registerCommand("plans", {
 		description: "List active Pi project plans",
 		handler: async (args, ctx) => {
-			const info = contextInfo(ctx.cwd);
+			const info = contextInfoFromCtx(ctx);
 			const status = ["active", "archive", "all"].includes(args.trim()) ? args.trim() : "active";
 			ctx.ui.notify(formatPlanList(info, listPlans(info, status)), "info");
 		},
@@ -371,11 +652,12 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		} else if (allToolNames.includes("pi_todo") && !pi.getActiveTools().includes("pi_todo")) {
 			pi.setActiveTools(unique([...pi.getActiveTools(), "pi_todo"]));
 		}
+		recordCurrentSessionOwner(contextInfoFromCtx(ctx), ctx.sessionManager.getSessionId());
 		updateStatus(ctx);
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		const info = contextInfo(ctx.cwd);
+		const info = contextInfoFromCtx(ctx);
 		const todoContext = todoPromptContext(todoItems);
 		if (planModeEnabled) return { systemPrompt: `${event.systemPrompt}\n\n${planModePrompt(info)}\n\n${todoContext}` };
 		return { systemPrompt: `${event.systemPrompt}\n\n${planWorkflowContext(info)}\n\n${todoContext}` };
@@ -538,7 +820,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			if (!approval) return textResult("Refusing to create plan: ask the final approval question first with exactly Approve and select, Approve, Discuss further.");
 			if (approval === "discuss") return textResult("Refusing to create plan: user selected Discuss further.");
 			const shouldSelect = approval === "select";
-			const info = contextInfo(ctx.cwd);
+			const info = contextInfoFromCtx(ctx);
 			const plan = createPlan(info, params);
 			if (shouldSelect) setCurrentPlan(info, plan.id);
 			return textResult(
@@ -561,7 +843,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		description: "List durable Pi project plans for the current project.",
 		parameters: Type.Object({ status: Type.Optional(Type.String({ description: "active, archive, or all" })) }),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const info = contextInfo(ctx.cwd);
+			const info = contextInfoFromCtx(ctx);
 			const status = ["active", "archive", "all"].includes(params.status || "") ? params.status! : "active";
 			const plans = listPlans(info, status);
 			return textResult(formatPlanList(info, plans), { plans, status });
@@ -577,7 +859,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			id: Type.Optional(Type.String({ description: "Plan id/path/title for action=set" })),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const info = contextInfo(ctx.cwd);
+			const info = contextInfoFromCtx(ctx);
 			const action = (params.action || "show").trim().toLowerCase();
 			if (action === "clear") {
 				clearCurrentPlanRef(info);
@@ -604,7 +886,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			try {
-				const info = contextInfo(ctx.cwd);
+				const info = contextInfoFromCtx(ctx);
 				const status = ["active", "archive", "all"].includes(params.status || "") ? params.status! : "active";
 				const plan = params.id ? resolvePlan(info, params.id, status) : (resolveCurrentPlan(info, status) || resolvePlan(info, undefined, status));
 				return textResult([`Path: ${plan.path}`, "", plan.content].join("\n"), { plan });
@@ -625,7 +907,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			reason: Type.Optional(Type.String()),
 		}),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const info = contextInfo(ctx.cwd);
+			const info = contextInfoFromCtx(ctx);
 			const plan = updatePlan(info, params);
 			return textResult(`Updated active plan: ${plan.title} (${plan.id})\nPath: ${plan.path}`, { plan });
 		},
@@ -637,9 +919,10 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		description: "Archive a completed active Pi project plan.",
 		parameters: Type.Object({ id: Type.Optional(Type.String()), result: Type.Optional(Type.String()) }),
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const info = contextInfo(ctx.cwd);
+			const info = contextInfoFromCtx(ctx);
 			const plan = archivePlan(info, params);
 			return textResult(`Archived plan: ${plan.title} (${plan.id})\nPath: ${plan.path}`, { plan });
 		},
 	});
+
 }

@@ -4,8 +4,10 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { matchesKey } from "@earendil-works/pi-tui";
 
 const PATCH_STATE = Symbol.for("sumeet.pi.tree-tab-toggle");
+const COLLAPSE_INITIALIZED = Symbol.for("sumeet.pi.tree-default-collapse.initialized");
 
 type TreeListInternals = {
+  flatNodes: Array<{ node: { entry: { id: string } } }>;
   filteredNodes: Array<{ node: { entry: { id: string } } }>;
   selectedIndex: number;
   foldedNodes: Set<string>;
@@ -15,11 +17,14 @@ type TreeListInternals = {
 
 type TreeSelectorInternals = {
   labelInput: unknown;
+  [COLLAPSE_INITIALIZED]?: boolean;
   getTreeList(): TreeListInternals;
 };
 
 type PatchState = {
-  original: (this: TreeSelectorInternals, keyData: string) => void;
+  original?: (this: TreeSelectorInternals, keyData: string) => void;
+  originalHandleInput?: (this: TreeSelectorInternals, keyData: string) => void;
+  originalRender?: (this: TreeSelectorInternals, width: number) => string[];
 };
 
 export default async function (_pi: ExtensionAPI) {
@@ -37,8 +42,26 @@ export default async function (_pi: ExtensionAPI) {
     [PATCH_STATE]?: PatchState;
   };
 
-  const state = prototype[PATCH_STATE] ?? { original: prototype.handleInput };
+  const existingState = prototype[PATCH_STATE];
+  const state: Required<Pick<PatchState, "originalHandleInput" | "originalRender">> = {
+    originalHandleInput: existingState?.originalHandleInput ?? existingState?.original ?? prototype.handleInput,
+    originalRender: existingState?.originalRender ?? prototype.render,
+  };
   prototype[PATCH_STATE] = state;
+
+  prototype.render = function (this: TreeSelectorInternals, width: number): string[] {
+    if (!this[COLLAPSE_INITIALIZED]) {
+      this[COLLAPSE_INITIALIZED] = true;
+      const tree = this.getTreeList();
+      for (const node of tree.flatNodes) {
+        const entryId = node.node.entry.id;
+        if (tree.isFoldable(entryId)) tree.foldedNodes.add(entryId);
+      }
+      tree.applyFilter();
+    }
+
+    return state.originalRender.call(this, width);
+  };
 
   prototype.handleInput = function (this: TreeSelectorInternals, keyData: string): void {
     if (!this.labelInput && matchesKey(keyData, "tab")) {
@@ -56,6 +79,6 @@ export default async function (_pi: ExtensionAPI) {
       return;
     }
 
-    state.original.call(this, keyData);
+    state.originalHandleInput.call(this, keyData);
   };
 }
