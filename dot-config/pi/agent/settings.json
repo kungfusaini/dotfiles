@@ -8,7 +8,9 @@
   "treeFilterMode": "no-tools",
   "packages": [
     "npm:pi-web-access",
-    "npm:pi-vim-flash"
+    "npm:pi-vim-flash",
+    "npm:pi-marketplace@0.1.3",
+    "npm:pi-claude-marketplace@0.10.0"
   ],
   "sessionDir": "~/.local/state/pi/agent/sessions"
 }
