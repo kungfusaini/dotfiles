@@ -325,16 +325,45 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 
 	async function chooseFromItems(ctx: ExtensionContext, title: string, items: SelectItem[]): Promise<string | null> {
 		if (ctx.mode !== "tui") return null;
-		const selected = await ctx.ui.custom<string | null>((tui, theme, _keybindings, done) => {
-			const list = new SelectList(items, Math.min(Math.max(items.length, 1), 14), {
-				selectedPrefix: (s: string) => theme.fg("accent", s),
-				selectedText: (s: string) => theme.fg("accent", s),
-				description: (s: string) => theme.fg("muted", s),
-				scrollInfo: (s: string) => theme.fg("dim", s),
-				noMatch: (s: string) => theme.fg("warning", s),
-			});
-			list.onSelect = (item) => done(String(item.value));
-			list.onCancel = () => done(null);
+		const selected = await ctx.ui.custom<string | null>((tui, theme, keybindings, done) => {
+			let query = "";
+
+			function itemMatches(item: SelectItem, filter: string): boolean {
+				const normalized = filter.trim().toLowerCase();
+				if (!normalized) return true;
+				const haystack = [item.label, item.description, item.value].filter(Boolean).join(" ").toLowerCase();
+				return normalized.split(/\s+/).every((part) => haystack.includes(part));
+			}
+
+			function filteredItems(): SelectItem[] {
+				return items.filter((item) => itemMatches(item, query));
+			}
+
+			function typedQueryValue(): string | undefined {
+				const trimmed = query.trim();
+				return trimmed ? `__query__:${trimmed}` : undefined;
+			}
+
+			function makeList(): SelectList {
+				const currentItems = filteredItems();
+				const next = new SelectList(currentItems, Math.min(Math.max(currentItems.length, 1), 14), {
+					selectedPrefix: (s: string) => theme.fg("accent", s),
+					selectedText: (s: string) => theme.fg("accent", s),
+					description: (s: string) => theme.fg("muted", s),
+					scrollInfo: (s: string) => theme.fg("dim", s),
+					noMatch: (s: string) => theme.fg("warning", s),
+				});
+				next.onSelect = (item) => done(String(item.value));
+				next.onCancel = () => done(null);
+				return next;
+			}
+
+			let list = makeList();
+
+			function refreshList(): void {
+				list = makeList();
+				tui.requestRender();
+			}
 
 			function panelLine(content: string, innerWidth: number, paddingX = 3): string {
 				const contentWidth = Math.max(1, innerWidth - paddingX * 2);
@@ -351,20 +380,47 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 					const empty = panelLine("", innerWidth);
 					const listWidth = Math.max(1, innerWidth - 6);
 					const listLines = list.render(listWidth).map((line) => panelLine(line, innerWidth));
+					const searchText = query ? `Search: ${query}` : "Search: type to filter";
 					return [
 						top,
 						empty,
 						panelLine(theme.fg("accent", theme.bold(title)), innerWidth),
+						panelLine(query ? theme.fg("text", searchText) : theme.fg("dim", searchText), innerWidth),
 						empty,
 						...listLines,
 						empty,
-						panelLine(theme.fg("dim", "↑↓ navigate • type search • enter select • esc cancel"), innerWidth),
+						panelLine(theme.fg("dim", query ? "↑↓ navigate • enter select • esc clear search" : "↑↓ navigate • type filter • enter select • esc cancel"), innerWidth),
 						empty,
 						bottom,
 					];
 				},
 				invalidate() { list.invalidate(); },
-				handleInput(data: string) { list.handleInput(data); tui.requestRender(); },
+				handleInput(data: string) {
+					if (keybindings.matches(data, "tui.select.cancel") && query) {
+						query = "";
+						refreshList();
+						return;
+					}
+					if (keybindings.matches(data, "tui.select.confirm") && query && filteredItems().length === 0) {
+						const typed = typedQueryValue();
+						if (typed) done(typed);
+						return;
+					}
+					if (keybindings.matches(data, "tui.editor.deleteCharBackward") || data === "\x7f" || data === "\b") {
+						if (query) {
+							query = query.slice(0, -1);
+							refreshList();
+							return;
+						}
+					}
+					if (data.length === 1 && data >= " " && data !== "\x7f") {
+						query += data;
+						refreshList();
+						return;
+					}
+					list.handleInput(data);
+					tui.requestRender();
+				},
 			};
 		}, { overlay: true, overlayOptions: { width: "80%", maxHeight: "85%", margin: 2 } });
 		return selected ?? null;
@@ -375,13 +431,22 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		let children: SelectItem[] = [];
 		try {
 			children = readdirSync(current, { withFileTypes: true })
-				.filter((entry) => entry.isDirectory())
+				.filter((entry) => {
+					if (entry.isDirectory()) return true;
+					if (!entry.isSymbolicLink()) return false;
+					try {
+						return statSync(path.join(current, entry.name)).isDirectory();
+					} catch {
+						return false;
+					}
+				})
 				.map((entry) => {
 					const fullPath = path.join(current, entry.name);
+					const suffix = entry.isSymbolicLink() ? "/@" : "/";
 					return {
 						value: fullPath,
-						label: `${entry.name}/`,
-						description: formatHomePath(fullPath),
+						label: `${entry.name}${suffix}`,
+						description: entry.isSymbolicLink() ? `${formatHomePath(fullPath)} → symlink` : formatHomePath(fullPath),
 					};
 				})
 				.sort((a, b) => {
@@ -396,7 +461,6 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		return [
 			{ value: "__use__", label: "Use this directory", description: formatHomePath(current) },
 			{ value: "__newdir__", label: "New directory here", description: `Create inside ${formatHomePath(current)}` },
-			{ value: "__manual__", label: "Type path manually", description: "Fallback for pasting or entering a path" },
 			{ value: homedir(), label: "~", description: formatHomePath(homedir()) },
 			{ value: path.dirname(current), label: "../", description: formatHomePath(path.dirname(current)) },
 			...children,
@@ -426,10 +490,11 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 				}
 				continue;
 			}
-			if (selected === "__manual__") {
-				const rawPath = await ctx.ui.input("Project path", current);
-				if (!rawPath?.trim()) continue;
-				const target = path.resolve(expandHomePath(rawPath));
+			if (selected.startsWith("__query__:")) {
+				const rawPath = selected.slice("__query__:".length).trim();
+				if (!rawPath) continue;
+				const expanded = expandHomePath(rawPath);
+				const target = path.isAbsolute(expanded) ? path.resolve(expanded) : path.resolve(current, expanded);
 				if (!existsSync(target)) {
 					const ok = await ctx.ui.confirm("Create directory?", `${formatHomePath(target)} does not exist. Create it?`);
 					if (!ok) continue;
@@ -480,6 +545,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			recordSessionOwner(project, ctx.sessionManager.getSessionId());
 			updateStatus(ctx);
 			ctx.ui.notify(`Project selected: ${project.name || project.id}`, "info");
+			await showStreamPicker(ctx);
 			return;
 		}
 		const project = projects.find((item) => item.id === selected);
@@ -488,6 +554,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		recordSessionOwner(project, ctx.sessionManager.getSessionId());
 		updateStatus(ctx);
 		ctx.ui.notify(`Project selected: ${project.name || project.id}`, "info");
+		await showStreamPicker(ctx);
 	}
 
 	async function showStreamPicker(ctx: ExtensionContext): Promise<void> {
