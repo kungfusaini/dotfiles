@@ -68,7 +68,7 @@ export function resolveProject(workdir: string) {
 export function streamID(name: string) { const base = slugify(name) || "stream"; const hash = createHash("sha256").update(`${name}:${Date.now()}`).digest("hex").slice(0, 6); return `${base}--${hash}`; }
 export function streamDir(project: any, id: string) { return path.join(project.dir, "streams", id); }
 export function streamMetadataPath(project: any, id: string) { return path.join(streamDir(project, id), "stream.json"); }
-export function createStream(project: any, input: any) { const id = input.id || streamID(input.name); const dir = streamDir(project, id); mkdirSync(path.join(dir, "plans", "active"), { recursive: true }); mkdirSync(path.join(dir, "plans", "archive"), { recursive: true }); const stream = { v: STREAM_VERSION, id, projectID: project.id, name: input.name.trim(), purpose: input.purpose, status: "active", createdAt: now(), updatedAt: now(), dir, workspace: { mode: input.workspace?.mode || "shared-workdir", path: path.resolve(input.workspace?.path || project.root), branch: input.workspace?.branch, base: input.workspace?.base } }; writeJson(streamMetadataPath(project, id), stream); return stream; }
+export function createStream(project: any, input: any) { const id = input.id || streamID(input.name); const dir = streamDir(project, id); const stream = { v: STREAM_VERSION, id, projectID: project.id, name: input.name.trim(), purpose: input.purpose, status: "active", createdAt: now(), updatedAt: now(), dir, workspace: { mode: input.workspace?.mode || "shared-workdir", path: path.resolve(input.workspace?.path || project.root), branch: input.workspace?.branch, base: input.workspace?.base } }; writeJson(streamMetadataPath(project, id), stream); return stream; }
 export function listStreams(project: any, status = "active") { const root = path.join(project.dir, "streams"); if (!existsSync(root)) return []; return readdirSync(root, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => readStream(project, e.name)).filter(Boolean).filter((s: any) => status === "all" || s.status === status).sort((a: any, b: any) => (Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""))); }
 export function readStream(project: any, id: string) { return readJson(streamMetadataPath(project, id), undefined); }
 export function updateStream(project: any, id: string, patch: any) { const stream: any = readStream(project, id); if (!stream) throw new Error(`Stream not found: ${id}`); const next = { ...stream, ...patch, updatedAt: now() }; writeJson(streamMetadataPath(project, id), next); return next; }
@@ -130,13 +130,9 @@ export function resolveSessionOwner(sessionID?: string) {
 
 export function resolveContext(workdir: string, input: { sessionID?: string } = {}): ProjectContextInfo {
 	const owner = resolveSessionOwner(input.sessionID);
-	if (owner?.scope === "stream" && owner.stream) return { scope: "stream", project: owner.project, stream: owner.stream, id: `${owner.project.id}/${owner.stream.id}`, root: owner.stream.workspace?.path || owner.project.root, dir: owner.stream.dir, plans: path.join(owner.stream.dir, "plans") };
-	if (owner?.scope === "project" && owner.project) return { scope: "project", project: owner.project, id: owner.project.id, root: owner.project.root, dir: owner.project.dir, plans: path.join(owner.project.dir, "plans") };
+	if (owner?.scope === "stream" && owner.stream) return { scope: "stream", project: owner.project, stream: owner.stream, id: `${owner.project.id}/${owner.stream.id}`, root: owner.stream.workspace?.path || owner.project.root, dir: owner.stream.dir };
+	if (owner?.scope === "project" && owner.project) return { scope: "project", project: owner.project, id: owner.project.id, root: owner.project.root, dir: owner.project.dir };
 
-	const selection = readSelection();
-	const selectedProject = selection.projectID ? hydrateProject(selection.projectID) : undefined;
-	const baseProject = selectedProject || resolveProject(workdir);
-	const stream = selection.projectID === baseProject.id && selection.streamID ? readStream(baseProject, selection.streamID) : undefined;
-	if (stream && stream.status === "active") return { scope: "stream", project: baseProject, stream, id: `${baseProject.id}/${stream.id}`, root: stream.workspace?.path || baseProject.root, dir: stream.dir, plans: path.join(stream.dir, "plans") };
-	return { scope: "project", project: baseProject, id: baseProject.id, root: baseProject.root, dir: baseProject.dir, plans: path.join(baseProject.dir, "plans") };
+	const baseProject = resolveProject(workdir);
+	return { scope: "project", project: baseProject, id: baseProject.id, root: baseProject.root, dir: baseProject.dir };
 }

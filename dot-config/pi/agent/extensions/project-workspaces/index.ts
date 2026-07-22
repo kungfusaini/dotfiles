@@ -1,73 +1,37 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type SelectItem, SelectList, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { type SelectItem, SelectList, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
-	clearStreamSelection,
 	createStream,
 	ensureProject,
 	listProjects,
 	listStreams,
-	recordCurrentSessionOwner,
 	recordSessionOwner,
 	resolveContext,
-	selectProject,
-	selectStream,
+	resolveSessionOwner,
 } from "./projects.ts";
 import { ensureStore, type ProjectContextInfo } from "./store.ts";
 import {
-	archivePlan,
-	clearCurrentPlanRef,
-	createPlan,
-	formatPlanList,
-	listPlans,
-	planWorkflowContext,
-	resolveCurrentPlan,
-	resolvePlan,
-	setCurrentPlan,
-	updatePlan,
-} from "./plans.ts";
+	WORKLOG_VERSION,
+	appendWorklogEntry,
+	ensureWorklog,
+	readAllEntries,
+	validateWorklogEntry,
+	withWorklogPath,
+	worklogRecap,
+	worklogReminder,
+	type WorklogEntry,
+} from "./worklog.ts";
 
-const PLAN_MODE_TOOLS = [
-	"read",
-	"bash",
-	"grep",
-	"find",
-	"ls",
-	"question",
-	"pi_todo",
-	"pi_plan_create",
-	"pi_plan_current",
-	"pi_plan_list",
-	"pi_plan_read",
-	"pi_plan_update",
-	"pi_plan_archive",
-];
-const PLAN_MODE_DISABLED_TOOLS = new Set(["edit", "write"]);
-const PLAN_MODE_MANAGED_TOOLS = new Set([...PLAN_MODE_TOOLS, "edit", "write"]);
-const APPROVAL_OPTIONS = ["Approve and select", "Approve", "Discuss further"];
+const WORKSPACE_CONTEXT_EVENT = "pi:workspace-context:resolve";
 
-interface PlanModeState {
-	enabled: boolean;
-	toolsBeforePlanMode?: string[];
-}
-
-type TodoStatus = "pending" | "in_progress" | "done" | "blocked";
-
-interface TodoItem {
-	id: string;
-	text: string;
-	status: TodoStatus;
-	note?: string;
-	createdAt: string;
-	updatedAt: string;
-}
-
-interface TodoState {
-	items: TodoItem[];
-	updatedAt: string;
+interface WorkspaceContextRequest {
+	cwd?: string;
+	sessionID?: string;
+	result?: unknown;
 }
 
 function contextInfo(cwd: string, sessionID?: string): ProjectContextInfo {
@@ -96,7 +60,8 @@ function expandHomePath(value: string): string {
 
 function workspaceLabel(info: ProjectContextInfo): string {
 	const project = info.project?.name || info.project?.id || info.id;
-	return info.stream ? `${project} / ${info.stream.name || info.stream.id}` : `${project} / Project`;
+	const stream = info.stream ? ` Stream: ${info.stream.name || info.stream.id}` : "";
+	return `Project: ${project}${stream}`;
 }
 
 function workspaceDescription(info: ProjectContextInfo): string {
@@ -105,222 +70,211 @@ function workspaceDescription(info: ProjectContextInfo): string {
 		`Project: ${info.project?.name || info.project?.id || info.id}`,
 		info.stream ? `Stream: ${info.stream.name || info.stream.id}` : "Stream: Project scope",
 		`Root: ${formatHomePath(info.root)}`,
-		`Plans: ${formatHomePath(info.plans)}`,
 	].join("\n");
 }
 
-function unique(names: string[]): string[] {
-	return [...new Set(names)];
+function worklogInfoFromOwner(owner: any): ProjectContextInfo | undefined {
+	if (!owner?.project) return undefined;
+	if (owner.scope === "stream" && owner.stream) {
+		return ensureStore({
+			scope: "stream",
+			project: owner.project,
+			stream: owner.stream,
+			id: `${owner.project.id}/${owner.stream.id}`,
+			root: owner.stream.workspace?.path || owner.project.root,
+			dir: owner.stream.dir,
+		});
+	}
+	if (owner.scope === "project") {
+		return ensureStore({
+			scope: "project",
+			project: owner.project,
+			id: owner.project.id,
+			root: owner.project.root,
+			dir: owner.project.dir,
+		});
+	}
+	return undefined;
 }
 
-function getPlanModeTools(activeToolNames: string[], allToolNames: string[]): string[] {
-	const allowed = new Set(allToolNames);
-	return unique([
-		...activeToolNames.filter((name) => !PLAN_MODE_DISABLED_TOOLS.has(name)),
-		...PLAN_MODE_TOOLS,
-	]).filter((name) => allowed.has(name));
-}
-
-function getNormalModeTools(activeToolNames: string[]): string[] {
-	return unique([
-		"read",
-		"bash",
-		"edit",
-		"write",
-		"pi_todo",
-		...activeToolNames.filter((name) => !PLAN_MODE_MANAGED_TOOLS.has(name)),
-	]);
+function worklogInfoFromCtx(ctx: ExtensionContext): ProjectContextInfo | undefined {
+	return worklogInfoFromOwner(resolveSessionOwner(ctx.sessionManager.getSessionId()));
 }
 
 function textResult(text: string, details: Record<string, unknown> = {}) {
 	return { content: [{ type: "text" as const, text }], details };
 }
 
-function now(): string {
-	return new Date().toISOString();
+function shouldRollupStreamEntry(entry: WorklogEntry, projectImpact?: boolean): boolean {
+	return projectImpact === true || entry.type === "start" || entry.type === "finish" || entry.type === "mistake";
 }
 
-function normalizeTodoStatus(status: unknown): TodoStatus {
-	return status === "in_progress" || status === "done" || status === "blocked" ? status : "pending";
+function streamRollupSource(info: ProjectContextInfo, entry: WorklogEntry) {
+	return {
+		kind: "stream-rollup",
+		streamID: info.stream?.id,
+		streamName: info.stream?.name,
+		streamLog: withWorklogPath(info).log,
+		streamEntryTime: entry.time,
+		streamEntryType: entry.type,
+		streamEntrySummary: entry.summary,
+	};
 }
 
-function todoSummary(items: TodoItem[]): string {
-	if (!items.length) return "No active todos.";
-	return items.map((item, index) => {
-		const marker = item.status === "done" ? "✓" : item.status === "blocked" ? "!" : "○";
-		const note = item.note ? ` — ${item.note}` : "";
-		return `${index + 1}. ${marker} ${item.text}${note} (${item.id})`;
-	}).join("\n");
-}
-
-function todoDisplayLines(items: TodoItem[]): string[] {
-	if (!items.length) return ["No active todos."];
-	return items.map((item, index) => {
-		const marker = item.status === "done" ? "✓" : item.status === "blocked" ? "!" : "○";
-		return `${marker} ${index + 1}. ${item.text}${item.note ? ` — ${item.note}` : ""}`;
+function alreadyRolledUp(projectInfo: ProjectContextInfo, source: ReturnType<typeof streamRollupSource>): boolean {
+	return readAllEntries(withWorklogPath(projectInfo).log).some((entry) => {
+		const existing = entry.source;
+		return existing?.kind === source.kind
+			&& existing.streamID === source.streamID
+			&& existing.streamEntryTime === source.streamEntryTime
+			&& existing.streamEntryType === source.streamEntryType
+			&& existing.streamEntrySummary === source.streamEntrySummary;
 	});
 }
 
-function todoProgressLine(items: TodoItem[]): string {
-	const doneCount = items.filter((item) => item.status === "done").length;
-	return `Todo: ${doneCount}/${items.length}`;
-}
+function appendStreamRollup(info: ProjectContextInfo, entry: WorklogEntry, projectImpact?: boolean): WorklogEntry | { skipped: true } | undefined {
+	if (info.scope !== "stream" || !info.project || !info.stream) return undefined;
+	if (!shouldRollupStreamEntry(entry, projectImpact)) return undefined;
 
-function todoPromptContext(items: TodoItem[]): string {
-	return [
-		"Pi session todo workflow is available through pi_todo.",
-		"Todos are session-local execution state. Use them for live checklists on ordinary tasks as well as plan execution; do not edit durable plan files to mark progress.",
-		"For any task where you will use tools, inspect files, make edits, or perform multiple actions, use pi_todo so the user has visibility into what you are doing.",
-		"Use pi_todo set before starting multi-step work, keep at most one item in_progress, update items promptly as work completes or blocks, and clear when the live checklist is no longer useful.",
-		"Use durable plans for intended route changes; use todos for current execution progress.",
-		"Current session todos:",
-		todoSummary(items),
-	].join("\n");
-}
+	const projectInfo = ensureStore({
+		scope: "project" as const,
+		project: info.project,
+		id: info.project.id,
+		root: info.project.root,
+		dir: info.project.dir,
+	});
+	const source = streamRollupSource(info, entry);
+	if (alreadyRolledUp(projectInfo, source)) return { skipped: true };
 
-function looksMutatingBash(command: string): string | undefined {
-	const stripped = command
-		.split(/\r?\n/)
-		.map((line) => line.replace(/#.*/, "").trim())
-		.filter(Boolean)
-		.join(" && ");
-	const patterns: Array<[RegExp, string]> = [
-		[/\b(rm|rmdir|mv|chmod|chown|mkdir|touch|truncate)\b/, "filesystem mutation"],
-		[/\b(cp|rsync|scp)\b/, "file copy can mutate workspace"],
-		[/\b(git\s+(add|commit|checkout|switch|reset|rebase|merge|cherry-pick|stash|clean|restore|apply|am|pull|push|worktree\s+add|worktree\s+remove))\b/, "git state mutation"],
-		[/\b(npm|pnpm|yarn|bun)\s+(install|add|remove|update|upgrade|dedupe|link|unlink|audit\s+fix)\b/, "dependency mutation"],
-		[/\b(pip|pip3|poetry|uv|cargo|go)\s+(install|add|remove|update|get|mod\s+tidy)\b/, "dependency mutation"],
-		[/\b(npx|pnpm\s+dlx|yarn\s+dlx)\b/, "external command may mutate workspace"],
-		[/\b(prettier|eslint|ruff|black|isort|gofmt|rustfmt)\b.*\b(--write|--fix|-w)\b/, "formatter/linter write mode"],
-		[/(^|[^<])>\s*[^&]|>>|\btee\b/, "shell redirection writes files"],
-	];
-	for (const [pattern, reason] of patterns) {
-		if (pattern.test(stripped)) return reason;
-	}
-	return undefined;
-}
-
-function latestPlanApproval(ctx: ExtensionContext): "select" | "approve" | "discuss" | undefined {
-	for (const entry of [...ctx.sessionManager.getBranch()].reverse()) {
-		if (entry.type !== "message") continue;
-		const message = entry.message as any;
-		if (message.role !== "toolResult") continue;
-		if (message.toolName === "pi_plan_create") return undefined;
-		if (message.toolName !== "question") continue;
-		const details = message.details;
-		if (details?.cancelled) return undefined;
-		const labels = Array.isArray(details?.options) ? details.options.map((option: any) => option?.label) : [];
-		if (labels.length !== APPROVAL_OPTIONS.length) return undefined;
-		if (!APPROVAL_OPTIONS.every((label, index) => labels[index] === label)) return undefined;
-		const value = String(details.value || details.answer || "");
-		if (value === APPROVAL_OPTIONS[0]) return "select";
-		if (value === APPROVAL_OPTIONS[1]) return "approve";
-		if (value === APPROVAL_OPTIONS[2]) return "discuss";
-		return undefined;
-	}
-	return undefined;
-}
-
-function planModePrompt(info: ProjectContextInfo): string {
-	return `You are in Pi plan mode. You may inspect, search, and reason, but you must not create, edit, delete, move, format, generate, or otherwise mutate project files. The only write-like exception is Pi's internal project plan storage through pi_plan_* tools after explicit user approval.
-
-Use plan mode to separate research from implementation:
-1. Understand the user's goal and constraints.
-2. Explore relevant files, commands, docs, and project patterns.
-3. Identify the implementation path, risks, edge cases, and verification commands.
-4. Present a concrete plan that the user can approve or revise.
-
-Question tool rules:
-- Use the question tool for multiple-choice clarification and approval gates. Do not write numbered options in normal chat and wait for a typed reply.
-- Ask clarification questions only when the answer materially changes scope, approach, sequencing, risk, or verification.
-- If no important ambiguity exists, say you found no blockers and proceed.
-- Keep options concise and high-signal, usually 2-4 options plus an option to continue with assumptions when acceptable.
-
-Plan content rules:
-- Build a detailed, practical plan, not a checkbox checklist.
-- Include: Goal, Context, Recommended approach, Phases, Risks/assumptions/open questions, Verification commands, Files inspected, and Files likely to change.
-- Do not include checkbox-style progress tracking in the durable plan.
-- Use pi_todo for live session execution tracking. Do not use plan files for checklist progress.
-
-Final approval flow is mandatory before saving:
-1. Present the final draft plan in chat.
-2. Call question with exactly these three options and allowCustom=false:
-   - ${APPROVAL_OPTIONS[0]}
-   - ${APPROVAL_OPTIONS[1]}
-   - ${APPROVAL_OPTIONS[2]}
-3. Do not call pi_plan_create, pi_plan_current, or pi_plan_update until the user selects one of those options through question.
-4. If "${APPROVAL_OPTIONS[0]}": call pi_plan_create with select=true and the full plan body, then say "Plan saved and selected."
-5. If "${APPROVAL_OPTIONS[1]}": call pi_plan_create with select=false and the full plan body, then say "Plan saved as active but not selected."
-6. If "${APPROVAL_OPTIONS[2]}": do not save; continue discussion and refine the draft.
-
-If the user asks to resume, continue, execute, or archive a plan, use pi_plan_read first when a current or single active plan exists. If executing a plan, convert the plan phases into a concise pi_todo checklist before making changes.
-
-${planWorkflowContext(info)}`;
+	const streamName = info.stream.name || info.stream.id;
+	const rollup: WorklogEntry = {
+		v: WORKLOG_VERSION,
+		time: new Date().toISOString(),
+		session: entry.session,
+		project: projectInfo.project?.id || projectInfo.id,
+		root: projectInfo.root,
+		scope: "project",
+		stream: { id: info.stream.id, name: info.stream.name },
+		type: entry.type,
+		summary: `Stream ${streamName}: ${entry.summary}`,
+		task: entry.task,
+		next: entry.next,
+		reason: entry.reason,
+		lesson: entry.lesson,
+		blocker: entry.blocker,
+		result: entry.result,
+		plan: entry.plan,
+		files: entry.files,
+		source,
+	};
+	appendWorklogEntry(projectInfo, rollup);
+	return rollup;
 }
 
 export default function projectWorkspacesExtension(pi: ExtensionAPI) {
-	let planModeEnabled = false;
-	let toolsBeforePlanMode: string[] | undefined;
-	let todoItems: TodoItem[] = [];
+	pi.events.on(WORKSPACE_CONTEXT_EVENT, (request: WorkspaceContextRequest) => {
+		if (request.result || !request.cwd || !request.sessionID) return;
+		const info = resolveContext(request.cwd, { sessionID: request.sessionID });
+		request.result = {
+			scope: info.scope,
+			id: info.id,
+			root: info.root,
+			dir: info.dir,
+			projectID: info.project?.id || info.id,
+			streamID: info.stream?.id,
+		};
+	});
 
-	function persistState(): void {
-		pi.appendEntry("project-workspaces-plan-mode", {
-			enabled: planModeEnabled,
-			toolsBeforePlanMode,
-		} satisfies PlanModeState);
-	}
+	pi.registerTool({
+		name: "worklog_recap",
+		label: "Worklog Recap",
+		description: "Fetch the current selected Pi project or stream worklog recap on demand. Use for orientation, resume, continue, or current-state questions instead of relying on volatile recap text in the system prompt.",
+		promptSnippet: "Fetch scoped project/stream worklog recap on demand",
+		promptGuidelines: [
+			"Use worklog_recap when the user asks where we are, what the current state is, what we were doing, to resume, or to continue work from durable history.",
+			"Do not proactively read parent, sibling, or other project logs unless the user explicitly asks for broader history.",
+		],
+		parameters: Type.Object({
+			limit: Type.Optional(Type.Number({ description: "Maximum recent entries to include in the recap; default 12, max 50" })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const info = worklogInfoFromCtx(ctx);
+			if (!info) return textResult("Worklog is not active because this session is not attached to a Pi project or stream.", { active: false });
+			const limit = typeof params.limit === "number" ? params.limit : undefined;
+			const withLog = ensureWorklog(info);
+			return textResult(worklogRecap(info, limit), { active: true, scope: info.scope, path: withLog.log, limit: limit || 12 });
+		},
+	});
 
-	function persistTodos(): void {
-		pi.appendEntry("project-workspaces-todos", { items: todoItems, updatedAt: now() } satisfies TodoState);
-	}
+	pi.registerTool({
+		name: "worklog_append",
+		label: "Append Worklog",
+		description: "Append a durable progress, decision, blocker, mistake, finish, next-step, or note event to the current selected Pi project or stream worklog. In stream scope, high-signal entries roll up to the parent project log.",
+		promptSnippet: "Append scoped project/stream continuity entries",
+		promptGuidelines: [
+			"Use worklog_append for meaningful progress, decisions, blockers, mistakes, finishes, or next steps in the active project or stream.",
+			"In stream scope, set worklog_append projectImpact=true when an entry affects project-level direction, architecture, release state, workflow, or future agents.",
+		],
+		parameters: Type.Object({
+			type: Type.String({ description: "Event type: start, progress, decision, mistake, stuck, finish, next, or note" }),
+			summary: Type.String({ description: "Short summary text" }),
+			task: Type.Optional(Type.String({ description: "Optional task context" })),
+			next: Type.Optional(Type.String({ description: "Next action or handoff context" })),
+			reason: Type.Optional(Type.String({ description: "Reason for a decision or mistake" })),
+			lesson: Type.Optional(Type.String({ description: "Lesson learned for a mistake" })),
+			blocker: Type.Optional(Type.String({ description: "What is blocking progress" })),
+			result: Type.Optional(Type.String({ description: "Result summary" })),
+			files: Type.Optional(Type.Array(Type.String(), { description: "Files related to this entry" })),
+			plan: Type.Optional(Type.String({ description: "Optional active plan id or path this entry relates to" })),
+			session: Type.Optional(Type.String({ description: "Optional session id override" })),
+			projectImpact: Type.Optional(Type.Boolean({ description: "Set true when a stream entry should roll up to project memory" })),
+		}),
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			const info = worklogInfoFromCtx(ctx);
+			if (!info) return textResult("Worklog is not active because this session is not attached to a Pi project or stream.", { active: false });
 
-	function updateTodoWidget(ctx: ExtensionContext, _showWidget = false): void {
-		const active = todoItems.filter((item) => item.status !== "done");
-		ctx.ui.setWidget?.("todos", undefined);
-		if (!todoItems.length) {
-			ctx.ui.setStatus("todos", undefined);
-			return;
-		}
-		ctx.ui.setStatus("todos", ctx.ui.theme.fg(active.length ? "accent" : "success", todoProgressLine(todoItems)));
-	}
+			const type = params.type.trim().toLowerCase();
+			const validationError = validateWorklogEntry({ ...params, type });
+			if (validationError) return textResult(`❌ ${validationError}`, { active: true, error: validationError });
+			const withLog = ensureWorklog(info);
+			const entry: WorklogEntry = {
+				v: WORKLOG_VERSION,
+				time: new Date().toISOString(),
+				session: params.session || ctx.sessionManager.getSessionId() || "unknown",
+				project: info.project?.id || info.id,
+				root: info.root,
+				scope: info.scope,
+				stream: info.stream ? { id: info.stream.id, name: info.stream.name } : undefined,
+				type: type as WorklogEntry["type"],
+				summary: params.summary,
+				task: params.task,
+				next: params.next,
+				reason: params.reason,
+				lesson: params.lesson,
+				blocker: params.blocker,
+				result: params.result,
+				plan: params.plan,
+				projectImpact: params.projectImpact === true ? true : undefined,
+				files: params.files,
+			};
+			appendWorklogEntry(info, entry);
+			const rollup = appendStreamRollup(info, entry, params.projectImpact);
+			return textResult([
+				`${entry.type}: ${entry.summary}`,
+				`Worklog: ${withLog.log}`,
+				info.scope === "stream" ? `Project rollup: ${rollup && !("skipped" in rollup) ? rollup.summary : (rollup as any)?.skipped ? "already recorded" : "no"}` : undefined,
+			].filter(Boolean).join("\n"), { active: true, scope: info.scope, path: withLog.log, rollup });
+		},
+	});
 
 	function updateStatus(ctx: ExtensionContext): void {
-		const info = contextInfoFromCtx(ctx);
-		ctx.ui.setStatus("workspace", ctx.ui.theme.fg(info.stream ? "accent" : "muted", `scope:${workspaceLabel(info)}`));
-		if (planModeEnabled) ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("warning", "plan"));
-		else ctx.ui.setStatus("plan-mode", undefined);
-		updateTodoWidget(ctx);
-	}
-
-	function setTodos(ctx: ExtensionContext, items: Array<{ text?: string; id?: string; status?: string; note?: string }>): void {
-		const timestamp = now();
-		todoItems = items.map((item, index) => ({
-			id: item.id?.trim() || `todo-${index + 1}`,
-			text: item.text?.trim() || "",
-			status: normalizeTodoStatus(item.status),
-			note: item.note?.trim() || undefined,
-			createdAt: timestamp,
-			updatedAt: timestamp,
-		})).filter((item) => item.text.length > 0);
-		persistTodos();
-		updateTodoWidget(ctx, true);
-	}
-
-	function enablePlanMode(ctx: ExtensionContext): void {
-		if (toolsBeforePlanMode === undefined) toolsBeforePlanMode = pi.getActiveTools();
-		const allToolNames = pi.getAllTools().map((tool) => tool.name);
-		pi.setActiveTools(getPlanModeTools(toolsBeforePlanMode, allToolNames));
-		planModeEnabled = true;
-		updateStatus(ctx);
-		persistState();
-	}
-
-	function disablePlanMode(ctx: ExtensionContext): void {
-		pi.setActiveTools(toolsBeforePlanMode ?? getNormalModeTools(pi.getActiveTools()));
-		toolsBeforePlanMode = undefined;
-		planModeEnabled = false;
-		updateStatus(ctx);
-		persistState();
+		const owner = resolveSessionOwner(ctx.sessionManager.getSessionId());
+		if (owner) {
+			const info = contextInfoFromCtx(ctx);
+			ctx.ui.setStatus("workspace", ctx.ui.theme.fg(info.stream ? "accent" : "muted", workspaceLabel(info)));
+		} else {
+			ctx.ui.setStatus("workspace", undefined);
+		}
 	}
 
 	async function chooseFromItems(ctx: ExtensionContext, title: string, items: SelectItem[]): Promise<string | null> {
@@ -520,7 +474,114 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		}
 	}
 
-	async function showProjectPicker(ctx: ExtensionContext): Promise<void> {
+	function targetWorkspace(project: any, stream?: any): string {
+		return path.resolve(stream?.workspace?.path || project.root);
+	}
+
+	function sessionTitle(session: any): string {
+		return session.name || session.firstMessage || path.basename(session.path) || session.id;
+	}
+
+	function sessionPathID(session: any): string | undefined {
+		const name = path.basename(session.path || "");
+		const match = name.match(/^[^_]+_(.+)\.jsonl$/);
+		return match?.[1];
+	}
+
+	function sessionIDs(session: any): string[] {
+		return [...new Set([session.id, sessionPathID(session)].filter(Boolean))] as string[];
+	}
+
+	function sessionOwner(session: any): any {
+		for (const id of sessionIDs(session)) {
+			const owner = resolveSessionOwner(id);
+			if (owner) return owner;
+		}
+		return undefined;
+	}
+
+	function sameOwner(owner: any, project: any, stream?: any): boolean {
+		if (!owner) return false;
+		if (owner.project?.id !== project.id) return false;
+		if (stream) return owner.scope === "stream" && owner.stream?.id === stream.id;
+		return owner.scope === "project";
+	}
+
+	function sessionCwdMatches(session: any, directory: string): boolean {
+		return Boolean(session.cwd) && path.resolve(session.cwd) === path.resolve(directory);
+	}
+
+	function rememberSessionOwner(project: any, session: any, stream?: any): void {
+		for (const id of sessionIDs(session)) {
+			recordSessionOwner(project, id, stream?.id, { scope: stream ? "stream" : "project", projectID: project.id, streamID: stream?.id });
+		}
+	}
+
+	async function listWorkspaceSessions(ctx: ExtensionCommandContext, project: any, stream: any | undefined, directory: string): Promise<any[]> {
+		const byPath = new Map<string, any>();
+		const add = (session: any) => {
+			if (session?.path) byPath.set(session.path, session);
+		};
+		try {
+			for (const session of await SessionManager.list(directory, ctx.sessionManager.getSessionDir())) add(session);
+		} catch {
+			// Fall through to listAll below; the caller shows a generic error only if both fail.
+		}
+		for (const session of await SessionManager.listAll(ctx.sessionManager.getSessionDir())) {
+			const owner = sessionOwner(session);
+			if (sessionCwdMatches(session, directory) || sameOwner(owner, project, stream)) add(session);
+		}
+		return [...byPath.values()].sort((a, b) => new Date(b.modified).getTime() - new Date(a.modified).getTime());
+	}
+
+	async function showSessionPicker(ctx: ExtensionCommandContext, project: any, stream?: any): Promise<void> {
+		if (ctx.mode !== "tui") {
+			ctx.ui.notify("Session picker requires Pi TUI interactive mode.", "error");
+			return;
+		}
+		const directory = targetWorkspace(project, stream);
+		let sessions: any[] = [];
+		try {
+			sessions = await listWorkspaceSessions(ctx, project, stream, directory);
+		} catch (error) {
+			ctx.ui.notify(`Failed to list sessions: ${error instanceof Error ? error.message : String(error)}`, "error");
+		}
+		const items: SelectItem[] = [
+			{ value: "__new__", label: "New session", description: formatHomePath(directory) },
+			...sessions.map((session) => {
+				const owner = sessionOwner(session);
+				const ownerText = owner ? (sameOwner(owner, project, stream) ? "owned" : `owned by ${workspaceLabel({ scope: owner.scope, id: owner.project.id, root: owner.project.root, dir: owner.stream?.dir || owner.project.dir, project: owner.project, stream: owner.stream })}`) : "unowned";
+				return {
+					value: session.path,
+					label: sessionTitle(session),
+					description: `${ownerText} · ${session.modified ? new Date(session.modified).toLocaleString() : formatHomePath(session.path)}`,
+				};
+			}),
+		];
+		const selected = await chooseFromItems(ctx, `Sessions · ${project.name || project.id}${stream ? ` / ${stream.name || stream.id}` : ""}`, items);
+		if (!selected) return;
+		if (selected === "__new__") {
+			const next = SessionManager.create(directory, ctx.sessionManager.getSessionDir());
+			const file = next.getSessionFile();
+			if (!file) {
+				ctx.ui.notify("Failed to create persisted session.", "error");
+				return;
+			}
+			recordSessionOwner(project, next.getSessionId(), stream?.id, { scope: stream ? "stream" : "project", projectID: project.id, streamID: stream?.id });
+			await ctx.switchSession(file);
+			return;
+		}
+		const session = sessions.find((item) => item.path === selected);
+		if (!session) return;
+		const owner = sessionOwner(session);
+		if (!owner || sameOwner(owner, project, stream)) rememberSessionOwner(project, session, stream);
+		else {
+			ctx.ui.notify("Opening session with its existing project/stream owner.", "info");
+		}
+		await ctx.switchSession(selected);
+	}
+
+	async function showProjectPicker(ctx: ExtensionCommandContext): Promise<void> {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("/projects requires Pi TUI interactive mode.", "error");
 			return;
@@ -541,32 +602,28 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			const projectPath = await chooseDirectory(ctx, ctx.cwd);
 			if (!projectPath) return;
 			const project = ensureProject(projectPath);
-			selectProject(project.id);
-			recordSessionOwner(project, ctx.sessionManager.getSessionId());
 			updateStatus(ctx);
 			ctx.ui.notify(`Project selected: ${project.name || project.id}`, "info");
-			await showStreamPicker(ctx);
+			await showStreamPicker(ctx, project);
 			return;
 		}
 		const project = projects.find((item) => item.id === selected);
 		if (!project) return;
-		selectProject(project.id);
-		recordSessionOwner(project, ctx.sessionManager.getSessionId());
 		updateStatus(ctx);
 		ctx.ui.notify(`Project selected: ${project.name || project.id}`, "info");
-		await showStreamPicker(ctx);
+		await showStreamPicker(ctx, project);
 	}
 
-	async function showStreamPicker(ctx: ExtensionContext): Promise<void> {
+	async function showStreamPicker(ctx: ExtensionCommandContext, projectOverride?: any): Promise<void> {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("/streams requires Pi TUI interactive mode.", "error");
 			return;
 		}
-		const info = contextInfoFromCtx(ctx);
-		const project = info.project || ensureProject(ctx.cwd);
+		const info = projectOverride ? ensureStore(resolveContext(projectOverride.root, { sessionID: undefined })) : contextInfoFromCtx(ctx);
+		const project = projectOverride || info.project || ensureProject(ctx.cwd);
 		const streams = listStreams(project, "active") as any[];
 		const items: SelectItem[] = [
-			{ value: "__project__", label: info.stream ? "Project scope" : "Project scope (current)", description: "Use project-level plans and context" },
+			{ value: "__project__", label: info.stream ? "Project scope" : "Project scope (current)", description: "Use project-level context" },
 			{ value: "__new__", label: "New stream", description: "Create a shared-workdir stream" },
 			...streams.map((stream) => ({
 				value: stream.id,
@@ -577,29 +634,25 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		const selected = await chooseFromItems(ctx, `Streams · ${project.name || project.id}`, items);
 		if (!selected) return;
 		if (selected === "__project__") {
-			clearStreamSelection();
-			selectProject(project.id);
-			recordSessionOwner(project, ctx.sessionManager.getSessionId());
 			updateStatus(ctx);
 			ctx.ui.notify("Project scope selected", "info");
+			await showSessionPicker(ctx, project);
 			return;
 		}
 		if (selected === "__new__") {
 			const name = await ctx.ui.input("New stream name", "feature or task name");
 			if (!name?.trim()) return;
 			const stream = createStream(project, { name });
-			selectStream(project.id, stream.id);
-			recordSessionOwner(project, ctx.sessionManager.getSessionId(), stream.id);
 			updateStatus(ctx);
 			ctx.ui.notify(`Stream selected: ${stream.name || stream.id}`, "info");
+			await showSessionPicker(ctx, project, stream);
 			return;
 		}
 		const stream = streams.find((item) => item.id === selected);
 		if (!stream) return;
-		selectStream(project.id, stream.id);
-		recordSessionOwner(project, ctx.sessionManager.getSessionId(), stream.id);
 		updateStatus(ctx);
 		ctx.ui.notify(`Stream selected: ${stream.name || stream.id}`, "info");
+		await showSessionPicker(ctx, project, stream);
 	}
 
 	pi.registerCommand("projects", {
@@ -616,380 +669,33 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		description: "Show current Pi project/stream context",
 		handler: async (_args, ctx) => {
 			const info = contextInfoFromCtx(ctx);
-			ctx.ui.notify(workspaceDescription(info), "info");
+			const worklogInfo = worklogInfoFromCtx(ctx);
+			const worklogLine = worklogInfo ? `\nWorklog: ${formatHomePath(withWorklogPath(worklogInfo).log)}` : "\nWorklog: inactive (session is not attached to a Pi project or stream)";
+			ctx.ui.notify(`${workspaceDescription(info)}${worklogLine}`, "info");
 		},
 	});
 
-	pi.registerCommand("plan", {
-		description: "Toggle Pi plan mode, or use /plan <task> to enable plan mode and ask the agent to draft a durable plan",
-		handler: async (args, ctx) => {
-			const raw = args.trim();
-			const action = raw.toLowerCase();
-			if (["off", "disable", "disabled", "exit"].includes(action)) {
-				disablePlanMode(ctx);
-				ctx.ui.notify("Plan mode disabled. Normal tools restored.", "info");
+	pi.registerCommand("worklog", {
+		description: "Show current scoped project/stream worklog recap",
+		handler: async (_args, ctx) => {
+			const info = worklogInfoFromCtx(ctx);
+			if (!info) {
+				ctx.ui.notify("Worklog is inactive because this session is not attached to a Pi project or stream.", "info");
 				return;
 			}
-			if (["on", "enable", "enabled"].includes(action) || !raw) {
-				if (planModeEnabled && !raw) {
-					disablePlanMode(ctx);
-					ctx.ui.notify("Plan mode disabled. Normal tools restored.", "info");
-					return;
-				}
-				enablePlanMode(ctx);
-				ctx.ui.notify("Plan mode enabled. Repo write tools disabled; mutating bash is blocked.", "info");
-				return;
-			}
-			enablePlanMode(ctx);
-			ctx.ui.notify("Plan mode enabled. Starting planning request.", "info");
-			pi.sendUserMessage(raw);
+			ctx.ui.notify(worklogRecap(info), "info");
 		},
-	});
-
-	async function showTodoModal(ctx: ExtensionContext): Promise<void> {
-		updateTodoWidget(ctx, false);
-		if (ctx.mode !== "tui") {
-			ctx.ui.notify(todoSummary(todoItems), "info");
-			return;
-		}
-
-		await ctx.ui.custom<void>((_tui, theme, keybindings, done) => ({
-			render(width: number): string[] {
-				const innerWidth = Math.max(12, width - 4);
-				const border = theme.fg("accent", `╭${"─".repeat(innerWidth + 2)}╮`);
-				const bottom = theme.fg("accent", `╰${"─".repeat(innerWidth + 2)}╯`);
-				const empty = `${theme.fg("accent", "│")} ${" ".repeat(innerWidth)} ${theme.fg("accent", "│")}`;
-				function row(content = ""): string {
-					const clipped = truncateToWidth(content, innerWidth, "…");
-					const padding = " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
-					return `${theme.fg("accent", "│")} ${clipped}${padding} ${theme.fg("accent", "│")}`;
-				}
-				const lines = [border, row(theme.fg("accent", theme.bold("Todo"))), empty];
-				if (!todoItems.length) {
-					lines.push(row(theme.fg("muted", "No active todos.")));
-				} else {
-					lines.push(row(theme.fg("accent", todoProgressLine(todoItems))));
-					lines.push(empty);
-					for (const [index, item] of todoItems.entries()) {
-						const text = todoDisplayLines([item])[0].replace(/^([✓!○]) 1\./, `$1 ${index + 1}.`);
-						const color = item.status === "done" ? "success" : item.status === "blocked" || item.status === "in_progress" ? "warning" : "text";
-						lines.push(row(theme.fg(color, text)));
-					}
-				}
-				lines.push(empty, row(theme.fg("dim", "Esc/Enter close")), bottom);
-				return lines;
-			},
-			invalidate() {},
-			handleInput(data: string) {
-				if (keybindings.matches(data, "tui.select.cancel") || keybindings.matches(data, "tui.select.confirm")) done();
-			},
-		}), { overlay: true, overlayOptions: { width: "70%", maxHeight: "80%" } });
-	}
-
-	pi.registerCommand("todo", {
-		description: "Show the current session todo list",
-		handler: async (_args, ctx) => showTodoModal(ctx),
-	});
-
-	pi.registerCommand("plans", {
-		description: "List active Pi project plans",
-		handler: async (args, ctx) => {
-			const info = contextInfoFromCtx(ctx);
-			const status = ["active", "archive", "all"].includes(args.trim()) ? args.trim() : "active";
-			ctx.ui.notify(formatPlanList(info, listPlans(info, status)), "info");
-		},
-	});
-
-	pi.on("session_start", async (_event, ctx) => {
-		const entries = ctx.sessionManager.getBranch?.() ?? ctx.sessionManager.getEntries();
-		const stateEntry = entries
-			.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "project-workspaces-plan-mode")
-			.pop() as { data?: PlanModeState } | undefined;
-		const todoEntry = entries
-			.filter((entry: { type: string; customType?: string }) => entry.type === "custom" && entry.customType === "project-workspaces-todos")
-			.pop() as { data?: TodoState } | undefined;
-		if (stateEntry?.data) {
-			planModeEnabled = Boolean(stateEntry.data.enabled);
-			toolsBeforePlanMode = stateEntry.data.toolsBeforePlanMode;
-		}
-		if (todoEntry?.data?.items) todoItems = todoEntry.data.items.map((item) => ({ ...item, status: normalizeTodoStatus(item.status) }));
-		const allToolNames = pi.getAllTools().map((tool) => tool.name);
-		if (planModeEnabled) {
-			pi.setActiveTools(getPlanModeTools(toolsBeforePlanMode ?? pi.getActiveTools(), allToolNames));
-		} else if (allToolNames.includes("pi_todo") && !pi.getActiveTools().includes("pi_todo")) {
-			pi.setActiveTools(unique([...pi.getActiveTools(), "pi_todo"]));
-		}
-		recordCurrentSessionOwner(contextInfoFromCtx(ctx), ctx.sessionManager.getSessionId());
-		updateStatus(ctx);
 	});
 
 	pi.on("before_agent_start", async (event, ctx) => {
-		const info = contextInfoFromCtx(ctx);
-		const todoContext = todoPromptContext(todoItems);
-		if (planModeEnabled) return { systemPrompt: `${event.systemPrompt}\n\n${planModePrompt(info)}\n\n${todoContext}` };
-		return { systemPrompt: `${event.systemPrompt}\n\n${planWorkflowContext(info)}\n\n${todoContext}` };
+		const info = worklogInfoFromCtx(ctx);
+		if (!info) return;
+		return {
+			systemPrompt: `${event.systemPrompt}\n\n${worklogReminder(info)}\n\nContinuity behavior: when the user asks where we are, what the current state is, what we were doing, to resume, or to continue, call worklog_recap first for the selected scope. Do not run git status, inspect unrelated files, or read parent/sibling/other project logs unless the user explicitly asks for repo status, another session, another project, project-wide history, or broader investigation. The recent worklog recap is intentionally not injected into this system prompt to keep provider prompt caching stable across worklog appends.`,
+		};
 	});
 
-	pi.on("tool_call", async (event) => {
-		if (!planModeEnabled) return;
-		if (PLAN_MODE_DISABLED_TOOLS.has(event.toolName)) {
-			return { block: true, reason: `Plan mode: ${event.toolName} is disabled. Use /plan off after the plan is approved if you want to implement.` };
-		}
-		if (event.toolName === "bash") {
-			const command = typeof event.input.command === "string" ? event.input.command : "";
-			const reason = looksMutatingBash(command);
-			if (reason) return { block: true, reason: `Plan mode: blocked mutating bash (${reason}). Command: ${command}` };
-		}
+	pi.on("session_start", async (_event, ctx) => {
+		updateStatus(ctx);
 	});
-
-	pi.registerTool({
-		name: "pi_todo",
-		label: "Todo",
-		description: "Manage the current Pi session's live todo checklist. Use for execution progress, not durable plan content.",
-		promptSnippet: "Create and update a session-local todo checklist for multi-step execution.",
-		promptGuidelines: [
-			"Use pi_todo for live execution checklists when implementing a plan, handling a multi-step task, or doing tool-based investigation so the user can see what is happening.",
-			"When finishing the current pi_todo item, decide what should come next and update both statuses in one pi_todo update call using items, for example mark one done and the chosen next item in_progress.",
-			"Do not edit durable plan files to mark progress; use pi_todo for progress and pi_plan_update only for route/scope changes.",
-			"Keep at most one pi_todo item in_progress at a time and update items promptly as work completes or blocks.",
-		],
-		parameters: Type.Object({
-			action: Type.String({ description: "set, list, update, append, or clear" }),
-			items: Type.Optional(Type.Array(Type.Object({
-				id: Type.Optional(Type.String()),
-				text: Type.Optional(Type.String()),
-				status: Type.Optional(Type.String({ description: "pending, in_progress, done, or blocked" })),
-				note: Type.Optional(Type.String()),
-			}))),
-			id: Type.Optional(Type.String({ description: "Todo id or 1-based item number for update" })),
-			status: Type.Optional(Type.String({ description: "pending, in_progress, done, or blocked" })),
-			text: Type.Optional(Type.String({ description: "Todo text for append or update" })),
-			note: Type.Optional(Type.String()),
-		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const action = params.action.trim().toLowerCase();
-			if (action === "list") {
-				updateTodoWidget(ctx, true);
-				return textResult(todoSummary(todoItems), { items: todoItems });
-			}
-			if (action === "clear") {
-				todoItems = [];
-				persistTodos();
-				updateTodoWidget(ctx, true);
-				return textResult("Todos cleared.", { items: todoItems });
-			}
-			if (action === "set") {
-				setTodos(ctx, params.items || []);
-				return textResult(todoSummary(todoItems), { items: todoItems });
-			}
-			if (action === "append") {
-				const itemText = params.text?.trim() || params.items?.[0]?.text?.trim();
-				if (!itemText) return textResult("append requires text or items[0].text");
-				const timestamp = now();
-				const nextIndex = todoItems.length + 1;
-				todoItems = [...todoItems, {
-					id: params.id?.trim() || `todo-${nextIndex}`,
-					text: itemText,
-					status: normalizeTodoStatus(params.status),
-					note: params.note?.trim() || undefined,
-					createdAt: timestamp,
-					updatedAt: timestamp,
-				}];
-				persistTodos();
-				updateTodoWidget(ctx, true);
-				return textResult(todoSummary(todoItems), { items: todoItems });
-			}
-			if (action === "update") {
-				const updates = params.items?.length ? params.items : [{ id: params.id, text: params.text, status: params.status, note: params.note }];
-				if (!updates.length || !updates.some((item) => item.id?.trim())) return textResult("update requires id or items with id");
-				const timestamp = now();
-				const changed: TodoItem[] = [];
-				const missing: string[] = [];
-				let nextItems = [...todoItems];
-				for (const update of updates) {
-					if (!update.id?.trim()) continue;
-					const id = update.id.trim();
-					const indexFromNumber = /^\d+$/.test(id) ? Number(id) - 1 : -1;
-					const index = indexFromNumber >= 0 ? indexFromNumber : nextItems.findIndex((item) => item.id === id);
-					if (index < 0 || index >= nextItems.length) {
-						missing.push(id);
-						continue;
-					}
-					const nextStatus = update.status ? normalizeTodoStatus(update.status) : nextItems[index].status;
-					if (nextStatus === "in_progress") {
-						nextItems = nextItems.map((item, itemIndex) => itemIndex !== index && item.status === "in_progress" ? { ...item, status: "pending", updatedAt: timestamp } : item);
-					}
-					const updated = {
-						...nextItems[index],
-						text: update.text?.trim() || nextItems[index].text,
-						status: nextStatus,
-						note: update.note !== undefined ? (update.note.trim() || undefined) : nextItems[index].note,
-						updatedAt: timestamp,
-					};
-					nextItems[index] = updated;
-					changed.push(updated);
-				}
-				if (missing.length) return textResult(`Todo not found: ${missing.join(", ")}`);
-				todoItems = nextItems;
-				persistTodos();
-				updateTodoWidget(ctx, true);
-				return textResult(todoSummary(todoItems), { items: todoItems, action: "update", changed });
-			}
-			return textResult("Invalid pi_todo action. Use set, list, update, append, or clear.");
-		},
-		renderCall() {
-			return new Text("", 0, 0);
-		},
-		renderResult(result, _options, theme) {
-			const details = result.details as any;
-			const items = Array.isArray(details?.items) ? details.items as TodoItem[] : undefined;
-			if (!items) return new Text(result.content?.[0]?.text || "", 0, 0, (text) => theme.bg("toolSuccessBg", text));
-			if (!items.length) return new Text(theme.fg("muted", "Todo: 0/0\nNo active todos."), 0, 0, (text) => theme.bg("toolSuccessBg", text));
-			const doneCount = items.filter((item) => item.status === "done").length;
-			const lines = [theme.fg("accent", todoProgressLine(items))];
-			if (details.action === "update") {
-				lines[0] = theme.fg(doneCount === items.length ? "success" : "accent", `${doneCount === items.length ? "Todo complete" : "Todo updated"}: ${doneCount}/${items.length}`);
-				for (const [index, item] of items.entries()) {
-					const line = todoDisplayLines([item])[0].replace(/^([✓!○]) 1\./, `$1 ${index + 1}.`);
-					if (item.status === "done") lines.push(theme.fg("success", line));
-					else if (item.status === "blocked" || item.status === "in_progress") lines.push(theme.fg("warning", line));
-					else lines.push(theme.fg("muted", line));
-				}
-				return new Text(lines.join("\n"), 0, 0, (text) => theme.bg("toolSuccessBg", text));
-			}
-			for (const [index, item] of items.entries()) {
-				const line = todoDisplayLines([item])[0].replace(/^([✓!○]) 1\./, `$1 ${index + 1}.`);
-				if (item.status === "done") lines.push(theme.fg("success", line));
-				else if (item.status === "blocked" || item.status === "in_progress") lines.push(theme.fg("warning", line));
-				else lines.push(theme.fg("muted", line));
-			}
-			return new Text(lines.join("\n"), 0, 0, (text) => theme.bg("toolSuccessBg", text));
-		},
-	});
-
-	pi.registerTool({
-		name: "pi_plan_create",
-		label: "Plan Create",
-		description: "Create a durable active Pi project plan after the final question approval flow. This tool verifies the latest approval question result; the select parameter is accepted for compatibility but the recorded user answer is authoritative.",
-		promptSnippet: "Create a durable project plan after explicit approval.",
-		promptGuidelines: [
-			"Use pi_plan_create only after asking the final approval question with exactly: Approve and select, Approve, Discuss further.",
-			"Do not use pi_plan_create when the user selected Discuss further.",
-		],
-		parameters: Type.Object({
-			title: Type.String({ description: "Short human-readable plan title" }),
-			body: Type.String({ description: "Full detailed markdown plan body" }),
-			select: Type.Optional(Type.Boolean({ description: "Deprecated compatibility hint. Actual selection is determined from the latest approval question result." })),
-			task: Type.Optional(Type.String()),
-		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const approval = latestPlanApproval(ctx);
-			if (!approval) return textResult("Refusing to create plan: ask the final approval question first with exactly Approve and select, Approve, Discuss further.");
-			if (approval === "discuss") return textResult("Refusing to create plan: user selected Discuss further.");
-			const shouldSelect = approval === "select";
-			const info = contextInfoFromCtx(ctx);
-			const plan = createPlan(info, params);
-			if (shouldSelect) setCurrentPlan(info, plan.id);
-			return textResult(
-				[
-					shouldSelect ? "Plan saved and selected." : "Plan saved as active but not selected.",
-					`Plan: ${plan.title} (${plan.id})`,
-					`Path: ${plan.path}`,
-				].join("\n"),
-				{ plan, selected: shouldSelect },
-			);
-		},
-		renderResult(result, _options, theme) {
-			return new Text(theme.fg("success", result.content?.[0]?.text || "Plan saved"), 0, 0);
-		},
-	});
-
-	pi.registerTool({
-		name: "pi_plan_list",
-		label: "Plan List",
-		description: "List durable Pi project plans for the current project.",
-		parameters: Type.Object({ status: Type.Optional(Type.String({ description: "active, archive, or all" })) }),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const info = contextInfoFromCtx(ctx);
-			const status = ["active", "archive", "all"].includes(params.status || "") ? params.status! : "active";
-			const plans = listPlans(info, status);
-			return textResult(formatPlanList(info, plans), { plans, status });
-		},
-	});
-
-	pi.registerTool({
-		name: "pi_plan_current",
-		label: "Plan Current",
-		description: "Show, set, or clear the current plan pointer for the current Pi project.",
-		parameters: Type.Object({
-			action: Type.Optional(Type.String({ description: "show, set, or clear" })),
-			id: Type.Optional(Type.String({ description: "Plan id/path/title for action=set" })),
-		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const info = contextInfoFromCtx(ctx);
-			const action = (params.action || "show").trim().toLowerCase();
-			if (action === "clear") {
-				clearCurrentPlanRef(info);
-				return textResult("Current plan pointer cleared.");
-			}
-			if (action === "set") {
-				if (!params.id) return textResult("action=set requires id");
-				const plan = setCurrentPlan(info, params.id);
-				return textResult(`Current plan set to ${plan.title} (${plan.id})\nPath: ${plan.path}`, { plan });
-			}
-			const current = resolveCurrentPlan(info, "all");
-			if (!current) return textResult("No current plan is set.");
-			return textResult([`Path: ${current.path}`, "", current.content].join("\n"), { plan: current });
-		},
-	});
-
-	pi.registerTool({
-		name: "pi_plan_read",
-		label: "Plan Read",
-		description: "Read a durable Pi project plan.",
-		parameters: Type.Object({
-			id: Type.Optional(Type.String({ description: "Plan id/path/title. If omitted, current or single active plan is used." })),
-			status: Type.Optional(Type.String({ description: "active, archive, or all" })),
-		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			try {
-				const info = contextInfoFromCtx(ctx);
-				const status = ["active", "archive", "all"].includes(params.status || "") ? params.status! : "active";
-				const plan = params.id ? resolvePlan(info, params.id, status) : (resolveCurrentPlan(info, status) || resolvePlan(info, undefined, status));
-				return textResult([`Path: ${plan.path}`, "", plan.content].join("\n"), { plan });
-			} catch (error) {
-				return textResult(`❌ ${error instanceof Error ? error.message : String(error)}`);
-			}
-		},
-	});
-
-	pi.registerTool({
-		name: "pi_plan_update",
-		label: "Plan Update",
-		description: "Update an active durable Pi project plan only when intended approach/scope/risks/completion criteria change. Do not use for checklist progress.",
-		parameters: Type.Object({
-			id: Type.Optional(Type.String()),
-			title: Type.Optional(Type.String()),
-			body: Type.String(),
-			reason: Type.Optional(Type.String()),
-		}),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const info = contextInfoFromCtx(ctx);
-			const plan = updatePlan(info, params);
-			return textResult(`Updated active plan: ${plan.title} (${plan.id})\nPath: ${plan.path}`, { plan });
-		},
-	});
-
-	pi.registerTool({
-		name: "pi_plan_archive",
-		label: "Plan Archive",
-		description: "Archive a completed active Pi project plan.",
-		parameters: Type.Object({ id: Type.Optional(Type.String()), result: Type.Optional(Type.String()) }),
-		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
-			const info = contextInfoFromCtx(ctx);
-			const plan = archivePlan(info, params);
-			return textResult(`Archived plan: ${plan.title} (${plan.id})\nPath: ${plan.path}`, { plan });
-		},
-	});
-
 }
