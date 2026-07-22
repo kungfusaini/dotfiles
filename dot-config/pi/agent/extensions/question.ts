@@ -27,6 +27,7 @@ type DisplayOption = QuestionOption & { isCustom?: boolean };
 
 interface QuestionDetails {
 	question: string;
+	context?: string;
 	options: QuestionOption[];
 	answer: string | null;
 	value: string | null;
@@ -43,6 +44,7 @@ const OptionSchema = Type.Object({
 
 const QuestionParams = Type.Object({
 	question: Type.String({ description: "The question to ask the user" }),
+	context: Type.Optional(Type.String({ description: "Optional context or plan text to show before the question." })),
 	options: Type.Array(OptionSchema, { description: "Multiple-choice options. Keep these concise and high-signal." }),
 	allowCustom: Type.Optional(Type.Boolean({ description: "If false, hide the default 'Type custom answer' option." })),
 });
@@ -63,6 +65,15 @@ function textFromContent(result: { content?: Array<{ type: string; text?: string
 	return first?.type === "text" ? first.text || "" : "";
 }
 
+function isPlanApprovalGate(question: string, options: QuestionOption[]): boolean {
+	if (!/approve/i.test(question) || !/plan/i.test(question)) return false;
+	const labels = options.map((option) => option.label);
+	return labels.length === 3
+		&& labels[0] === "Approve and select"
+		&& labels[1] === "Approve"
+		&& labels[2] === "Discuss further";
+}
+
 export default function questionExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "question",
@@ -72,6 +83,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 		promptSnippet: "Ask the user to choose from explicit multiple-choice options.",
 		promptGuidelines: [
 			"Use question for multiple-choice clarification or approval instead of writing numbered options in chat and waiting for a typed reply.",
+			"When using question for an approval gate, include the plan or decision text in the context argument so the user can review it inside the question UI.",
 			"When using question, include only options whose answers materially affect the plan, implementation, sequencing, risk, or verification.",
 		],
 		parameters: QuestionParams,
@@ -94,13 +106,31 @@ export default function questionExtension(pi: ExtensionAPI) {
 
 		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 			const options = normalizeOptions(params.options);
+			const context = typeof params.context === "string" && params.context.trim() ? params.context.trim() : undefined;
 
 			if (options.length === 0) {
 				return {
 					content: [{ type: "text", text: "Error: question requires at least one non-empty option." }],
 					details: {
 						question: params.question,
+						context,
 						options: [],
+						answer: null,
+						value: null,
+						index: null,
+						wasCustom: false,
+						cancelled: true,
+					} satisfies QuestionDetails,
+				};
+			}
+
+			if (!context && isPlanApprovalGate(params.question, options)) {
+				return {
+					content: [{ type: "text", text: "Error: plan approval questions must include the plan text in the context argument." }],
+					details: {
+						question: params.question,
+						context,
+						options,
 						answer: null,
 						value: null,
 						index: null,
@@ -115,6 +145,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 					content: [{ type: "text", text: "Error: question requires Pi TUI interactive mode." }],
 					details: {
 						question: params.question,
+						context,
 						options,
 						answer: null,
 						value: null,
@@ -249,6 +280,10 @@ export default function questionExtension(pi: ExtensionAPI) {
 					}
 
 					lines.push(theme.fg("accent", "─".repeat(renderWidth)));
+					if (context) {
+						for (const line of context.split("\n")) addWrappedWithPrefix(" ", theme.fg("text", line));
+						lines.push("");
+					}
 					addWrappedWithPrefix(" ", theme.fg("text", params.question));
 					lines.push("");
 
@@ -292,6 +327,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 					content: [{ type: "text", text: "User cancelled the question." }],
 					details: {
 						question: params.question,
+						context,
 						options,
 						answer: null,
 						value: null,
@@ -313,6 +349,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 				],
 				details: {
 					question: params.question,
+					context,
 					options,
 					answer: result.answer,
 					value: result.value,
@@ -325,6 +362,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 
 		renderCall(args, theme) {
 			const question = typeof args.question === "string" ? args.question : "";
+			const context = typeof args.context === "string" && args.context.trim() ? args.context.trim() : "";
 			const options = Array.isArray(args.options) ? args.options : [];
 			const labels = options.map((option: QuestionOption | string, index: number) => {
 				if (typeof option === "string") return `${index + 1}. ${option}`;
@@ -332,6 +370,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 			});
 			if (args.allowCustom !== false) labels.push(`${labels.length + 1}. Type custom answer`);
 			let text = theme.fg("toolTitle", theme.bold("question ")) + theme.fg("muted", question);
+			if (context) text += `\n${theme.fg("text", context)}`;
 			if (labels.length) text += `\n${theme.fg("dim", `  Options: ${labels.join(", ")}`)}`;
 			return new Text(text, 0, 0);
 		},
