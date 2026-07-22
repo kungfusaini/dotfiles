@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
@@ -566,6 +566,15 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			if (!file) {
 				ctx.ui.notify("Failed to create persisted session.", "error");
 				return;
+			}
+			// SessionManager.create computes the target file path but does not write the
+			// header until the first assistant response. switchSession(file) treats a
+			// missing file as an explicit-path new session and generates a different
+			// header id, which breaks our owner index. Seed the header first so the
+			// switched session keeps the id we record below.
+			if (!existsSync(file)) {
+				const header = next.getHeader();
+				if (header) writeFileSync(file, `${JSON.stringify(header)}\n`, "utf8");
 			}
 			recordSessionOwner(project, next.getSessionId(), stream?.id, { scope: stream ? "stream" : "project", projectID: project.id, streamID: stream?.id });
 			await ctx.switchSession(file);
