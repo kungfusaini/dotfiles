@@ -65,15 +65,6 @@ function textFromContent(result: { content?: Array<{ type: string; text?: string
 	return first?.type === "text" ? first.text || "" : "";
 }
 
-function isPlanApprovalGate(question: string, options: QuestionOption[]): boolean {
-	if (!/approve/i.test(question) || !/plan/i.test(question)) return false;
-	const labels = options.map((option) => option.label);
-	return labels.length === 3
-		&& labels[0] === "Approve and select"
-		&& labels[1] === "Approve"
-		&& labels[2] === "Discuss further";
-}
-
 export default function questionExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "question",
@@ -83,7 +74,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 		promptSnippet: "Ask the user to choose from explicit multiple-choice options.",
 		promptGuidelines: [
 			"Use question for multiple-choice clarification or approval instead of writing numbered options in chat and waiting for a typed reply.",
-			"When using question for an approval gate, include the plan or decision text in the context argument so the user can review it inside the question UI.",
+			"When useful, include context or decision text in the context argument so the user can review it inside the question UI.",
 			"When using question, include only options whose answers materially affect the plan, implementation, sequencing, risk, or verification.",
 		],
 		parameters: QuestionParams,
@@ -115,22 +106,6 @@ export default function questionExtension(pi: ExtensionAPI) {
 						question: params.question,
 						context,
 						options: [],
-						answer: null,
-						value: null,
-						index: null,
-						wasCustom: false,
-						cancelled: true,
-					} satisfies QuestionDetails,
-				};
-			}
-
-			if (!context && isPlanApprovalGate(params.question, options)) {
-				return {
-					content: [{ type: "text", text: "Error: plan approval questions must include the plan text in the context argument." }],
-					details: {
-						question: params.question,
-						context,
-						options,
 						answer: null,
 						value: null,
 						index: null,
