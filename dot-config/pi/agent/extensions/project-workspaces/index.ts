@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from "nod
 import { homedir } from "node:os";
 import path from "node:path";
 import { SessionManager, type ExtensionAPI, type ExtensionCommandContext, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { type SelectItem, SelectList, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { matchesKey, type SelectItem, SelectList, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
 	createStream,
@@ -10,6 +10,8 @@ import {
 	listProjects,
 	listStreams,
 	recordSessionOwner,
+	renameProject,
+	renameStream,
 	resolveContext,
 	resolveSessionOwner,
 } from "./projects.ts";
@@ -277,10 +279,12 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		}
 	}
 
-	async function chooseFromItems(ctx: ExtensionContext, title: string, items: SelectItem[]): Promise<string | null> {
+	async function chooseFromItems(ctx: ExtensionContext, title: string, items: SelectItem[], options: { renameSelected?: boolean } = {}): Promise<string | null> {
 		if (ctx.mode !== "tui") return null;
 		const selected = await ctx.ui.custom<string | null>((tui, theme, keybindings, done) => {
 			let query = "";
+			let renameTarget: SelectItem | null = null;
+			let renameText = "";
 
 			function itemMatches(item: SelectItem, filter: string): boolean {
 				const normalized = filter.trim().toLowerCase();
@@ -296,6 +300,23 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			function typedQueryValue(): string | undefined {
 				const trimmed = query.trim();
 				return trimmed ? `__query__:${trimmed}` : undefined;
+			}
+
+			function renameValue(item: SelectItem, name: string): string {
+				return `__rename__:${JSON.stringify({ value: item.value, name })}`;
+			}
+
+			function startRename(): void {
+				if (!options.renameSelected) return;
+				const selected = list.getSelectedItem();
+				if (!selected || selected.value.startsWith("__")) return;
+				renameTarget = selected;
+				renameText = selected.label.replace(/\s+\(current\)$/i, "");
+				tui.requestRender();
+			}
+
+			function printableChar(data: string): string | undefined {
+				return data.length === 1 && data >= " " && data !== "\x7f" ? data : undefined;
 			}
 
 			function makeList(): SelectList {
@@ -335,21 +356,55 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 					const listWidth = Math.max(1, innerWidth - 6);
 					const listLines = list.render(listWidth).map((line) => panelLine(line, innerWidth));
 					const searchText = query ? `Search: ${query}` : "Search: type to filter";
+					const promptText = renameTarget
+						? `Rename ${renameTarget.label.replace(/\s+\(current\)$/i, "")}: ${renameText}`
+						: searchText;
+					const helpText = renameTarget
+						? "enter save • esc cancel rename"
+						: [query ? "↑↓ navigate • enter select • esc clear search" : "↑↓ navigate • type filter • enter select • esc cancel", options.renameSelected ? "ctrl+r rename" : undefined].filter(Boolean).join(" • ");
 					return [
 						top,
 						empty,
 						panelLine(theme.fg("accent", theme.bold(title)), innerWidth),
-						panelLine(query ? theme.fg("text", searchText) : theme.fg("dim", searchText), innerWidth),
+						panelLine(renameTarget || query ? theme.fg("text", promptText) : theme.fg("dim", promptText), innerWidth),
 						empty,
 						...listLines,
 						empty,
-						panelLine(theme.fg("dim", query ? "↑↓ navigate • enter select • esc clear search" : "↑↓ navigate • type filter • enter select • esc cancel"), innerWidth),
+						panelLine(theme.fg("dim", helpText), innerWidth),
 						empty,
 						bottom,
 					];
 				},
 				invalidate() { list.invalidate(); },
 				handleInput(data: string) {
+					if (renameTarget) {
+						if (keybindings.matches(data, "tui.select.cancel")) {
+							renameTarget = null;
+							renameText = "";
+							tui.requestRender();
+							return;
+						}
+						if (keybindings.matches(data, "tui.select.confirm")) {
+							const trimmed = renameText.trim();
+							if (trimmed) done(renameValue(renameTarget, trimmed));
+							return;
+						}
+						if (keybindings.matches(data, "tui.editor.deleteCharBackward") || data === "\x7f" || data === "\b") {
+							renameText = renameText.slice(0, -1);
+							tui.requestRender();
+							return;
+						}
+						const char = printableChar(data);
+						if (char) {
+							renameText += char;
+							tui.requestRender();
+						}
+						return;
+					}
+					if (matchesKey(data, "ctrl+r") || data === "\x12") {
+						startRename();
+						return;
+					}
 					if (keybindings.matches(data, "tui.select.cancel") && query) {
 						query = "";
 						refreshList();
@@ -367,8 +422,9 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 							return;
 						}
 					}
-					if (data.length === 1 && data >= " " && data !== "\x7f") {
-						query += data;
+					const char = printableChar(data);
+					if (char) {
+						query += char;
 						refreshList();
 						return;
 					}
@@ -590,6 +646,39 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		await ctx.switchSession(selected);
 	}
 
+	function parseRenameSelection(selected: string): { value: string; name: string } | undefined {
+		if (!selected.startsWith("__rename__:")) return undefined;
+		try {
+			const parsed = JSON.parse(selected.slice("__rename__:".length));
+			if (typeof parsed?.value === "string" && typeof parsed?.name === "string") return parsed;
+		} catch {
+			return undefined;
+		}
+		return undefined;
+	}
+
+	async function applyProjectRename(ctx: ExtensionCommandContext, project: any, name: string): Promise<void> {
+		if (!name.trim()) return;
+		try {
+			const renamed = renameProject(project.id, name);
+			updateStatus(ctx);
+			ctx.ui.notify(`Project renamed: ${renamed.name || renamed.id}`, "info");
+		} catch (error) {
+			ctx.ui.notify(`Failed to rename project: ${error instanceof Error ? error.message : String(error)}`, "error");
+		}
+	}
+
+	async function applyStreamRename(ctx: ExtensionCommandContext, project: any, stream: any, name: string): Promise<void> {
+		if (!name.trim()) return;
+		try {
+			const renamed = renameStream(project, stream.id, name);
+			updateStatus(ctx);
+			ctx.ui.notify(`Stream renamed: ${renamed.name || renamed.id}`, "info");
+		} catch (error) {
+			ctx.ui.notify(`Failed to rename stream: ${error instanceof Error ? error.message : String(error)}`, "error");
+		}
+	}
+
 	async function showProjectPicker(ctx: ExtensionCommandContext): Promise<void> {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("/projects requires Pi TUI interactive mode.", "error");
@@ -605,7 +694,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 				description: [project.pinned ? "pinned" : undefined, formatHomePath(project.root)].filter(Boolean).join(" · "),
 			})),
 		];
-		const selected = await chooseFromItems(ctx, "Projects", items);
+		const selected = await chooseFromItems(ctx, "Projects", items, { renameSelected: true });
 		if (!selected) return;
 		if (selected === "__new__") {
 			const projectPath = await chooseDirectory(ctx, ctx.cwd);
@@ -614,6 +703,13 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			updateStatus(ctx);
 			ctx.ui.notify(`Project selected: ${project.name || project.id}`, "info");
 			await showStreamPicker(ctx, project);
+			return;
+		}
+		const projectRename = parseRenameSelection(selected);
+		if (projectRename) {
+			const project = projects.find((item) => item.id === projectRename.value);
+			if (project) await applyProjectRename(ctx, project, projectRename.name);
+			await showProjectPicker(ctx);
 			return;
 		}
 		const project = projects.find((item) => item.id === selected);
@@ -640,7 +736,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 				description: [stream.pinned ? "pinned" : undefined, stream.workspace?.mode, formatHomePath(stream.workspace?.path)].filter(Boolean).join(" · "),
 			})),
 		];
-		const selected = await chooseFromItems(ctx, `Streams · ${project.name || project.id}`, items);
+		const selected = await chooseFromItems(ctx, `Streams · ${project.name || project.id}`, items, { renameSelected: true });
 		if (!selected) return;
 		if (selected === "__project__") {
 			updateStatus(ctx);
@@ -655,6 +751,13 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			updateStatus(ctx);
 			ctx.ui.notify(`Stream selected: ${stream.name || stream.id}`, "info");
 			await showSessionPicker(ctx, project, stream);
+			return;
+		}
+		const streamRename = parseRenameSelection(selected);
+		if (streamRename) {
+			const stream = streams.find((item) => item.id === streamRename.value);
+			if (stream) await applyStreamRename(ctx, project, stream, streamRename.name);
+			await showStreamPicker(ctx, project);
 			return;
 		}
 		const stream = streams.find((item) => item.id === selected);
