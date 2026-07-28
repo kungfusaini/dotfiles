@@ -3,8 +3,8 @@
   "theme": "gruvbox-dark",
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.5",
-  "defaultThinkingLevel": "medium",
-  "hideThinkingBlock": true,
+  "defaultThinkingLevel": "off",
+  "hideThinkingBlock": false,
   "treeFilterMode": "no-tools",
   "packages": [
     "npm:pi-web-access",
@@ -12,7 +12,8 @@
     "npm:pi-marketplace",
     "npm:pi-claude-marketplace",
     "npm:@kungfusaini/pi-plan-mode",
-    "npm:pi-session-todo"
+    "npm:pi-session-todo",
+    "npm:@ogulcancelik/pi-herdr"
   ],
   "sessionDir": "~/.local/state/pi/agent/sessions"
 }

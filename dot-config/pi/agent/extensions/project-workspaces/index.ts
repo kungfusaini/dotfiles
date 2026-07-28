@@ -273,7 +273,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		const owner = resolveSessionOwner(ctx.sessionManager.getSessionId());
 		if (owner) {
 			const info = contextInfoFromCtx(ctx);
-			ctx.ui.setStatus("workspace", ctx.ui.theme.fg(info.stream ? "accent" : "muted", workspaceLabel(info)));
+			ctx.ui.setStatus("workspace", ctx.ui.theme.fg("muted", workspaceLabel(info)));
 		} else {
 			ctx.ui.setStatus("workspace", undefined);
 		}
@@ -322,8 +322,8 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			function makeList(): SelectList {
 				const currentItems = filteredItems();
 				const next = new SelectList(currentItems, Math.min(Math.max(currentItems.length, 1), 14), {
-					selectedPrefix: (s: string) => theme.fg("accent", s),
-					selectedText: (s: string) => theme.fg("accent", s),
+					selectedPrefix: (s: string) => theme.fg("muted", s),
+					selectedText: (s: string) => theme.fg("text", s),
 					description: (s: string) => theme.fg("muted", s),
 					scrollInfo: (s: string) => theme.fg("dim", s),
 					noMatch: (s: string) => theme.fg("warning", s),
@@ -344,14 +344,14 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 				const contentWidth = Math.max(1, innerWidth - paddingX * 2);
 				const clipped = truncateToWidth(content, contentWidth, "…");
 				const padding = " ".repeat(Math.max(0, contentWidth - visibleWidth(clipped)));
-				return `${theme.fg("borderAccent", "│")}${" ".repeat(paddingX)}${clipped}${padding}${" ".repeat(paddingX)}${theme.fg("borderAccent", "│")}`;
+				return `${theme.fg("borderMuted", "│")}${" ".repeat(paddingX)}${clipped}${padding}${" ".repeat(paddingX)}${theme.fg("borderMuted", "│")}`;
 			}
 
 			return {
 				render(width: number) {
 					const innerWidth = Math.max(26, width - 4);
-					const top = theme.fg("borderAccent", `╭${"─".repeat(innerWidth)}╮`);
-					const bottom = theme.fg("borderAccent", `╰${"─".repeat(innerWidth)}╯`);
+					const top = theme.fg("borderMuted", `╭${"─".repeat(innerWidth)}╮`);
+					const bottom = theme.fg("borderMuted", `╰${"─".repeat(innerWidth)}╯`);
 					const empty = panelLine("", innerWidth);
 					const listWidth = Math.max(1, innerWidth - 6);
 					const listLines = list.render(listWidth).map((line) => panelLine(line, innerWidth));
@@ -365,7 +365,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 					return [
 						top,
 						empty,
-						panelLine(theme.fg("accent", theme.bold(title)), innerWidth),
+						panelLine(theme.fg("muted", theme.bold(title)), innerWidth),
 						panelLine(renameTarget || query ? theme.fg("text", promptText) : theme.fg("dim", promptText), innerWidth),
 						empty,
 						...listLines,

@@ -180,8 +180,8 @@ export default function (pi: ExtensionAPI) {
           let pwd = formatCwdForFooter(ctx.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
           const branch = footerData.getGitBranch();
           if (branch) pwd = `${pwd} (${branch})`;
-          const sessionName = ctx.sessionManager.getSessionName();
-          if (sessionName) pwd = `${pwd} • ${sessionName}`;
+          const workspaceStatus = footerData.getExtensionStatuses().get("workspace");
+          if (workspaceStatus) pwd = `${pwd} • ${sanitizeStatusText(workspaceStatus)}`;
 
           let left = theme.fg("dim", codexUsageText);
           let leftWidth = visibleWidth(left);
@@ -215,10 +215,10 @@ export default function (pi: ExtensionAPI) {
           ];
 
           const statusLine = Array.from(footerData.getExtensionStatuses().entries())
-            .filter(([key]) => key !== "vim-mode")
+            .filter(([key]) => key !== "vim-mode" && key !== "workspace")
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([, text]) => sanitizeStatusText(text))
-            .join(" ");
+            .join(theme.fg("dim", " • "));
           if (statusLine) lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
           return lines;
         },

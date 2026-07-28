@@ -1,6 +1,7 @@
 # Global Agent Instructions
 
 - Follow the XDG Base Directory Specification for system layout.
+- Install software and system-level dependencies through my Nix flake at `~/.config/nix/flake.nix` whenever practical.
 - Do not start coding or making edits unless explicitly told to start, except when already in an ongoing chain of edits.
 
 ## Reuse-First Research
