@@ -18,7 +18,7 @@ prefix = "alt+space"
 settings = "prefix+comma"
 workspace_picker = "prefix+shift+s"
 new_workspace = "prefix+shift+n"
-previous_tab = "prefix+l"
+previous_tab = ""
 navigate_workspace_up = "k"
 navigate_workspace_down = "j"
 navigate_pane_left = "h"
@@ -47,6 +47,12 @@ row_gap = 0
 
 [ui.sidebar.agents]
 rows = [["state_icon", "$pi_project"], ["$pi_stream"], ["$pi_title"]]
+
+[[keys.command]]
+key = "prefix+l"
+type = "shell"
+command = "node \"$HOME/.config/herdr/tab-mru.mjs\" switch"
+description = "toggle last tab in current workspace"
 
 [[keys.command]]
 key = "prefix+shift+l"
