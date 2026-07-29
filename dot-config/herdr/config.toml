@@ -1,0 +1,88 @@
+onboarding = false
+[experimental]
+kitty_graphics = true
+
+[theme]
+name = "gruvbox"
+
+[theme.custom]
+panel_bg = "reset"
+surface0 = "#504945"
+surface_dim = "#504945"
+overlay0 = "#bdae93"
+overlay1 = "#d5c4a1"
+accent = "#d65d0e"
+
+[keys]
+prefix = "alt+space"
+settings = "prefix+comma"
+workspace_picker = "prefix+shift+s"
+new_workspace = "prefix+shift+n"
+previous_tab = "prefix+l"
+navigate_workspace_up = "k"
+navigate_workspace_down = "j"
+navigate_pane_left = "h"
+navigate_pane_right = "l"
+split_vertical = "prefix+backslash"
+split_horizontal = "prefix+minus"
+zoom = "prefix+enter"
+focus_pane_left = "ctrl+h"
+focus_pane_down = "ctrl+j"
+focus_pane_up = "ctrl+k"
+focus_pane_right = "ctrl+l"
+
+[ui]
+hide_tab_bar_when_single_tab = false
+prompt_new_workspace_name = true
+sidebar_start_collapsed = true
+sidebar_collapsed_mode = "hidden"
+pane_gaps = false
+pane_borders = true
+show_agent_labels_on_pane_borders = false
+
+agent_panel_sort = "priority"
+[ui.sidebar.spaces]
+rows = [["workspace"], ["$pi_stream_1"], ["$pi_stream_2"], ["$pi_stream_3"], ["$pi_stream_4"], ["$pi_stream_5"], ["$pi_stream_6"]]
+row_gap = 0
+
+[ui.sidebar.agents]
+rows = [["state_icon", "$pi_project"], ["$pi_stream"], ["$pi_title"]]
+
+[[keys.command]]
+key = "prefix+shift+l"
+type = "shell"
+command = "node \"$HOME/.config/herdr/workspace-mru.mjs\" switch"
+description = "toggle last workspace"
+
+[[keys.command]]
+key = "prefix+a"
+type = "shell"
+command = "node \"$HOME/.config/herdr/focus-top-agent.mjs\""
+description = "focus top priority agent"
+
+[[keys.command]]
+key = "prefix+shift+a"
+type = "popup"
+command = "node \"$HOME/.config/herdr/agent-picker.mjs\""
+description = "pick agent"
+width = "80%"
+height = "60%"
+
+[[keys.command]]
+key = "prefix+s"
+type = "popup"
+command = "node \"$HOME/.config/herdr/plugins/pi-workspace-sync/picker.mjs\""
+description = "open/create project space"
+width = "70%"
+height = "45%"
+[[keys.command]]
+key = "prefix+t"
+type = "shell"
+command = "node \"$HOME/.config/herdr/toggle-scratchpad.mjs\""
+description = "toggle scratchpad"
+[[keys.command]]
+key = "prefix+m"
+type = "shell"
+command = "node \"$HOME/.config/herdr/toggle-spotify-player.mjs\""
+description = "toggle spotify player"
+

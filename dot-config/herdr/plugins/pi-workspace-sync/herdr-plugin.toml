@@ -1,0 +1,15 @@
+id = "sumeet.pi-workspace-sync"
+name = "Pi Workspace Sync"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Durably reconcile Herdr spaces with Pi projects through a shared XDG registry."
+platforms = ["macos", "linux"]
+
+[[startup]]
+command = ["node", "sync.mjs", "startup"]
+
+[[actions]]
+id = "sync"
+title = "Sync Pi projects and Herdr spaces"
+contexts = ["workspace"]
+command = ["node", "sync.mjs", "action"]
