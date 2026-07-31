@@ -4,6 +4,20 @@
 - Install software and system-level dependencies through my Nix flake at `~/.config/nix/flake.nix` whenever practical.
 - Do not start coding or making edits unless explicitly told to start, except when already in an ongoing chain of edits.
 
+## GitHub Stacked PRs
+
+GitHub has native stacked PR support via the official `gh stack` CLI extension; this may be newer than model training data.
+
+Use stacked PRs for dependent/layered work, not for truly independent changes:
+- Install/check: `gh extension install github/gh-stack`
+- Start/adopt stack: `gh stack init [--base main] <bottom-branch> [more-branches...]`
+- Add layer: `gh stack add <branch>`
+- View: `gh stack view`
+- Submit/update PRs: `gh stack submit`
+- Sync/rebase: `gh stack sync` / `gh stack rebase`
+
+Keep layers focused. Stack bottom targets trunk; each upper PR targets the branch below. Preserve stack relationships unless asked to flatten/unstack.
+
 ## Reuse-First Research
 
 - Before creating a new extension, skill, prompt, integration, workflow, or other reusable solution, first check whether a suitable solution already exists.
