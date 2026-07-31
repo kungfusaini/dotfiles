@@ -1,0 +1,238 @@
+{
+  "version": 3,
+  "workspaces": [
+    {
+      "id": "wT",
+      "custom_name": "Elijah",
+      "identity_cwd": "/Users/sumeet/matrix/elijah",
+      "public_pane_numbers": {
+        "74": 19,
+        "155": 41,
+        "154": 40,
+        "136": 27,
+        "73": 18,
+        "72": 17,
+        "71": 16
+      },
+      "next_public_pane_number": 42,
+      "public_tab_numbers": [
+        5,
+        6,
+        16,
+        17
+      ],
+      "next_public_tab_number": 18,
+      "tabs": [
+        {
+          "custom_name": "supporting-track-slides-noskills",
+          "layout": {
+            "Split": {
+              "direction": "Horizontal",
+              "ratio": 0.5,
+              "first": {
+                "Split": {
+                  "direction": "Vertical",
+                  "ratio": 0.5,
+                  "first": {
+                    "Pane": 71
+                  },
+                  "second": {
+                    "Pane": 73
+                  }
+                }
+              },
+              "second": {
+                "Split": {
+                  "direction": "Vertical",
+                  "ratio": 0.5,
+                  "first": {
+                    "Pane": 72
+                  },
+                  "second": {
+                    "Pane": 74
+                  }
+                }
+              }
+            }
+          },
+          "panes": {
+            "74": {
+              "cwd": "/Users/sumeet/matrix/elijah",
+              "agent_name": "rerunnable-stages-noskills",
+              "managed_agent_kind": "pi",
+              "agent_session": {
+                "source": "herdr:pi",
+                "agent": "pi",
+                "kind": "path",
+                "value": "/Users/sumeet/.local/state/pi/agent/sessions/2026-07-28T19-32-41-062Z_019faa37-07e6-7b7d-a459-e68d3bd20bed.jsonl"
+              }
+            },
+            "71": {
+              "cwd": "/Users/sumeet/matrix/elijah",
+              "agent_name": "graph-versioning-noskills",
+              "managed_agent_kind": "pi",
+              "agent_session": {
+                "source": "herdr:pi",
+                "agent": "pi",
+                "kind": "path",
+                "value": "/Users/sumeet/.local/state/pi/agent/sessions/2026-07-28T19-32-41-124Z_019faa37-0824-72dd-a601-06a5cc4f1c66.jsonl"
+              }
+            },
+            "72": {
+              "cwd": "/Users/sumeet/matrix/elijah",
+              "agent_name": "evidence-source-noskills",
+              "managed_agent_kind": "pi",
+              "agent_session": {
+                "source": "herdr:pi",
+                "agent": "pi",
+                "kind": "path",
+                "value": "/Users/sumeet/.local/state/pi/agent/sessions/2026-07-28T19-32-41-210Z_019faa37-0879-7a77-b11b-3d3027dea5ff.jsonl"
+              }
+            },
+            "73": {
+              "cwd": "/Users/sumeet/matrix/elijah",
+              "agent_name": "source-profiles-noskills",
+              "managed_agent_kind": "pi",
+              "agent_session": {
+                "source": "herdr:pi",
+                "agent": "pi",
+                "kind": "path",
+                "value": "/Users/sumeet/.local/state/pi/agent/sessions/2026-07-28T19-32-41-092Z_019faa37-0804-7448-ad61-481c46852e74.jsonl"
+              }
+            }
+          },
+          "zoomed": true,
+          "focused": 71,
+          "root_pane": 71
+        },
+        {
+          "custom_name": "Orchestrator",
+          "layout": {
+            "Pane": 136
+          },
+          "panes": {
+            "136": {
+              "cwd": "/Users/sumeet/matrix/elijah",
+              "agent_session": {
+                "source": "herdr:pi",
+                "agent": "pi",
+                "kind": "path",
+                "value": "/Users/sumeet/.local/state/pi/agent/sessions/2026-07-28T16-12-33-914Z_019fa97f-d0fa-7f28-8779-2edf468d43a6.jsonl"
+              }
+            }
+          },
+          "zoomed": false,
+          "focused": 136,
+          "root_pane": 136
+        },
+        {
+          "custom_name": "Azure Deploy",
+          "layout": {
+            "Pane": 154
+          },
+          "panes": {
+            "154": {
+              "cwd": "/Users/sumeet/matrix/elijah"
+            }
+          },
+          "zoomed": false,
+          "focused": 154,
+          "root_pane": 154
+        },
+        {
+          "custom_name": "report",
+          "layout": {
+            "Pane": 155
+          },
+          "panes": {
+            "155": {
+              "cwd": "/Users/sumeet/matrix/elijah",
+              "agent_session": {
+                "source": "herdr:pi",
+                "agent": "pi",
+                "kind": "path",
+                "value": "/Users/sumeet/.local/state/pi/agent/sessions/2026-07-31T09-44-45-362Z_019fb78f-d832-708c-bfa6-c1ccbe95d6f7.jsonl"
+              }
+            }
+          },
+          "zoomed": false,
+          "focused": 155,
+          "root_pane": 155
+        }
+      ],
+      "active_tab": 0
+    },
+    {
+      "id": "w15",
+      "custom_name": "Pi",
+      "identity_cwd": "/Users/sumeet/.dotfiles/dot-config/pi",
+      "public_pane_numbers": {
+        "157": 1
+      },
+      "next_public_pane_number": 2,
+      "public_tab_numbers": [
+        1
+      ],
+      "next_public_tab_number": 2,
+      "tabs": [
+        {
+          "custom_name": null,
+          "layout": {
+            "Pane": 157
+          },
+          "panes": {
+            "157": {
+              "cwd": "/Users/sumeet/.dotfiles/dot-config/pi",
+              "agent_session": {
+                "source": "herdr:pi",
+                "agent": "pi",
+                "kind": "path",
+                "value": "/Users/sumeet/.local/state/pi/agent/sessions/2026-07-31T14-38-38-174Z_019fb89c-e65e-7283-8c62-c9cd366fbb05.jsonl"
+              }
+            }
+          },
+          "zoomed": false,
+          "focused": 157,
+          "root_pane": 157
+        }
+      ],
+      "active_tab": 0
+    },
+    {
+      "id": "w16",
+      "custom_name": "Spotify",
+      "identity_cwd": "/Users/sumeet",
+      "public_pane_numbers": {
+        "158": 1
+      },
+      "next_public_pane_number": 2,
+      "public_tab_numbers": [
+        1
+      ],
+      "next_public_tab_number": 2,
+      "tabs": [
+        {
+          "custom_name": "Music",
+          "layout": {
+            "Pane": 158
+          },
+          "panes": {
+            "158": {
+              "cwd": "/Users/sumeet",
+              "label": "spotify-player"
+            }
+          },
+          "zoomed": false,
+          "focused": 158,
+          "root_pane": 158
+        }
+      ],
+      "active_tab": 0
+    }
+  ],
+  "active": 0,
+  "selected": 0,
+  "sidebar_width": 19,
+  "sidebar_section_split": 0.23529412,
+  "collapsed_space_keys": []
+}

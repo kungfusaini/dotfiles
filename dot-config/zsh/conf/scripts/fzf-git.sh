@@ -161,7 +161,7 @@ if [[ $__fzf_git_fzf ]]; then
 else
   # Redefine this function to change the options
   _fzf_git_fzf() {
-    fzf --height 50% --tmux 90%,70% \
+    fzf --height 50% \
       --layout reverse --multi --min-height 20+ --border \
       --no-separator --header-border horizontal \
       --border-label-pos 2 \
@@ -179,7 +179,7 @@ fi
 _fzf_git_check() {
   git rev-parse HEAD > /dev/null 2>&1 && return
 
-  [[ -n $TMUX ]] && tmux display-message "Not in a git repository"
+  print -r -- "Not in a git repository" >&2
   return 1
 }
 

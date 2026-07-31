@@ -26,7 +26,8 @@ alias dotfiles="cd ~/.dotfiles"
 alias config="cd ~/.config"
 alias kittyedit="vim ~/.config/kitty/kitty.conf"
 alias hammer="vim ~/.config/hammerspoon/init.lua"
-alias tmuxconf="vim ~/.config/tmux/tmux.conf"
+alias herdrconf="vim ~/.config/herdr/config.toml"
+alias muxconf="vim ~/.config/herdr/config.toml"
 
 ########## NIX Aliases ##########
 alias nixedit="vim ~/.config/nix/flake.nix"

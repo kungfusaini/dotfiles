@@ -1,5 +1,5 @@
 #!/bin/bash
-# task-note - Task note management with vertical tmux split
+# task-note - Task note management with Herdr/tmux split support
 #
 TASK_ID=$1
 ACTION=$2
@@ -8,7 +8,7 @@ show_usage() {
     echo "Usage: task-note <task_id> <action> [note_path]"
     echo "Actions:"
     echo "  add <path>    - Add note path to task"
-    echo "  open          - Open note for task in vertical tmux split"
+    echo "  open          - Open note for task in a Herdr/tmux split"
     echo "  show          - Show note path for task"
     exit 1
 }
@@ -55,13 +55,17 @@ case "$ACTION" in
         fi
         eval "EXPANDED_PATH=$NOTE_PATH"
         if [ -f "$EXPANDED_PATH" ]; then
-            if [ -n "$TMUX" ]; then
-                # Vertical split in note's directory, pane stays open
-                NOTE_DIR=$(dirname "$EXPANDED_PATH")
-                tmux split-window -h -c "$NOTE_DIR" "$EDITOR '$EXPANDED_PATH'"
+            NOTE_DIR=$(dirname "$EXPANDED_PATH")
+            if [ -n "$HERDR_ENV" ] && command -v herdr >/dev/null 2>&1; then
+                # Right split in note's directory, pane stays open.
+                herdr pane split --current --direction right --cwd "$NOTE_DIR" --focus \
+                    && herdr pane run current "${EDITOR:-vim}" "$EXPANDED_PATH" \
+                    || "${EDITOR:-vim}" "$EXPANDED_PATH"
+            elif [ -n "$TMUX" ]; then
+                # Legacy tmux fallback for any old sessions still around.
+                tmux split-window -h -c "$NOTE_DIR" "${EDITOR:-vim} '$EXPANDED_PATH'"
             else
-                # Fallback to regular opening if not in tmux
-                $EDITOR "$EXPANDED_PATH"
+                "${EDITOR:-vim}" "$EXPANDED_PATH"
             fi
         else
             echo "Error: Note file not found: $EXPANDED_PATH"
