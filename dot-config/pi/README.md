@@ -8,6 +8,7 @@ Personal configuration for [Pi Coding Agent](https://github.com/earendil-works/p
 - `agent/settings.json` — default model, theme, packages, tree filtering, and session storage
 - `agent/keybindings.json` — TUI and model/session shortcuts
 - `agent/themes/gruvbox-dark.json` — Gruvbox Dark TUI theme
+- `agent/skills/to-tickets/` — standalone tracker-agnostic ticket breakdown skill
 - `agent/extensions/auto-session-title.ts` — automatic and on-demand session titles
 - `agent/extensions/footer.ts` — custom usage footer
 - `agent/extensions/pretty-code-blocks.ts` — Markdown code blocks without raw backtick fences
