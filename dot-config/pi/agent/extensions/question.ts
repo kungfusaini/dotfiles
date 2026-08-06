@@ -14,7 +14,7 @@
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { Editor, type EditorTheme, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { Editor, type EditorTheme, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 interface QuestionOption {
@@ -144,6 +144,10 @@ export default function questionExtension(pi: ExtensionAPI) {
 				let selectedIndex = 0;
 				let inputMode = false;
 				let cachedLines: string[] | undefined;
+				let scrollOffset = 0;
+				let lastMaxScrollOffset = 0;
+				let lastViewportHeight = 0;
+				let keepSelectionVisible = true;
 
 				const editorTheme: EditorTheme = {
 					borderColor: (s: string) => theme.fg("accent", s),
@@ -198,7 +202,23 @@ export default function questionExtension(pi: ExtensionAPI) {
 					return true;
 				}
 
+				function scrollBy(delta: number): void {
+					if (lastMaxScrollOffset <= 0) return;
+					scrollOffset = Math.max(0, Math.min(lastMaxScrollOffset, scrollOffset + delta));
+					keepSelectionVisible = false;
+					refresh();
+				}
+
 				function handleInput(data: string): void {
+					if (matchesKey(data, "ctrl+u") || matchesKey(data, "pageUp")) {
+						scrollBy(-Math.max(3, Math.floor((lastViewportHeight || 12) / 2)));
+						return;
+					}
+					if (matchesKey(data, "ctrl+d") || matchesKey(data, "pageDown")) {
+						scrollBy(Math.max(3, Math.floor((lastViewportHeight || 12) / 2)));
+						return;
+					}
+
 					if (inputMode) {
 						if (keybindings.matches(data, "tui.select.cancel")) {
 							inputMode = false;
@@ -215,11 +235,13 @@ export default function questionExtension(pi: ExtensionAPI) {
 
 					if (keybindings.matches(data, "tui.select.up")) {
 						selectedIndex = Math.max(0, selectedIndex - 1);
+						keepSelectionVisible = true;
 						refresh();
 						return;
 					}
 					if (keybindings.matches(data, "tui.select.down")) {
 						selectedIndex = Math.min(displayOptions.length - 1, selectedIndex + 1);
+						keepSelectionVisible = true;
 						refresh();
 						return;
 					}
@@ -235,7 +257,16 @@ export default function questionExtension(pi: ExtensionAPI) {
 				function render(width: number): string[] {
 					if (cachedLines) return cachedLines;
 					const renderWidth = Math.max(1, width);
+					const terminalRows = Number((tui as { terminal?: { rows?: number } }).terminal?.rows || process.stdout.rows || 30);
+					const viewportHeight = Math.max(8, Math.min(22, terminalRows - 8));
+					lastViewportHeight = viewportHeight;
 					const lines: string[] = [];
+					let selectedLine = 0;
+
+					function fitLine(text: string): string {
+						const truncated = visibleWidth(text) > renderWidth ? truncateToWidth(text, renderWidth, "") : text;
+						return truncated + " ".repeat(Math.max(0, renderWidth - visibleWidth(truncated)));
+					}
 
 					function addWrapped(text: string): void {
 						lines.push(...wrapTextWithAnsi(text, renderWidth));
@@ -265,6 +296,7 @@ export default function questionExtension(pi: ExtensionAPI) {
 					for (let index = 0; index < displayOptions.length; index++) {
 						const option = displayOptions[index];
 						const selected = index === selectedIndex;
+						if (selected) selectedLine = lines.length;
 						const prefix = selected ? theme.fg("accent", "> ") : "  ";
 						const label = `${index + 1}. ${option.label}${option.isCustom && inputMode ? " ✎" : ""}`;
 						addWrappedWithPrefix(prefix, theme.fg(selected ? "accent" : "text", label));
@@ -280,12 +312,41 @@ export default function questionExtension(pi: ExtensionAPI) {
 					lines.push("");
 					addWrappedWithPrefix(
 						" ",
-						theme.fg("dim", inputMode ? "Enter submit • Esc back" : "↑↓/number navigate • Enter select • Esc cancel"),
+						theme.fg(
+							"dim",
+							inputMode
+								? "Enter submit • Esc back • Ctrl-U/Ctrl-D scroll"
+								: "↑↓/number navigate • Enter select • Esc cancel • Ctrl-U/Ctrl-D scroll",
+						),
 					);
 					lines.push(theme.fg("accent", "─".repeat(renderWidth)));
 
-					cachedLines = lines;
-					return lines;
+					lastMaxScrollOffset = Math.max(0, lines.length - viewportHeight);
+					if (keepSelectionVisible && lastMaxScrollOffset > 0) {
+						const topMargin = 2;
+						const bottomMargin = 4;
+						if (selectedLine < scrollOffset + topMargin) scrollOffset = selectedLine - topMargin;
+						if (selectedLine >= scrollOffset + viewportHeight - bottomMargin) {
+							scrollOffset = selectedLine - viewportHeight + bottomMargin + 1;
+						}
+					}
+					scrollOffset = Math.max(0, Math.min(lastMaxScrollOffset, scrollOffset));
+
+					if (lines.length <= viewportHeight) {
+						cachedLines = lines;
+						return lines;
+					}
+
+					const visibleLines = lines.slice(scrollOffset, scrollOffset + viewportHeight);
+					if (scrollOffset > 0) visibleLines[0] = fitLine(theme.fg("dim", `↑ ${scrollOffset} more line(s)`));
+					const hiddenBelow = lines.length - scrollOffset - viewportHeight;
+					if (hiddenBelow > 0) {
+						const hint = inputMode ? "Enter submit • Ctrl-D scroll" : "Enter select • Ctrl-D scroll";
+						visibleLines[visibleLines.length - 1] = fitLine(theme.fg("dim", `↓ ${hiddenBelow} more line(s) • ${hint}`));
+					}
+
+					cachedLines = visibleLines;
+					return visibleLines;
 				}
 
 				return {
