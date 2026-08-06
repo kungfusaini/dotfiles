@@ -172,18 +172,36 @@ function createPiStream(record, nameInput) {
   writeJson(path.join(dir, "stream.json"), stream);
   return stream;
 }
-function loadStreams(record) {
+function loadStreams(record, status = "active") {
   const dir = streamDirForRecord(record);
   if (!dir || !existsSync(dir)) return [];
   try {
     return readdirSync(dir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => readJson(path.join(dir, entry.name, "stream.json"), null))
-      .filter((stream) => stream && (stream.status || "active") === "active")
+      .filter((stream) => stream && (status === "all" || (stream.status || "active") === status))
       .sort((a, b) => String(a.name || a.id || "").localeCompare(String(b.name || b.id || "")));
   } catch {
     return [];
   }
+}
+function streamMetadataPath(record, stream) {
+  const dir = streamDirForRecord(record);
+  return dir && stream?.id ? path.join(dir, stream.id, "stream.json") : undefined;
+}
+function updateStream(record, stream, patch) {
+  const file = streamMetadataPath(record, stream);
+  if (!file) return undefined;
+  const current = readJson(file, stream);
+  const next = { ...current, ...patch, updatedAt: now() };
+  writeJson(file, next);
+  return next;
+}
+function archiveStream(record, stream) {
+  return updateStream(record, stream, { status: "archived", pinned: false, archivedAt: now() });
+}
+function restoreStream(record, stream) {
+  return updateStream(record, stream, { status: "active", archivedAt: undefined });
 }
 function createOrFocus(record) {
   if (record.herdr?.workspaceID) {
@@ -293,7 +311,7 @@ async function createNewStreamFromPicker(record) {
   return openStream(record, stream);
 }
 function recordKey(record) { return record.herdrOnly ? record.id : (record.pi?.projectID || record.id || record.root || record.name); }
-function pickerItems(records, expandedKey) {
+function pickerItems(records, expandedKey, archiveExpandedKey) {
   const items = [];
   let insertedClosedSeparator = false;
   let sawOpen = false;
@@ -306,12 +324,21 @@ function pickerItems(records, expandedKey) {
     }
     items.push(record);
     if (expandedKey && recordKey(record) === expandedKey && !record.herdrOnly) {
-      const streams = loadStreams(record);
-      items.push({ special: "project-scope", name: "Project scope", record, hasStreams: streams.length > 0 });
-      streams.forEach((stream, index) => {
+      const keyValue = recordKey(record);
+      const streams = loadStreams(record, "active");
+      const archivedStreams = loadStreams(record, "archived");
+      const archiveExpanded = archiveExpandedKey === keyValue;
+      items.push({ special: "project-scope", name: "Project scope", record, hasStreams: streams.length + archivedStreams.length > 0 });
+      streams.forEach((stream) => {
         items.push({ special: "stream", name: stream.name || stream.id, stream, record, branch: "├" });
       });
-      items.push({ special: "new-stream", name: "Create new stream", record, branch: "└" });
+      items.push({ special: "new-stream", name: "Create new stream", record, branch: "├" });
+      items.push({ special: "archive-toggle", name: archiveExpanded ? "Archive ▾" : "Archive ▸", record, archivedCount: archivedStreams.length, branch: "└" });
+      if (archiveExpanded) {
+        archivedStreams.forEach((stream, index) => {
+          items.push({ special: "archived-stream", name: stream.name || stream.id, stream, record, branch: index === archivedStreams.length - 1 ? "└" : "├" });
+        });
+      }
     }
   }
   items.push(
@@ -351,6 +378,16 @@ function fzfLine(item, index) {
     const branch = c("muted", `${item.branch || "└"}─`);
     display = `  ${branch} ${c("muted", "+")} ${c("muted", item.name)}`;
   }
+  else if (item.special === "archive-toggle") {
+    const branch = c("muted", `${item.branch || "└"}─`);
+    const count = Number(item.archivedCount || 0);
+    display = `  ${branch} ${c("muted", item.name)} ${c("muted", `(${count})`)}`;
+  }
+  else if (item.special === "archived-stream") {
+    const streamName = item.stream?.name || item.stream?.id || item.name;
+    const branch = c("muted", `   ${item.branch || "└"}─`);
+    display = `  ${branch} ${c("muted", streamName)}`;
+  }
   else {
     const isOpen = Boolean(item.herdr?.workspaceID);
     const isClosedProject = !item.herdrOnly && !isOpen;
@@ -364,9 +401,13 @@ function dumpForTests(items, title = "Project spaces") {
   console.log(title);
   for (const [index, item] of items.entries()) console.log(plain(fzfLine(item, index).split(FIELD_SEP)[0]));
 }
-function itemsFromState(records) { return pickerItems(records, readState().expandedKey); }
+function itemsFromState(records) {
+  const state = readState();
+  return pickerItems(records, state.expandedKey, state.archiveExpandedKey);
+}
 function findItem(records, payload) {
-  const items = pickerItems(records, readState().expandedKey);
+  const state = readState();
+  const items = pickerItems(records, state.expandedKey, state.archiveExpandedKey);
   return items.find((item) => {
     const p = itemPayload(item);
     return p.special === payload?.special && p.projectKey === payload?.projectKey && p.streamID === payload?.streamID;
@@ -376,23 +417,32 @@ function printList(records) { process.stdout.write(itemsFromState(records).map(f
 function cacheDir() { const dir = path.join(process.env.TMPDIR || "/tmp", `herdr-pi-picker-cache-${process.ppid}`); mkdirSync(dir, { recursive: true }); return dir; }
 function prepareFzfCache(records) {
   const dir = cacheDir();
-  const collapsed = pickerItems(records, undefined).map(fzfLine).join("\n");
+  const state = readState();
+  const collapsed = pickerItems(records, undefined, undefined).map(fzfLine).join("\n");
   writeFileSync(path.join(dir, "collapsed"), collapsed, "utf8");
   for (const record of records) {
     const payload = encodePayload({ projectKey: recordKey(record) });
-    writeFileSync(path.join(dir, payload), pickerItems(records, recordKey(record)).map(fzfLine).join("\n"), "utf8");
+    writeFileSync(path.join(dir, payload), pickerItems(records, recordKey(record), undefined).map(fzfLine).join("\n"), "utf8");
   }
-  const expanded = readState().expandedKey;
-  const initial = expanded ? pickerItems(records, expanded).map(fzfLine).join("\n") : collapsed;
+  const expanded = state.expandedKey;
+  const archiveExpanded = state.archiveExpandedKey;
+  const initial = expanded ? pickerItems(records, expanded, archiveExpanded).map(fzfLine).join("\n") : collapsed;
   writeFileSync(path.join(dir, "current"), initial, "utf8");
   writeFileSync(path.join(dir, "state"), expanded ? encodePayload({ projectKey: expanded }) : "", "utf8");
   return dir;
 }
 function toggleExpandedFromLine(records, line) {
   const payload = decodePayload(String(line || "").split(FIELD_SEP).at(-1));
-  if (!payload?.projectKey || payload.special) return;
-  const current = readState().expandedKey;
-  writeState({ expandedKey: current === payload.projectKey ? undefined : payload.projectKey });
+  if (!payload?.projectKey) return;
+  const state = readState();
+  if (payload.special === "archive-toggle") {
+    writeState({ ...state, archiveExpandedKey: state.archiveExpandedKey === payload.projectKey ? undefined : payload.projectKey });
+    return;
+  }
+  if (payload.special) return;
+  const expandedKey = state.expandedKey === payload.projectKey ? undefined : payload.projectKey;
+  const archiveExpandedKey = expandedKey && state.archiveExpandedKey === expandedKey ? state.archiveExpandedKey : undefined;
+  writeState({ expandedKey, archiveExpandedKey });
 }
 function toggleAndPrintList(records, line) {
   toggleExpandedFromLine(records, line);
@@ -419,7 +469,7 @@ function renderPicker(items, selected) {
     lines.push(`${pointer} ${colored}${" ".repeat(Math.max(0, width - raw.length - 2))}`);
   });
   while (lines.length < height - footerLines - 1) lines.push("");
-  lines.push(c("muted", "↑/↓ j/k move   enter open/create   tab streams   x close   q cancel"));
+  lines.push(c("muted", "↑/↓ j/k move   enter open/create   tab streams/archive   a archive/restore   x close   q cancel"));
   process.stdout.write("\x1b[?25l\x1b[H\x1b[J" + lines.slice(0, height).join("\n"));
 }
 function readKey() {
@@ -490,17 +540,30 @@ async function closeStreamForItem(record, stream) {
   syncRegistryQuietly();
   return true;
 }
+function toggleStreamArchivedForItem(item) {
+  if (!item?.record || !item?.stream) return undefined;
+  const changed = item.special === "stream"
+    ? archiveStream(item.record, item.stream)
+    : item.special === "archived-stream"
+      ? restoreStream(item.record, item.stream)
+      : undefined;
+  if (changed) syncRegistryQuietly();
+  return changed;
+}
+
 async function runInlinePicker(initialRecords) {
   let records = initialRecords;
-  let expandedKey = readState().expandedKey;
-  let items = pickerItems(records, expandedKey);
+  const state = readState();
+  let expandedKey = state.expandedKey;
+  let archiveExpandedKey = state.archiveExpandedKey;
+  let items = pickerItems(records, expandedKey, archiveExpandedKey);
   let selected = 0;
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.setEncoding("utf8");
   try {
     while (true) {
-      items = pickerItems(records, expandedKey);
+      items = pickerItems(records, expandedKey, archiveExpandedKey);
       selected = Math.max(0, Math.min(selected, items.length - 1));
       renderPicker(items, selected);
       const key = await readKey();
@@ -518,24 +581,52 @@ async function runInlinePicker(initialRecords) {
         const closed = await closeSpaceForItem(closingItem);
         if (closed) {
           records = loadRecords();
-          expandedKey = closingItem?.special === "stream" ? recordKey(closingItem.record) : undefined;
-          writeState({ expandedKey });
+          expandedKey = closingItem?.special === "stream" || closingItem?.special === "archived-stream" ? recordKey(closingItem.record) : undefined;
+          archiveExpandedKey = closingItem?.special === "archived-stream" ? expandedKey : undefined;
+          writeState({ expandedKey, archiveExpandedKey });
         }
         continue;
       }
       if (key === "\t") {
         const item = items[selected];
+        if (item?.special === "archive-toggle" && item.record) {
+          const keyValue = recordKey(item.record);
+          archiveExpandedKey = archiveExpandedKey === keyValue ? undefined : keyValue;
+          writeState({ expandedKey, archiveExpandedKey });
+          const nextItems = pickerItems(records, expandedKey, archiveExpandedKey);
+          selected = Math.max(0, nextItems.findIndex((candidate) => itemPayload(candidate).special === "archive-toggle" && itemPayload(candidate).projectKey === keyValue));
+          continue;
+        }
         const targetRecord = item?.record || (!item?.special ? item : undefined);
         if (targetRecord && !targetRecord.herdrOnly) {
           const keyValue = recordKey(targetRecord);
           expandedKey = expandedKey === keyValue ? undefined : keyValue;
-          writeState({ expandedKey });
-          const nextItems = pickerItems(records, expandedKey);
+          if (expandedKey !== keyValue || archiveExpandedKey !== keyValue) archiveExpandedKey = undefined;
+          writeState({ expandedKey, archiveExpandedKey });
+          const nextItems = pickerItems(records, expandedKey, archiveExpandedKey);
           const payload = itemPayload(targetRecord);
           selected = Math.max(0, nextItems.findIndex((candidate) => {
             const candidatePayload = itemPayload(candidate);
             return candidatePayload.projectKey === payload.projectKey && !candidatePayload.special;
           }));
+        }
+        continue;
+      }
+      if (key === "a") {
+        const item = items[selected];
+        const previousSelected = selected;
+        const changed = toggleStreamArchivedForItem(item);
+        if (changed) {
+          records = loadRecords();
+          expandedKey = recordKey(item.record);
+          writeState({ expandedKey, archiveExpandedKey });
+          const nextItems = pickerItems(records, expandedKey, archiveExpandedKey);
+          if (item.special === "archived-stream") {
+            const restoredIndex = nextItems.findIndex((candidate) => itemPayload(candidate).streamID === item.stream.id);
+            selected = restoredIndex >= 0 ? restoredIndex : Math.min(previousSelected, nextItems.length - 1);
+          } else {
+            selected = Math.min(previousSelected, nextItems.length - 1);
+          }
         }
         continue;
       }
@@ -554,12 +645,14 @@ async function main() {
   const expandInput = process.env.PICKER_EXPAND_PROJECT;
   const expandRecord = expandInput ? records.find((item) => item.name === expandInput || item.pi?.projectID === expandInput || recordKey(item) === expandInput) : undefined;
   const expandedKey = expandRecord ? recordKey(expandRecord) : expandInput || undefined;
-  writeState({ expandedKey });
-  const items = pickerItems(records, expandedKey);
+  const archiveExpandedKey = process.env.PICKER_EXPAND_ARCHIVE === "1" ? expandedKey : undefined;
+  writeState({ expandedKey, archiveExpandedKey });
+  const items = pickerItems(records, expandedKey, archiveExpandedKey);
   if (process.env.PICKER_DUMP === "1") { dumpForTests(items); return; }
   if (process.env.PICKER_DUMP_STREAMS) {
     const record = records.find((item) => item.name === process.env.PICKER_DUMP_STREAMS || item.pi?.projectID === process.env.PICKER_DUMP_STREAMS);
-    dumpForTests(record ? pickerItems([record], recordKey(record)) : [], `${record?.name || "Project"} expanded`);
+    const dumpArchiveExpandedKey = process.env.PICKER_EXPAND_ARCHIVE === "1" && record ? recordKey(record) : undefined;
+    dumpForTests(record ? pickerItems([record], recordKey(record), dumpArchiveExpandedKey) : [], `${record?.name || "Project"} expanded`);
     return;
   }
   const item = await runInlinePicker(records);
@@ -570,7 +663,9 @@ async function main() {
       ? await createUnlinkedSpace()
       : item.special === "stream"
         ? openStream(item.record, item.stream)
-        : item.special === "new-stream"
+        : item.special === "archived-stream"
+          ? openStream(item.record, item.stream)
+          : item.special === "new-stream"
           ? await createNewStreamFromPicker(item.record)
           : item.special === "project-scope"
             ? createOrFocus(item.record)

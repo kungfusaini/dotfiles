@@ -5,6 +5,7 @@ import { SessionManager, type ExtensionAPI, type ExtensionCommandContext, type E
 import { matchesKey, type SelectItem, SelectList, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import {
+	archiveStream,
 	createStream,
 	ensureProject,
 	listProjects,
@@ -12,6 +13,7 @@ import {
 	recordSessionOwner,
 	renameProject,
 	renameStream,
+	restoreStream,
 	resolveContext,
 	resolveSessionOwner,
 } from "./projects.ts";
@@ -279,12 +281,26 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		}
 	}
 
-	async function chooseFromItems(ctx: ExtensionContext, title: string, items: SelectItem[], options: { renameSelected?: boolean } = {}): Promise<string | null> {
+	type ChooseItems = SelectItem[] | (() => SelectItem[]);
+	type ChooseFromItemsOptions = {
+		renameSelected?: boolean;
+		actionSelected?: (item: SelectItem) => string | undefined;
+		actionHelp?: string;
+		toggleSelected?: (item: SelectItem) => boolean | void;
+		toggleHelp?: string;
+	};
+
+	async function chooseFromItems(ctx: ExtensionContext, title: string, items: ChooseItems, options: ChooseFromItemsOptions = {}): Promise<string | null> {
 		if (ctx.mode !== "tui") return null;
 		const selected = await ctx.ui.custom<string | null>((tui, theme, keybindings, done) => {
 			let query = "";
 			let renameTarget: SelectItem | null = null;
 			let renameText = "";
+			let selectedValue: string | undefined;
+
+			function allItems(): SelectItem[] {
+				return typeof items === "function" ? items() : items;
+			}
 
 			function itemMatches(item: SelectItem, filter: string): boolean {
 				const normalized = filter.trim().toLowerCase();
@@ -294,7 +310,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			}
 
 			function filteredItems(): SelectItem[] {
-				return items.filter((item) => itemMatches(item, query));
+				return allItems().filter((item) => itemMatches(item, query));
 			}
 
 			function typedQueryValue(): string | undefined {
@@ -311,7 +327,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 				const selected = list.getSelectedItem();
 				if (!selected || selected.value.startsWith("__")) return;
 				renameTarget = selected;
-				renameText = selected.label.replace(/\s+\(current\)$/i, "");
+				renameText = selected.label.replace(/\s+\(current\)$/i, "").trim();
 				tui.requestRender();
 			}
 
@@ -319,7 +335,7 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 				return data.length === 1 && data >= " " && data !== "\x7f" ? data : undefined;
 			}
 
-			function makeList(): SelectList {
+			function makeList(preferredValue = selectedValue): SelectList {
 				const currentItems = filteredItems();
 				const next = new SelectList(currentItems, Math.min(Math.max(currentItems.length, 1), 14), {
 					selectedPrefix: (s: string) => theme.fg("muted", s),
@@ -328,15 +344,22 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 					scrollInfo: (s: string) => theme.fg("dim", s),
 					noMatch: (s: string) => theme.fg("warning", s),
 				});
+				if (preferredValue) {
+					const index = currentItems.findIndex((item) => item.value === preferredValue);
+					if (index >= 0) next.setSelectedIndex(index);
+				}
+				next.onSelectionChange = (item) => { selectedValue = item.value; };
 				next.onSelect = (item) => done(String(item.value));
 				next.onCancel = () => done(null);
 				return next;
 			}
 
 			let list = makeList();
+			selectedValue = list.getSelectedItem()?.value;
 
-			function refreshList(): void {
-				list = makeList();
+			function refreshList(preferredValue = list.getSelectedItem()?.value || selectedValue): void {
+				selectedValue = preferredValue;
+				list = makeList(preferredValue);
 				tui.requestRender();
 			}
 
@@ -357,11 +380,16 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 					const listLines = list.render(listWidth).map((line) => panelLine(line, innerWidth));
 					const searchText = query ? `Search: ${query}` : "Search: type to filter";
 					const promptText = renameTarget
-						? `Rename ${renameTarget.label.replace(/\s+\(current\)$/i, "")}: ${renameText}`
+						? `Rename ${renameTarget.label.replace(/\s+\(current\)$/i, "").trim()}: ${renameText}`
 						: searchText;
 					const helpText = renameTarget
 						? "enter save • esc cancel rename"
-						: [query ? "↑↓ navigate • enter select • esc clear search" : "↑↓ navigate • type filter • enter select • esc cancel", options.renameSelected ? "ctrl+r rename" : undefined].filter(Boolean).join(" • ");
+						: [
+							query ? "↑↓ navigate • enter select • esc clear search" : "↑↓ navigate • type filter • enter select • esc cancel",
+							options.renameSelected ? "ctrl+r rename" : undefined,
+							options.actionHelp,
+							options.toggleHelp,
+						].filter(Boolean).join(" • ");
 					return [
 						top,
 						empty,
@@ -404,6 +432,21 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 					if (matchesKey(data, "ctrl+r") || data === "\x12") {
 						startRename();
 						return;
+					}
+					if (!query && options.toggleSelected && (keybindings.matches(data, "tui.input.tab") || matchesKey(data, "tab") || data === "\t")) {
+						const selected = list.getSelectedItem();
+						if (selected && options.toggleSelected(selected)) {
+							refreshList(selected.value);
+							return;
+						}
+					}
+					if (!query && options.actionSelected && data === "a") {
+						const selected = list.getSelectedItem();
+						const value = selected ? options.actionSelected(selected) : undefined;
+						if (value) {
+							done(value);
+							return;
+						}
 					}
 					if (keybindings.matches(data, "tui.select.cancel") && query) {
 						query = "";
@@ -719,7 +762,16 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		await showStreamPicker(ctx, project);
 	}
 
-	async function showStreamPicker(ctx: ExtensionCommandContext, projectOverride?: any): Promise<void> {
+	function streamArchiveToggleValue(streamID: string): string {
+		return `__stream_archive__:${streamID}`;
+	}
+
+	function parseStreamArchiveToggle(selected: string): string | undefined {
+		const prefix = "__stream_archive__:";
+		return selected.startsWith(prefix) ? selected.slice(prefix.length) : undefined;
+	}
+
+	async function showStreamPicker(ctx: ExtensionCommandContext, projectOverride?: any, pickerOptions: { archiveExpanded?: boolean } = {}): Promise<void> {
 		if (ctx.mode !== "tui") {
 			ctx.ui.notify("/streams requires Pi TUI interactive mode.", "error");
 			return;
@@ -727,21 +779,48 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		const info = projectOverride ? ensureStore(resolveContext(projectOverride.root, { sessionID: undefined })) : contextInfoFromCtx(ctx);
 		const project = projectOverride || info.project || ensureProject(ctx.cwd);
 		const streams = listStreams(project, "active") as any[];
-		const items: SelectItem[] = [
+		const archivedStreams = listStreams(project, "archived") as any[];
+		let archiveExpanded = pickerOptions.archiveExpanded ?? Boolean(info.stream && (info.stream.status || "active") === "archived");
+		const archiveRowValue = "__archive__";
+		const streamByID = (id: string) => [...streams, ...archivedStreams].find((item) => item.id === id);
+		const archivedDescription = () => archivedStreams.length === 0
+			? "No archived streams"
+			: `${archivedStreams.length} archived stream${archivedStreams.length === 1 ? "" : "s"} · tab ${archiveExpanded ? "collapse" : "expand"}`;
+		const streamItems = (): SelectItem[] => [
 			{ value: "__project__", label: info.stream ? "Project scope" : "Project scope (current)", description: "Use project-level context" },
 			{ value: "__new__", label: "New stream", description: "Create a shared-workdir stream" },
+			{ value: archiveRowValue, label: archiveExpanded ? "Archive ▾" : "Archive ▸", description: archivedDescription() },
+			...(archiveExpanded ? archivedStreams.map((stream) => ({
+				value: stream.id,
+				label: `  ${stream.id === info.stream?.id ? `${stream.name || stream.id} (current)` : stream.name || stream.id}`,
+				description: ["archived", stream.pinned ? "pinned" : undefined, stream.workspace?.mode, formatHomePath(stream.workspace?.path)].filter(Boolean).join(" · "),
+			})) : []),
 			...streams.map((stream) => ({
 				value: stream.id,
 				label: stream.id === info.stream?.id ? `${stream.name || stream.id} (current)` : stream.name || stream.id,
 				description: [stream.pinned ? "pinned" : undefined, stream.workspace?.mode, formatHomePath(stream.workspace?.path)].filter(Boolean).join(" · "),
 			})),
 		];
-		const selected = await chooseFromItems(ctx, `Streams · ${project.name || project.id}`, items, { renameSelected: true });
+		const selected = await chooseFromItems(ctx, `Streams · ${project.name || project.id}`, streamItems, {
+			renameSelected: true,
+			actionHelp: "a archive/restore",
+			actionSelected: (item) => streamByID(item.value) ? streamArchiveToggleValue(item.value) : undefined,
+			toggleHelp: "tab expand/collapse archive",
+			toggleSelected: (item) => {
+				if (item.value !== archiveRowValue || archivedStreams.length === 0) return false;
+				archiveExpanded = !archiveExpanded;
+				return true;
+			},
+		});
 		if (!selected) return;
 		if (selected === "__project__") {
 			updateStatus(ctx);
 			ctx.ui.notify("Project scope selected", "info");
 			await showSessionPicker(ctx, project);
+			return;
+		}
+		if (selected === archiveRowValue) {
+			await showStreamPicker(ctx, project, { archiveExpanded: archivedStreams.length > 0 ? !archiveExpanded : archiveExpanded });
 			return;
 		}
 		if (selected === "__new__") {
@@ -753,14 +832,38 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 			await showSessionPicker(ctx, project, stream);
 			return;
 		}
-		const streamRename = parseRenameSelection(selected);
-		if (streamRename) {
-			const stream = streams.find((item) => item.id === streamRename.value);
-			if (stream) await applyStreamRename(ctx, project, stream, streamRename.name);
-			await showStreamPicker(ctx, project);
+		const streamToggleID = parseStreamArchiveToggle(selected);
+		if (streamToggleID) {
+			const activeStream = streams.find((item) => item.id === streamToggleID);
+			const archivedStream = archivedStreams.find((item) => item.id === streamToggleID);
+			if (activeStream) {
+				const archived = archiveStream(project, activeStream.id);
+				if (activeStream.id === info.stream?.id) {
+					const sessionID = ctx.sessionManager.getSessionId();
+					if (sessionID) recordSessionOwner(project, sessionID, undefined, { scope: "project", projectID: project.id, streamID: undefined });
+				}
+				updateStatus(ctx);
+				ctx.ui.notify(`Stream archived: ${archived.name || archived.id}`, "info");
+				await showStreamPicker(ctx, project, { archiveExpanded });
+				return;
+			}
+			if (archivedStream) {
+				const restored = restoreStream(project, archivedStream.id);
+				updateStatus(ctx);
+				ctx.ui.notify(`Stream restored: ${restored.name || restored.id}`, "info");
+				await showStreamPicker(ctx, project, { archiveExpanded: true });
+				return;
+			}
 			return;
 		}
-		const stream = streams.find((item) => item.id === selected);
+		const streamRename = parseRenameSelection(selected);
+		if (streamRename) {
+			const stream = streamByID(streamRename.value);
+			if (stream) await applyStreamRename(ctx, project, stream, streamRename.name);
+			await showStreamPicker(ctx, project, { archiveExpanded });
+			return;
+		}
+		const stream = streamByID(selected);
 		if (!stream) return;
 		updateStatus(ctx);
 		ctx.ui.notify(`Stream selected: ${stream.name || stream.id}`, "info");

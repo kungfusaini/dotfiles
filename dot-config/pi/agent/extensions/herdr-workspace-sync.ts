@@ -298,7 +298,7 @@ function findStreamByIDOrName(project: any, value: string | undefined, includeAr
 
 function findStreamByTabLabel(project: any, label: string | undefined): any | undefined {
 	if (isDefaultTabLabel(label)) return undefined;
-	return findStreamByIDOrName(project, label);
+	return findStreamByIDOrName(project, label, true);
 }
 
 function updateSessionHeaderCwd(ctx: ExtensionContext, targetCwd: string): void {

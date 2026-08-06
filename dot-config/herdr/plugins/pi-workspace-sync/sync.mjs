@@ -156,14 +156,14 @@ function streamDirForRecord(record) {
   return projectID ? path.join(dataHome(), "pi", "projects", projectID, "streams") : undefined;
 }
 
-function loadStreams(record) {
+function loadStreams(record, status = "active") {
   const dir = streamDirForRecord(record);
   if (!dir || !existsSync(dir)) return [];
   try {
     return readdirSync(dir, { withFileTypes: true })
       .filter((entry) => entry.isDirectory())
       .map((entry) => readJson(path.join(dir, entry.name, "stream.json"), null))
-      .filter((stream) => stream && (stream.status || "active") === "active");
+      .filter((stream) => stream && (status === "all" || (stream.status || "active") === status));
   } catch {
     return [];
   }
@@ -174,7 +174,7 @@ function streamMatchesLabel(stream, label) {
 }
 
 function openStreamsForRecord(record) {
-  const streams = loadStreams(record);
+  const streams = loadStreams(record, "all");
   const labels = record.herdr?.tabLabels || [];
   return streams.filter((stream) => labels.some((label) => streamMatchesLabel(stream, label)));
 }
@@ -182,7 +182,7 @@ function openStreamsForRecord(record) {
 function activeStreamForRecord(record) {
   const label = record.herdr?.activeTabLabel;
   if (!label || /^\d+$/.test(String(label))) return undefined;
-  return loadStreams(record).find((stream) => streamMatchesLabel(stream, label));
+  return loadStreams(record, "all").find((stream) => streamMatchesLabel(stream, label));
 }
 
 function reportWorkspaceMetadata(record) {

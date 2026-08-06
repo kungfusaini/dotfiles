@@ -10,7 +10,7 @@ Identity is based on the canonical project root path. Pi project ids and Herdr w
 
 ## Herdr workflow
 
-`prefix+shift+s` opens the project-space picker popup.
+`prefix+s` opens the project-space picker popup.
 
 The picker lets you:
 
@@ -18,6 +18,8 @@ The picker lets you:
 - focus an already-open Herdr space for an existing Pi/shared project
 - create exactly one Herdr space for a selected existing project
 - press `Tab` on a project to expand/collapse its Pi streams underneath
+- press `Tab` on `Archive` to expand/collapse archived streams
+- press `a` on an active stream to archive it, or on an archived stream to restore it
 - select project scope or an expanded stream inline
 - create a new shared Pi project and open its Herdr space
 - create a new unlinked Herdr-only space by name for scratch work
