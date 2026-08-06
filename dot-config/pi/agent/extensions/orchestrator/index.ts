@@ -10,6 +10,13 @@ type WorkspaceMode = "current" | "worktree";
 type DriverMode = "parent" | "human";
 type PermissionMode = "read-only" | "edit";
 
+const WORKSPACE_CONTEXT_EVENT = "pi:workspace-context:resolve";
+
+interface WorkspaceContextResult {
+	projectID?: string;
+	streamID?: string;
+}
+
 interface WorkerRecord {
 	name: string;
 	task: string;
@@ -21,6 +28,7 @@ interface WorkerRecord {
 	branch?: string;
 	worktreePath?: string;
 	createdAt: string;
+	inheritedStreamID?: string;
 	lastPrompt?: string;
 	paneClosed?: boolean;
 	closedAt?: string;
@@ -52,6 +60,7 @@ const DelegateParams = Type.Object({
 	base: Type.Optional(Type.String({ description: "Optional base ref for git worktree add. Defaults to HEAD." })),
 	worktreePath: Type.Optional(Type.String({ description: "Optional checkout path for workspace=worktree." })),
 	focus: Type.Optional(Type.Boolean({ description: "Focus the new pane after creation. Default false." })),
+	inheritStream: Type.Optional(Type.Boolean({ description: "Explicitly pass the parent stream to the child. Defaults true; set false to force project scope." })),
 	closeOnDone: Type.Optional(Type.Boolean({ description: "When driver=parent, read final output and close the child pane after it settles. Default true for parent, false for human." })),
 	waitTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Parent driver wait timeout in ms. Omit for Herdr default/indefinite." })),
 });
@@ -131,8 +140,11 @@ async function ensureHerdr(ctx: ExtensionContext) {
 	}
 }
 
-async function createPane(pi: ExtensionAPI, cwd: string, focus: boolean, signal?: AbortSignal): Promise<string> {
-	const args = ["pane", "split", "--current", "--direction", "right", "--cwd", cwd, focus ? "--focus" : "--no-focus"];
+async function createPane(pi: ExtensionAPI, cwd: string, focus: boolean, env: Record<string, string | undefined> = {}, signal?: AbortSignal): Promise<string> {
+	const envArgs = Object.entries(env)
+		.filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0)
+		.flatMap(([key, value]) => ["--env", `${key}=${value}`]);
+	const args = ["pane", "split", "--current", "--direction", "right", "--cwd", cwd, ...envArgs, focus ? "--focus" : "--no-focus"];
 	const result = await execChecked(pi, "herdr", args, { signal, timeout: 15_000 });
 	const parsed = parseFirstJsonObject(textOf(result));
 	const paneId = parsed?.result?.pane?.pane_id || parsed?.pane?.pane_id || parsed?.pane_id;
@@ -143,6 +155,15 @@ async function createPane(pi: ExtensionAPI, cwd: string, focus: boolean, signal?
 async function gitRoot(pi: ExtensionAPI, cwd: string, signal?: AbortSignal): Promise<string> {
 	const result = await execChecked(pi, "git", ["rev-parse", "--show-toplevel"], { cwd, signal, timeout: 10_000 });
 	return result.stdout.trim();
+}
+
+function resolveWorkspaceContext(pi: ExtensionAPI, ctx: ExtensionContext): WorkspaceContextResult | undefined {
+	const request: { cwd: string; sessionID?: string; result?: WorkspaceContextResult } = {
+		cwd: ctx.cwd,
+		sessionID: ctx.sessionManager.getSessionId(),
+	};
+	pi.events.emit(WORKSPACE_CONTEXT_EVENT, request);
+	return request.result;
 }
 
 async function createWorktree(
@@ -212,6 +233,7 @@ function summarizeWorker(worker: WorkerRecord): string {
 		`  driver: ${worker.driver}`,
 		`  permission: ${worker.permission}`,
 		worker.branch ? `  branch: ${worker.branch}` : undefined,
+		worker.inheritedStreamID ? `  stream: ${worker.inheritedStreamID}` : undefined,
 		worker.paneClosed ? `  paneClosed: true${worker.closedAt ? ` (${worker.closedAt})` : ""}` : undefined,
 		worker.closeError ? `  closeError: ${worker.closeError}` : undefined,
 		`  task: ${worker.task}`,
@@ -250,6 +272,8 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			const permission = params.permission ?? (workspace === "worktree" ? "edit" : "read-only");
 			const closeOnDone = params.closeOnDone ?? driver === "parent";
 			const name = uniqueName(params.name, params.task);
+			const parentWorkspace = resolveWorkspaceContext(pi, ctx);
+			const inheritedStreamID = params.inheritStream === false ? undefined : parentWorkspace?.streamID;
 
 			let cwd = ctx.cwd;
 			let branch: string | undefined;
@@ -261,7 +285,10 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 				worktreePath = created.cwd;
 			}
 
-			const paneId = await createPane(pi, cwd, params.focus ?? false, signal);
+			const paneId = await createPane(pi, cwd, params.focus ?? false, {
+				PI_PROJECT_WORKSPACE_PROJECT_ID: parentWorkspace?.projectID,
+				PI_PROJECT_WORKSPACE_STREAM_ID: params.inheritStream === false ? "__project__" : inheritedStreamID,
+			}, signal);
 			const worker: WorkerRecord = {
 				name,
 				task: params.task,
@@ -273,6 +300,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 				branch,
 				worktreePath,
 				createdAt: new Date().toISOString(),
+				inheritedStreamID,
 			};
 
 			await execChecked(pi, "herdr", ["agent", "start", name, "--kind", "pi", "--pane", paneId], {

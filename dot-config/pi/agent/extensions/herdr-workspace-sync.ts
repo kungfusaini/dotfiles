@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { hydrateProject, listProjects, listStreams, readStream, recordSessionOwner, resolveContext } from "./project-workspaces/projects.ts";
+import { hydrateProject, listProjects, listStreams, recordSessionOwner, resolveContext } from "./project-workspaces/projects.ts";
 
 const REGISTRY_VERSION = 1;
 const SOURCE = "pi-herdr-workspace-sync";
@@ -146,6 +146,14 @@ function currentHerdrWorkspaceID(): string | undefined {
 	return match?.[1];
 }
 
+function currentHerdrTabID(): string | undefined {
+	if (process.env.HERDR_TAB_ID) return process.env.HERDR_TAB_ID;
+	const pane = process.env.HERDR_PANE_ID;
+	if (!pane) return undefined;
+	const snapshot = herdrSnapshot();
+	return (snapshot?.panes || []).find((item: any) => item?.pane_id === pane)?.tab_id;
+}
+
 function reportMetadata(ctx: ExtensionContext, registry: SharedRegistry): void {
 	if (process.env.HERDR_ENV !== "1") return;
 	const workspaceID = currentHerdrWorkspaceID();
@@ -154,18 +162,16 @@ function reportMetadata(ctx: ExtensionContext, registry: SharedRegistry): void {
 	const workspace = currentHerdrWorkspace();
 	const existingTokens = workspace?.tokens && typeof workspace.tokens === "object" ? workspace.tokens as Record<string, string> : {};
 	const linkedProject = exactProjectByName(workspace?.label) || findProjectByToken(existingTokens);
-	const linkedStream = linkedProject ? findStreamByToken(linkedProject, existingTokens, workspace?.label) : undefined;
-	// Once a Herdr Space has Pi project/stream identity, keep that identity stable.
-	// The pane's shell cwd is only a first-time fallback and must not relink the
-	// Space when the user runs `cd` inside the terminal.
+	// Herdr Space metadata is project-scoped only. Stream identity is deliberately
+	// resolved from the current tab label or an explicit launch env in
+	// attachSessionFromHerdr(), never from sticky workspace-wide tokens.
 	const info = linkedProject
 		? {
-			scope: linkedStream ? "stream" as const : "project" as const,
+			scope: "project" as const,
 			project: linkedProject,
-			stream: linkedStream,
-			id: linkedStream ? `${linkedProject.id}/${linkedStream.id}` : linkedProject.id,
-			root: linkedStream?.workspace?.path || linkedProject.root,
-			dir: linkedStream?.dir || linkedProject.dir,
+			id: linkedProject.id,
+			root: linkedProject.root,
+			dir: linkedProject.dir,
 		  }
 		: resolveContext(ctx.cwd, { sessionID: ctx.sessionManager.getSessionId() });
 
@@ -180,10 +186,8 @@ function reportMetadata(ctx: ExtensionContext, registry: SharedRegistry): void {
 		info.project ? "pi_project_id=" + info.project.id : undefined,
 		"pi_project=" + (info.project?.name || info.project?.id || record.name),
 		"root=" + fmt(info.project?.root || root),
-		info.stream ? "pi_stream_id=" + info.stream.id : undefined,
-		info.stream ? "pi_stream=" + (info.stream.name || info.stream.id) : undefined,
 	].filter(Boolean) as string[];
-	const clearStreamTokens = info.stream ? [] : ["--clear-token", "pi_stream_id", "--clear-token", "pi_stream"];
+	const clearStreamTokens = ["--clear-token", "pi_stream_id", "--clear-token", "pi_stream"];
 	const args = ["workspace", "report-metadata", workspaceID, "--source", SOURCE, ...tokens.flatMap((token) => ["--token", token]), ...clearStreamTokens];
 	spawnSync(herdr, args, { encoding: "utf8", stdio: "ignore" });
 }
@@ -209,8 +213,9 @@ function reportPaneMetadata(): number {
 		const workspace: any = workspaceByID.get(agent.workspace_id);
 		const tab: any = tabByID.get(agent.tab_id);
 		const project = workspace?.tokens?.pi_project || workspace?.label;
-		const tabLabel = tab?.label && !/^\d+$/.test(String(tab.label)) ? tab.label : undefined;
-		const stream = tabLabel || workspace?.tokens?.pi_stream;
+		const linkedProject = findProjectByToken(workspace?.tokens || {}) || exactProjectByName(workspace?.label);
+		const streamRecord = linkedProject ? findStreamByTabLabel(linkedProject, tab?.label) : undefined;
+		const stream = streamRecord ? (streamRecord.name || streamRecord.id) : undefined;
 		const title = cleanAgentTitle(agent.terminal_title_stripped || agent.terminal_title);
 		const tokens = [
 			project ? `pi_project=${project}` : undefined,
@@ -259,6 +264,14 @@ function currentHerdrWorkspace(): any | undefined {
 	return (snapshot?.workspaces || []).find((item: any) => item?.workspace_id === workspaceID);
 }
 
+function currentHerdrTab(): any | undefined {
+	if (process.env.HERDR_ENV !== "1") return undefined;
+	const tabID = currentHerdrTabID();
+	if (!tabID) return undefined;
+	const snapshot = herdrSnapshot();
+	return (snapshot?.tabs || []).find((item: any) => item?.tab_id === tabID);
+}
+
 function exactProjectByName(name: string | undefined): any | undefined {
 	if (!name) return undefined;
 	const project = (listProjects("active") as any[]).find((item) => item.name === name || item.id === name);
@@ -278,19 +291,14 @@ function findProjectByToken(tokens: Record<string, string>): any | undefined {
 	return undefined;
 }
 
-function findStreamByToken(project: any, tokens: Record<string, string>, workspaceLabel?: string): any | undefined {
-	const id = tokens.pi_stream_id;
-	if (id) return readStream(project, id);
-	const streams = listStreams(project, "active") as any[];
-	const name = tokens.pi_stream;
-	if (name) return streams.find((stream) => stream.id === name || stream.name === name);
-	if (workspaceLabel) {
-		const byWorkspaceLabel = streams.find((stream) => stream.id === workspaceLabel || stream.name === workspaceLabel);
-		if (byWorkspaceLabel) return byWorkspaceLabel;
-	}
-	// If the project only has one active stream, treat the Herdr Space as linked to
-	// that stream. This preserves project-scope only when there is real ambiguity.
-	return streams.length === 1 ? streams[0] : undefined;
+function findStreamByIDOrName(project: any, value: string | undefined, includeArchived = false): any | undefined {
+	if (!value || value === "__project__") return undefined;
+	return (listStreams(project, includeArchived ? "all" : "active") as any[]).find((stream) => stream.id === value || stream.name === value);
+}
+
+function findStreamByTabLabel(project: any, label: string | undefined): any | undefined {
+	if (isDefaultTabLabel(label)) return undefined;
+	return findStreamByIDOrName(project, label);
 }
 
 function updateSessionHeaderCwd(ctx: ExtensionContext, targetCwd: string): void {
@@ -352,9 +360,16 @@ function attachSessionFromHerdr(ctx: ExtensionContext): { attached: boolean; pro
 	// Prefer an exact Herdr Space label match over stale metadata. This lets a Space
 	// named "Config" attach to the Pi project named "Config" even if the pane cwd is
 	// still ~ or old tokens say Home.
-	const project = exactProjectByName(workspace.label) || findProjectByToken(tokens);
+	const envProject = process.env.PI_PROJECT_WORKSPACE_PROJECT_ID ? hydrateProject(process.env.PI_PROJECT_WORKSPACE_PROJECT_ID) : undefined;
+	const project = envProject || exactProjectByName(workspace.label) || findProjectByToken(tokens);
 	if (!project) return { attached: false };
-	const stream = findStreamByToken(project, tokens, workspace.label);
+
+	const explicitStreamID = process.env.PI_PROJECT_WORKSPACE_STREAM_ID;
+	const tab = currentHerdrTab();
+	const stream = explicitStreamID === "__project__"
+		? undefined
+		: findStreamByIDOrName(project, explicitStreamID, true) || findStreamByTabLabel(project, tab?.label);
+
 	recordSessionOwner(project, sessionID, stream?.id, { scope: stream ? "stream" : "project", projectID: project.id, streamID: stream?.id });
 	retargetPiCwd(ctx, stream?.workspace?.path || project.root);
 	ensureHerdrStreamTab(stream);
