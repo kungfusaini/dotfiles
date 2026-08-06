@@ -135,12 +135,22 @@ export default function questionExtension(pi: ExtensionAPI) {
 				? options
 				: [...options, { label: "Type custom answer", value: "__custom__", isCustom: true }];
 
-			const result = await ctx.ui.custom<{
+			const blockedLabel = `Question: ${params.question}`.slice(0, 120);
+			let result: {
 				answer: string;
 				value: string;
 				index: number | null;
 				wasCustom: boolean;
-			} | null>((tui, theme, keybindings, done) => {
+			} | null = null;
+
+			pi.events.emit("herdr:blocked", { active: true, label: blockedLabel });
+			try {
+				result = await ctx.ui.custom<{
+					answer: string;
+					value: string;
+					index: number | null;
+					wasCustom: boolean;
+				} | null>((tui, theme, keybindings, done) => {
 				let selectedIndex = 0;
 				let inputMode = false;
 				let cachedLines: string[] | undefined;
@@ -356,7 +366,10 @@ export default function questionExtension(pi: ExtensionAPI) {
 					},
 					handleInput,
 				};
-			});
+				});
+			} finally {
+				pi.events.emit("herdr:blocked", { active: false });
+			}
 
 			if (!result) {
 				return {
