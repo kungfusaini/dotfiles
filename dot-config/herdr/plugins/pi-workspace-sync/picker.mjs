@@ -393,7 +393,7 @@ function fzfLine(item, index) {
     const isClosedProject = !item.herdrOnly && !isOpen;
     const icon = item.herdrOnly ? " " : (isClosedProject ? c("muted", "") : c("accent", ""));
     const name = isClosedProject ? c("muted", item.name) : item.name;
-    display = `${icon} ${padAnsi(name, 28)} ${c("muted", displayPath(item.pi?.root || item.root))}`;
+    display = `${icon} ${name}`;
   }
   return `${display}${FIELD_SEP}${encodePayload(itemPayload(item))}`;
 }
