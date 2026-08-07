@@ -34,6 +34,18 @@ herdr plugin action invoke sumeet.pi-workspace-sync.sync
 
 - `sync`: merge Pi registry + currently-open Herdr spaces into the shared registry and report display metadata to Herdr. It does not create missing spaces.
 
+## Herdr plugin events
+
+The plugin also runs the same metadata sync on tab and pane lifecycle events:
+
+- `pane.closed`
+- `tab.closed`
+- `tab.created`
+- `tab.renamed`
+- `tab.focused`
+
+This keeps the Spaces sidebar stream rows (`$pi_stream_1`, `$pi_stream_2`, etc.) aligned with the currently open stream tabs. In particular, closing the last pane in a stream tab removes that tab from Herdr, then the event hook recomputes open streams and clears stale stream metadata tokens.
+
 ## Pi commands
 
 After Pi reloads extensions:

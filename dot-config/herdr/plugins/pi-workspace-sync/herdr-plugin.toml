@@ -8,6 +8,26 @@ platforms = ["macos", "linux"]
 [[startup]]
 command = ["node", "sync.mjs", "startup"]
 
+[[events]]
+on = "pane.closed"
+command = ["node", "sync.mjs", "event"]
+
+[[events]]
+on = "tab.closed"
+command = ["node", "sync.mjs", "event"]
+
+[[events]]
+on = "tab.created"
+command = ["node", "sync.mjs", "event"]
+
+[[events]]
+on = "tab.renamed"
+command = ["node", "sync.mjs", "event"]
+
+[[events]]
+on = "tab.focused"
+command = ["node", "sync.mjs", "event"]
+
 [[actions]]
 id = "sync"
 title = "Sync Pi projects and Herdr spaces"
