@@ -450,6 +450,21 @@ async function surfaceTerminal(pi: ExtensionAPI, ctx: ExtensionContext, record: 
 	return record;
 }
 
+async function hideTerminal(pi: ExtensionAPI, record: TerminalRecord, signal?: AbortSignal): Promise<TerminalRecord> {
+	const detach = await pi.exec("tmux", tmuxArgs("detach-client", "-s", record.tmuxSession), { signal, timeout: 10_000 });
+	if (detach.code !== 0) {
+		const clients = await pi.exec("tmux", tmuxArgs("list-clients", "-t", record.tmuxSession), { signal, timeout: 5_000 });
+		if (clients.code === 0 && clients.stdout.trim()) throw new Error(`Failed to detach ${record.name}: ${textOf(detach)}`);
+	}
+	record.lastPaneId = record.paneId || record.lastPaneId;
+	record.paneId = undefined;
+	record.visibility = "hidden";
+	record.hiddenAt = new Date().toISOString();
+	record.updatedAt = record.hiddenAt;
+	await saveTerminalRecord(record);
+	return record;
+}
+
 function parseFirstJsonObject(output: string): any {
 	for (const line of output.split("\n")) {
 		const trimmed = line.trim();
@@ -664,12 +679,19 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 				if (!params.message) record.statusMessage = undefined;
 			}
 			await saveTerminalRecord(record);
+			let surfaceNote = "";
+			let hideNote = "";
 			if (params.state === "blocked" && record.visibility !== "visible") {
 				await surfaceTerminal(pi, ctx, record, false, signal, "tab");
+				surfaceNote = `\nSurfaced in Herdr pane ${record.paneId}.`;
+			} else if (params.state === "running" && record.visibility === "visible") {
+				await reportSurfacedTerminal(pi, record, record.paneId!, signal);
+				await hideTerminal(pi, record, signal);
+				hideNote = "\nHidden again after resuming.";
 			} else if (record.paneId) {
 				await reportSurfacedTerminal(pi, record, record.paneId, signal);
 			}
-			return { content: [{ type: "text", text: `Marked ${record.name} ${record.state}${record.needsUser ? " (needs user)" : ""}.${record.visibility === "visible" ? `\nSurfaced in Herdr pane ${record.paneId}.` : ""}${record.statusMessage ? `\n${record.statusMessage}` : ""}` }], details: { worker: record } };
+			return { content: [{ type: "text", text: `Marked ${record.name} ${record.state}${record.needsUser ? " (needs user)" : ""}.${surfaceNote}${hideNote}${record.statusMessage ? `\n${record.statusMessage}` : ""}` }], details: { worker: record } };
 		},
 	});
 
@@ -721,17 +743,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const record = await getTerminal(pi, params.name, signal);
 			assertTerminalOwner(record, ctx, params.force);
-			const detach = await pi.exec("tmux", tmuxArgs("detach-client", "-s", record.tmuxSession), { signal, timeout: 10_000 });
-			if (detach.code !== 0) {
-				const clients = await pi.exec("tmux", tmuxArgs("list-clients", "-t", record.tmuxSession), { signal, timeout: 5_000 });
-				if (clients.code === 0 && clients.stdout.trim()) throw new Error(`Failed to detach ${record.name}: ${textOf(detach)}`);
-			}
-			record.lastPaneId = record.paneId || record.lastPaneId;
-			record.paneId = undefined;
-			record.visibility = "hidden";
-			record.hiddenAt = new Date().toISOString();
-			record.updatedAt = record.hiddenAt;
-			await saveTerminalRecord(record);
+			await hideTerminal(pi, record, signal);
 			return { content: [{ type: "text", text: `Detached/sent ${record.name} back to hidden.` }], details: { worker: record } };
 		},
 	});
