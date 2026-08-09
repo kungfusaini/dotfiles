@@ -25,6 +25,11 @@ interface TerminalRecord {
 	needsUser?: boolean;
 	statusMessage?: string;
 	markedAt?: string;
+	task?: string;
+	lastPrompt?: string;
+	promptedAt?: string;
+	promptReadyAt?: string;
+	promptReadyTimedOut?: boolean;
 	title?: string;
 	paneId?: string;
 	lastPaneId?: string;
@@ -91,6 +96,7 @@ const WorkerMarkParams = Type.Object({
 const WorkerStartParams = Type.Object({
 	kind: Type.Optional(WorkerKindSchema),
 	command: Type.Optional(Type.String({ description: "Shell command to run. Defaults to `pi` when kind=pi; required when kind=shell." })),
+	task: Type.Optional(Type.String({ description: "Task prompt to send after startup. Supported for kind=pi workers." })),
 	name: Type.Optional(Type.String({ description: "Optional stable worker name." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory. Defaults to current Pi cwd." })),
 	env: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Extra environment variables for the worker command." })),
@@ -98,6 +104,7 @@ const WorkerStartParams = Type.Object({
 	rows: Type.Optional(Type.Integer({ minimum: 10, description: "Initial hidden terminal height. Default 40." })),
 	title: Type.Optional(Type.String({ description: "Display title when surfaced." })),
 	keepAlive: Type.Optional(Type.Boolean({ description: "Open an interactive shell after the command exits instead of exiting. Default false; exited panes remain inspectable via tmux." })),
+	taskPromptTimeoutMs: Type.Optional(Type.Integer({ minimum: 500, description: "Maximum time to wait for a Pi worker prompt/readiness before sending task anyway. Default 8000ms." })),
 	visibility: Type.Optional(WorkerVisibilitySchema),
 	focus: Type.Optional(Type.Boolean({ description: "Focus the surfaced Herdr pane when visibility=visible. Default true." })),
 });
@@ -170,6 +177,10 @@ function shellQuote(value: string): string {
 
 function textOf(result: { stdout?: string; stderr?: string; code?: number }): string {
 	return [result.stdout, result.stderr].filter(Boolean).join("\n").trim();
+}
+
+function delay(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 async function execChecked(pi: ExtensionAPI, command: string, args: string[], options: { cwd?: string; signal?: AbortSignal; timeout?: number } = {}) {
@@ -508,6 +519,58 @@ async function createTabPane(pi: ExtensionAPI, cwd: string, label: string, focus
 	return parsePaneIdFromHerdrOutput(textOf(result));
 }
 
+function buildPiTaskPrompt(record: TerminalRecord, task: string): string {
+	return [
+		"You are a hidden Pi worker started by the parent orchestrator.",
+		"",
+		`Worker: ${record.name}`,
+		`CWD: ${record.cwd}`,
+		"",
+		"Task:",
+		task,
+		"",
+		"Expectations:",
+		"- Work independently in this terminal.",
+		"- Keep changes and tool usage focused on the task.",
+		"- If you need user/parent input, print a clear BLOCKED message explaining exactly what is needed and wait.",
+		"- When done, print a concise summary with files changed, verification run, and follow-up needed.",
+	].join("\n");
+}
+
+async function sendWorkerText(pi: ExtensionAPI, record: TerminalRecord, text: string, signal?: AbortSignal) {
+	await execChecked(pi, "tmux", tmuxArgs("send-keys", "-t", record.tmuxSession, "-l", "--", text), { signal, timeout: 10_000 });
+	await execChecked(pi, "tmux", tmuxArgs("send-keys", "-t", record.tmuxSession, "Enter"), { signal, timeout: 10_000 });
+}
+
+function looksPromptReady(output: string): boolean {
+	const trimmed = output.trimEnd();
+	if (!trimmed) return false;
+	if (/\bREADY\b/i.test(trimmed)) return true;
+	const lines = trimmed.split("\n").map((line) => line.trim()).filter(Boolean);
+	const last = lines.at(-1) || "";
+	return /(?:^|\s)(?:[>$#❯➜])\s*$/.test(last) || /(?:Codex|Pi).*?(?:remaining|NORMAL|thinking off)/i.test(trimmed);
+}
+
+async function waitForWorkerPromptReady(pi: ExtensionAPI, record: TerminalRecord, timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+	const started = Date.now();
+	let lastOutput = "";
+	let stableSince = 0;
+	while (Date.now() - started < timeoutMs) {
+		const capture = await pi.exec("tmux", tmuxArgs("capture-pane", "-p", "-t", record.tmuxSession, "-S", "-40"), { signal, timeout: 5_000 });
+		const output = capture.stdout || "";
+		if (capture.code === 0 && looksPromptReady(output)) return true;
+		if (output.trim() && output === lastOutput) {
+			stableSince += 300;
+			if (stableSince >= 900) return true;
+		} else {
+			lastOutput = output;
+			stableSince = 0;
+		}
+		await delay(300);
+	}
+	return false;
+}
+
 async function startManagedTerminal(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
@@ -610,6 +673,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		parameters: WorkerStartParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const kind = params.kind ?? "pi";
+			if (params.task && kind !== "pi") throw new Error("task is only supported for kind=pi workers.");
 			const command = params.command ?? (kind === "pi" ? "pi" : undefined);
 			if (!command) throw new Error("command is required when kind=shell.");
 			const record = await startManagedTerminal(
@@ -629,11 +693,24 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 				},
 				signal,
 			);
+			if (params.task && kind === "pi") {
+				record.task = params.task;
+				const prompt = buildPiTaskPrompt(record, params.task);
+				record.lastPrompt = prompt;
+				await saveTerminalRecord(record);
+				const ready = await waitForWorkerPromptReady(pi, record, params.taskPromptTimeoutMs ?? 8000, signal);
+				record.promptReadyTimedOut = !ready;
+				if (ready) record.promptReadyAt = new Date().toISOString();
+				await sendWorkerText(pi, record, prompt, signal);
+				record.promptedAt = new Date().toISOString();
+				record.updatedAt = record.promptedAt;
+				await saveTerminalRecord(record);
+			}
 			return {
 				content: [
 					{
 						type: "text",
-						text: `Started ${kind} worker ${record.name} (${record.paneId ? `visible in Herdr pane ${record.paneId}` : "hidden"}).`,
+						text: `Started ${kind} worker ${record.name} (${record.paneId ? `visible in Herdr pane ${record.paneId}` : "hidden"})${params.task ? " and sent task prompt" : ""}.`,
 					},
 				],
 				details: { worker: record, kind },
@@ -652,7 +729,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			for (const record of terminalRecords) refreshed.push(await refreshTerminalRecord(pi, record, signal));
 			const sorted = refreshed.sort((a, b) => (a.state === "blocked" ? 0 : 1) - (b.state === "blocked" ? 0 : 1) || (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
 			const text = sorted
-				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
+				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.task ? `\n  task: ${r.task}` : ""}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
 				.join("\n\n") || "No orchestrator workers recorded.";
 			return { content: [{ type: "text", text }], details: { workers: refreshed } };
 		},

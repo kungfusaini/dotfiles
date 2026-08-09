@@ -32,6 +32,7 @@ Important parameters:
 
 - `kind`: `pi` or `shell`; defaults to `pi`.
 - `command`: command to run. Defaults to `pi` for `kind=pi`; required for `kind=shell`.
+- `task`: task prompt to send after startup. Supported for `kind=pi` workers.
 - `name`: optional stable worker name.
 - `cwd`: working directory.
 - `visibility`: `hidden` or `visible`; defaults to `hidden`.
@@ -39,12 +40,15 @@ Important parameters:
 - `env`: extra environment variables. Keys must match `^[A-Za-z_][A-Za-z0-9_]*$`; values are applied to the worker script but not stored in the registry.
 - `cols` / `rows`: initial hidden terminal size; defaults to `140x40`.
 - `keepAlive`: after command exit, open an interactive shell instead of exiting; defaults to `false`. Completed output remains readable because tmux keeps exited panes inspectable.
+- `taskPromptTimeoutMs`: for `kind=pi` plus `task`, maximum time to wait for prompt/readiness before sending the task anyway; defaults to `8000`.
 
 Examples:
 
 ```text
-Start a hidden Pi reviewer named auth-reviewer.
+Start a hidden Pi reviewer named auth-reviewer with task "Review the current diff".
 ```
+
+For `kind=pi` plus `task`, the orchestrator starts `pi`, polls the hidden terminal for prompt/readiness, then sends a compact task prompt. If readiness is not detected before `taskPromptTimeoutMs`, it sends the task anyway and records `promptReadyTimedOut` on the worker.
 
 ```text
 Start a hidden shell worker that runs npm test and keep the output readable.
