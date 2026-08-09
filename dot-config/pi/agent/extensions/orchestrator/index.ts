@@ -380,7 +380,6 @@ function applyStructuredResult(record: TerminalRecord, output: string): boolean 
 		return true;
 	}
 	if (parsed.error) {
-		record.structuredResult = undefined;
 		record.structuredResultParseError = parsed.error;
 		record.updatedAt = new Date().toISOString();
 		return true;
@@ -641,7 +640,7 @@ function normalizeCapturedOutput(output: string): string {
 }
 
 async function captureWorkerOutput(pi: ExtensionAPI, record: TerminalRecord, lines: number, signal?: AbortSignal): Promise<string> {
-	const result = await execChecked(pi, "tmux", tmuxArgs("capture-pane", "-p", "-t", record.tmuxSession, "-S", `-${lines}`), { signal, timeout: 10_000 });
+	const result = await execChecked(pi, "tmux", tmuxArgs("capture-pane", "-p", "-J", "-t", record.tmuxSession, "-S", `-${lines}`), { signal, timeout: 10_000 });
 	const output = normalizeCapturedOutput(result.stdout);
 	if (applyStructuredResult(record, output)) await saveTerminalRecord(record);
 	return output;
@@ -857,18 +856,45 @@ async function surfaceTerminal(pi: ExtensionAPI, ctx: ExtensionContext, record: 
 	return record;
 }
 
+async function findSurfacePaneIds(pi: ExtensionAPI, record: TerminalRecord, signal?: AbortSignal): Promise<string[]> {
+	const result = await pi.exec("herdr", ["pane", "list"], { signal, timeout: 10_000 });
+	if (result.code !== 0) return [];
+	try {
+		const parsed = parseFirstJsonObject(textOf(result));
+		const panes = Array.isArray(parsed?.result?.panes) ? parsed.result.panes : [];
+		return panes
+			.filter((pane: any) => {
+				const paneId = pane?.pane_id;
+				if (typeof paneId !== "string" || !paneId) return false;
+				if (paneId === record.paneId) return true;
+				const tokens = pane?.tokens || {};
+				const isOrchestratorPane = tokens.orchestrator_worker === "true" || tokens.orchestrator_backend === "managed_tmux";
+				const matchesWorker = pane.agent === record.name || pane.display_agent === record.name || pane.label === record.name;
+				return isOrchestratorPane && matchesWorker;
+			})
+			.map((pane: any) => pane.pane_id as string);
+	} catch {
+		return [];
+	}
+}
+
 async function closeSurfacePane(pi: ExtensionAPI, record: TerminalRecord, signal?: AbortSignal): Promise<void> {
-	if (!record.paneId) return;
-	const paneId = record.paneId;
-	const closed = await pi.exec("herdr", ["pane", "close", paneId], { signal, timeout: 10_000 });
-	if (closed.code !== 0) {
-		const output = textOf(closed);
-		if (!/not found|unknown pane|pane .* not found/i.test(output)) {
-			record.surfaceCloseError = output || `Failed to close pane ${paneId}`;
-			return;
+	const paneIds = new Set<string>();
+	if (record.paneId) paneIds.add(record.paneId);
+	for (const paneId of await findSurfacePaneIds(pi, record, signal)) paneIds.add(paneId);
+	if (!paneIds.size) {
+		record.surfaceCloseError = undefined;
+		return;
+	}
+	const errors: string[] = [];
+	for (const paneId of paneIds) {
+		const closed = await pi.exec("herdr", ["pane", "close", paneId], { signal, timeout: 10_000 });
+		if (closed.code !== 0) {
+			const output = textOf(closed);
+			if (!/not found|unknown pane|pane .* not found/i.test(output)) errors.push(`${paneId}: ${output || "failed to close"}`);
 		}
 	}
-	record.surfaceCloseError = undefined;
+	record.surfaceCloseError = errors.length ? errors.join("; ") : undefined;
 }
 
 async function hideTerminal(pi: ExtensionAPI, record: TerminalRecord, signal?: AbortSignal): Promise<TerminalRecord> {
