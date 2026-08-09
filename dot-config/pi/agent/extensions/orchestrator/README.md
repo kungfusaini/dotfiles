@@ -88,6 +88,18 @@ By default poll scans `5000` lines per worker, matching the managed tmux history
 
 Use this as the parent orchestration heartbeat until a real event loop/watch mode exists. Since there is intentionally no foreground watch loop yet, parent agents should call poll opportunistically between orchestration steps and before deciding workers are idle.
 
+### `orchestrator_worker_status`
+
+Show a compact parent dashboard after one poll pass. Workers are grouped as:
+
+- needs attention;
+- running;
+- completed;
+- failed / uncertain;
+- closed, when `includeClosed=true`.
+
+Status lines include the worker name, lifecycle state, visibility/pane, structured result status, summary, and `next_action` when present. This is the preferred quick parent overview when raw output is not needed.
+
 ### `orchestrator_worker_mark`
 
 Manually mark a live worker as `blocked` or `running`.

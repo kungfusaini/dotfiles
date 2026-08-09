@@ -75,6 +75,11 @@ const WorkerPollParams = Type.Object({
 	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to inspect per active worker. Default 5000, matching the managed tmux history limit." })),
 });
 
+const WorkerStatusParams = Type.Object({
+	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to inspect per active worker. Default 5000, matching the managed tmux history limit." })),
+	includeClosed: Type.Optional(Type.Boolean({ description: "Include closed workers in the dashboard. Default false." })),
+});
+
 const TerminalSendParams = Type.Object({
 	name: Type.String({ description: "Worker name returned by orchestrator_worker_start/list." }),
 	text: Type.String({ description: "Text to send to the hidden/surfaced worker." }),
@@ -540,6 +545,50 @@ async function pollWorkersOnce(pi: ExtensionAPI, ctx: ExtensionContext, lines: n
 	return { workers: refreshed, events };
 }
 
+function compactValue(value: unknown): string | undefined {
+	if (value === undefined || value === null || value === false) return undefined;
+	if (typeof value === "string") return value;
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
+	}
+}
+
+function formatWorkerStatusLine(record: TerminalRecord): string {
+	const flags = [record.needsUser ? "needs-user" : undefined, record.visibility === "visible" && record.paneId ? `pane:${record.paneId}` : record.visibility].filter(Boolean).join(", ");
+	const result = record.structuredResult?.status ? ` result:${record.structuredResult.status}` : "";
+	const summary = record.statusMessage || record.structuredResult?.summary;
+	const next = compactValue(record.structuredResult?.next_action);
+	return `- ${record.name}: ${record.state}${flags ? ` (${flags})` : ""}${result}${summary ? ` — ${summary}` : ""}${next ? ` | next: ${next}` : ""}`;
+}
+
+function formatWorkerDashboard(workers: TerminalRecord[], includeClosed: boolean): string {
+	const visibleWorkers = includeClosed ? workers : workers.filter((worker) => worker.state !== "closed");
+	const groups: Array<[string, (worker: TerminalRecord) => boolean]> = [
+		["Needs attention", (worker) => worker.state === "blocked" || worker.needsUser === true],
+		["Running", (worker) => worker.state === "running" || worker.state === "starting"],
+		["Completed", (worker) => worker.state === "exited"],
+		["Failed / uncertain", (worker) => worker.state === "failed" || worker.state === "orphaned" || worker.state === "unknown"],
+		["Closed", (worker) => worker.state === "closed"],
+	];
+	const counts = {
+		total: visibleWorkers.length,
+		attention: visibleWorkers.filter((worker) => worker.state === "blocked" || worker.needsUser === true).length,
+		running: visibleWorkers.filter((worker) => worker.state === "running" || worker.state === "starting").length,
+		completed: visibleWorkers.filter((worker) => worker.state === "exited").length,
+		failed: visibleWorkers.filter((worker) => worker.state === "failed" || worker.state === "orphaned" || worker.state === "unknown").length,
+	};
+	const sections = groups
+		.map(([label, predicate]) => {
+			const records = visibleWorkers.filter(predicate).sort((a, b) => (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
+			if (!records.length) return undefined;
+			return `## ${label}\n${records.map(formatWorkerStatusLine).join("\n")}`;
+		})
+		.filter(Boolean);
+	return [`Workers: ${counts.total} total, ${counts.attention} attention, ${counts.running} running, ${counts.completed} completed, ${counts.failed} failed/uncertain.`, sections.join("\n\n") || "No active workers."].join("\n\n");
+}
+
 async function reportSurfacedTerminal(pi: ExtensionAPI, record: TerminalRecord, paneId: string, signal?: AbortSignal) {
 	const title = record.title || record.name;
 	await execChecked(pi, "herdr", ["pane", "rename", paneId, title], { signal, timeout: 10_000 });
@@ -943,6 +992,19 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 				? events.map((event) => `worker:${event.name}\n  state: ${event.beforeState} -> ${event.afterState}\n  visibility: ${event.beforeVisibility} -> ${event.afterVisibility}${event.surfaced ? "\n  surfaced: true" : ""}${event.structuredStatus ? `\n  result: ${event.structuredStatus}` : ""}${event.message ? `\n  message: ${event.message}` : ""}${event.error ? `\n  error: ${event.error}` : ""}`).join("\n\n")
 				: "No worker changes detected.";
 			return { content: [{ type: "text", text: `Polled ${workers.length} workers (${active} active, ${blocked} blocked).\n\n${text}` }], details: { workers, events } };
+		},
+	});
+
+	pi.registerTool({
+		name: "orchestrator_worker_status",
+		label: "Worker Status",
+		description: "Show a compact grouped dashboard of orchestrator workers after one poll pass.",
+		parameters: WorkerStatusParams,
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const { workers, events } = await pollWorkersOnce(pi, ctx, params.lines ?? TMUX_HISTORY_LIMIT, signal);
+			const text = formatWorkerDashboard(workers, params.includeClosed ?? false);
+			const eventNote = events.length ? `\n\nRecent changes: ${events.map((event) => `${event.name}:${event.beforeState}->${event.afterState}${event.surfaced ? ":surfaced" : ""}`).join(", ")}` : "";
+			return { content: [{ type: "text", text: `${text}${eventNote}` }], details: { workers, events } };
 		},
 	});
 
