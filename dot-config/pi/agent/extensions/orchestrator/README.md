@@ -11,6 +11,7 @@ The goal is intentionally simple: make delegation easy without building a giant 
 - Gives it a compact handoff prompt, or leaves it for you to drive.
 - Optionally creates an isolated git worktree first.
 - Tracks the children created during the current Pi session.
+- Starts hidden/background terminal workers in a shared orchestrator-managed tmux server, then reads, sends input, surfaces, hides, or closes them on demand.
 
 ## Mental model
 
@@ -76,6 +77,62 @@ Read recent terminal output from a child agent panel.
 
 Send a follow-up prompt to a child agent. Can optionally wait for it to settle.
 
+## Hidden managed terminals
+
+The orchestrator can also run real terminal processes hidden in tmux, then attach the same live terminal into Herdr when user attention is needed.
+
+All orchestrator instances share one tmux server:
+
+```bash
+tmux -L pi-orchestrator -f ${XDG_STATE_HOME:-~/.local/state}/pi/orchestrator/terminals/tmux.conf
+```
+
+Each worker gets its own tmux session and registry file under:
+
+```text
+${XDG_STATE_HOME:-~/.local/state}/pi/orchestrator/terminals/registry/<name>.json
+```
+
+The shared tmux server is global, but worker mutation is owner-scoped: each worker record stores the owning Pi session id. Other orchestrators can list/read the registry, but mutating actions require the owner session unless `force=true` is supplied intentionally.
+
+### `orchestrator_terminal_start`
+
+Start a hidden terminal worker.
+
+Important parameters:
+
+- `command`: shell command to run.
+- `name`: optional worker name; it is slugged/validated and made unique if already recorded.
+- `cwd`: working directory; defaults to current Pi cwd.
+- `env`: extra environment variables. Keys must match `^[A-Za-z_][A-Za-z0-9_]*$`; values are applied to the worker script but not stored in the registry.
+- `cols` / `rows`: initial hidden terminal size; defaults to `140x40` to avoid tiny-terminal TUI crashes.
+- `keepAlive`: keep an interactive shell open after the command exits so output remains readable; defaults to `true`.
+- `surface`: immediately attach the terminal into Herdr.
+
+### `orchestrator_terminal_list`
+
+List managed terminal workers from the shared registry.
+
+### `orchestrator_terminal_read`
+
+Read recent output with `tmux capture-pane` without surfacing the terminal.
+
+### `orchestrator_terminal_send`
+
+Send text/Enter to a hidden or surfaced terminal with `tmux send-keys`.
+
+### `orchestrator_terminal_surface`
+
+Create a Herdr pane, attach the tmux session, and report pane metadata/session/agent state so the surfaced worker appears in Herdr's agents panel.
+
+### `orchestrator_terminal_hide`
+
+Detach Herdr clients from the tmux session while keeping the terminal process alive hidden.
+
+### `orchestrator_terminal_close`
+
+Kill the tmux session and mark its registry record closed.
+
 ## Context handoff policy
 
 The handoff prompt is deliberately compact. It includes:
@@ -102,8 +159,8 @@ Important: `permission` is currently a prompt-level policy, not a sandbox. A `re
 
 ## Limitations
 
-- Requires Herdr (`HERDR_ENV=1`) and the `herdr` CLI.
+- Visible child-agent delegation and terminal surfacing require Herdr (`HERDR_ENV=1`) and the `herdr` CLI. Hidden terminal start/read/send/hide/close use `tmux` directly unless surfacing is requested.
 - Session worker tracking is lightweight and local to this Pi session/reload history.
 - Worktree creation uses `git worktree add`; merge/review/removal are intentionally manual for now.
-- Partial failures can leave panes, worktrees, or branches behind; cleanup is manual in this MVP.
+- Partial failures can leave panes, worktrees, branches, tmux sessions, or terminal registry files behind; cleanup is manual in this MVP.
 - Human-driven mode still submits the initial handoff prompt; it just does not wait or keep controlling the child.
