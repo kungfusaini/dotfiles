@@ -50,6 +50,20 @@ Start a hidden Pi reviewer named auth-reviewer with task "Review the current dif
 
 For `kind=pi` plus `task`, the orchestrator starts `pi`, polls the hidden terminal for prompt/readiness, then sends a compact task prompt. If readiness is not detected before `taskPromptTimeoutMs`, it sends the task anyway and records `promptReadyTimedOut` on the worker.
 
+The task prompt asks hidden Pi workers to end with an optional final footer:
+
+```text
+ORCHESTRATOR_RESULT:
+{
+  "status": "done | blocked | failed",
+  "summary": "...",
+  "needs_user": false,
+  "next_action": null
+}
+```
+
+If present, the footer must be valid JSON and final non-whitespace output. `orchestrator_worker_read` and `orchestrator_worker_list` parse and store it on the worker record.
+
 ```text
 Start a hidden shell worker that runs npm test and keep the output readable.
 ```

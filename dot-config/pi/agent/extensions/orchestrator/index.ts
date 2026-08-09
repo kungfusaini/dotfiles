@@ -9,6 +9,14 @@ import { Type } from "typebox";
 type WorkerState = "starting" | "running" | "blocked" | "exited" | "failed" | "closed" | "orphaned" | "unknown";
 type WorkerVisibility = "hidden" | "visible" | "unknown";
 
+interface StructuredResult {
+	status: "done" | "blocked" | "failed";
+	summary?: string;
+	needs_user?: boolean;
+	next_action?: unknown;
+	[key: string]: unknown;
+}
+
 interface TerminalRecord {
 	id: string;
 	name: string;
@@ -30,6 +38,8 @@ interface TerminalRecord {
 	promptedAt?: string;
 	promptReadyAt?: string;
 	promptReadyTimedOut?: boolean;
+	structuredResult?: StructuredResult;
+	structuredResultParseError?: string;
 	title?: string;
 	paneId?: string;
 	lastPaneId?: string;
@@ -181,6 +191,75 @@ function textOf(result: { stdout?: string; stderr?: string; code?: number }): st
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function extractJsonObject(text: string): { text: string; end: number } | undefined {
+	const start = text.indexOf("{");
+	if (start < 0) return undefined;
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+	for (let i = start; i < text.length; i++) {
+		const char = text[i];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === "\\") escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') inString = true;
+		else if (char === "{") depth++;
+		else if (char === "}") {
+			depth--;
+			if (depth === 0) return { text: text.slice(start, i + 1), end: i + 1 };
+		}
+	}
+	return undefined;
+}
+
+function parseStructuredResult(output: string): { result?: StructuredResult; error?: string } {
+	const marker = "ORCHESTRATOR_RESULT:";
+	const markerIndex = output.lastIndexOf(marker);
+	if (markerIndex < 0) return {};
+	const afterMarker = output.slice(markerIndex + marker.length);
+	const json = extractJsonObject(afterMarker);
+	if (!json) return { error: "ORCHESTRATOR_RESULT marker found but no complete JSON object followed it." };
+	if (afterMarker.slice(json.end).trim().length > 0) return { error: "ORCHESTRATOR_RESULT footer must be the final non-whitespace content." };
+	try {
+		const parsed = JSON.parse(json.text);
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return { error: "ORCHESTRATOR_RESULT JSON is not an object." };
+		const status = (parsed as StructuredResult).status;
+		if (status !== "done" && status !== "blocked" && status !== "failed") return { error: 'ORCHESTRATOR_RESULT status must be one of "done", "blocked", or "failed".' };
+		return { result: parsed as StructuredResult };
+	} catch (error) {
+		return { error: error instanceof Error ? error.message : String(error) };
+	}
+}
+
+function applyStructuredResult(record: TerminalRecord, output: string): boolean {
+	const parsed = parseStructuredResult(output);
+	if (parsed.result) {
+		record.structuredResult = parsed.result;
+		record.structuredResultParseError = undefined;
+		if (parsed.result.status === "blocked" || parsed.result.needs_user === true) {
+			record.state = "blocked";
+			record.needsUser = parsed.result.needs_user ?? true;
+		} else if (parsed.result.status === "failed") {
+			record.state = "failed";
+		} else if (parsed.result.status === "done" && record.state === "running") {
+			record.state = "exited";
+		}
+		if (typeof parsed.result.summary === "string") record.statusMessage = parsed.result.summary;
+		record.updatedAt = new Date().toISOString();
+		return true;
+	}
+	if (parsed.error) {
+		record.structuredResult = undefined;
+		record.structuredResultParseError = parsed.error;
+		record.updatedAt = new Date().toISOString();
+		return true;
+	}
+	return false;
 }
 
 async function execChecked(pi: ExtensionAPI, command: string, args: string[], options: { cwd?: string; signal?: AbortSignal; timeout?: number } = {}) {
@@ -367,6 +446,22 @@ async function getTerminal(pi: ExtensionAPI, name: string, signal?: AbortSignal)
 	return refreshTerminalRecord(pi, record, signal);
 }
 
+function normalizeCapturedOutput(output: string): string {
+	const lines = output.trimEnd().split("\n");
+	while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+	if (/^Pane is dead \(/.test(lines[lines.length - 1] || "")) lines.pop();
+	while (lines.length && !lines[lines.length - 1].trim()) lines.pop();
+	if (/^\[orchestrator\] command exited with code \d+/.test(lines[lines.length - 1] || "")) lines.pop();
+	return lines.join("\n").trimEnd();
+}
+
+async function captureWorkerOutput(pi: ExtensionAPI, record: TerminalRecord, lines: number, signal?: AbortSignal): Promise<string> {
+	const result = await execChecked(pi, "tmux", tmuxArgs("capture-pane", "-p", "-t", record.tmuxSession, "-S", `-${lines}`), { signal, timeout: 10_000 });
+	const output = normalizeCapturedOutput(result.stdout);
+	if (applyStructuredResult(record, output)) await saveTerminalRecord(record);
+	return output;
+}
+
 async function reportSurfacedTerminal(pi: ExtensionAPI, record: TerminalRecord, paneId: string, signal?: AbortSignal) {
 	const title = record.title || record.name;
 	await execChecked(pi, "herdr", ["pane", "rename", paneId, title], { signal, timeout: 10_000 });
@@ -534,6 +629,15 @@ function buildPiTaskPrompt(record: TerminalRecord, task: string): string {
 		"- Keep changes and tool usage focused on the task.",
 		"- If you need user/parent input, print a clear BLOCKED message explaining exactly what is needed and wait.",
 		"- When done, print a concise summary with files changed, verification run, and follow-up needed.",
+		"- End with a final structured footer as the last non-whitespace output:",
+		"  ORCHESTRATOR_RESULT:",
+		"  {",
+		'    "status": "done | blocked | failed",',
+		'    "summary": "...",',
+		'    "needs_user": false,',
+		'    "next_action": null',
+		"  }",
+		"- The footer must be valid JSON and must be final if present.",
 	].join("\n");
 }
 
@@ -726,10 +830,16 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		async execute(_id, _params, signal) {
 			const terminalRecords = await loadTerminalRecords();
 			const refreshed = [] as TerminalRecord[];
-			for (const record of terminalRecords) refreshed.push(await refreshTerminalRecord(pi, record, signal));
+			for (const record of terminalRecords) {
+				const current = await refreshTerminalRecord(pi, record, signal);
+				if (current.state === "running" || current.state === "blocked" || current.state === "exited" || current.state === "failed") {
+					await captureWorkerOutput(pi, current, 200, signal).catch(() => "");
+				}
+				refreshed.push(current);
+			}
 			const sorted = refreshed.sort((a, b) => (a.state === "blocked" ? 0 : 1) - (b.state === "blocked" ? 0 : 1) || (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
 			const text = sorted
-				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.task ? `\n  task: ${r.task}` : ""}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
+				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.task ? `\n  task: ${r.task}` : ""}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${r.structuredResult ? `\n  result: ${r.structuredResult.status}` : ""}${r.structuredResultParseError ? `\n  resultParseNote: ${r.structuredResultParseError}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
 				.join("\n\n") || "No orchestrator workers recorded.";
 			return { content: [{ type: "text", text }], details: { workers: refreshed } };
 		},
@@ -779,9 +889,9 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		parameters: TerminalReadParams,
 		async execute(_id, params, signal) {
 			const record = await getTerminal(pi, params.name, signal);
-			const lines = String(params.lines ?? 80);
-			const result = await execChecked(pi, "tmux", tmuxArgs("capture-pane", "-p", "-t", record.tmuxSession, "-S", `-${lines}`), { signal, timeout: 10_000 });
-			return { content: [{ type: "text", text: result.stdout.trimEnd() || "(no output)" }], details: { worker: record } };
+			const output = await captureWorkerOutput(pi, record, params.lines ?? 80, signal);
+			const resultNote = record.structuredResult ? `\n\nParsed ORCHESTRATOR_RESULT:\n${JSON.stringify(record.structuredResult, null, 2)}` : record.structuredResultParseError ? `\n\nResult footer parse note: ${record.structuredResultParseError}` : "";
+			return { content: [{ type: "text", text: `${output || "(no output)"}${resultNote}` }], details: { worker: record } };
 		},
 	});
 
