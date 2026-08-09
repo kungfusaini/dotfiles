@@ -22,6 +22,9 @@ interface TerminalRecord {
 	updatedAt: string;
 	state: WorkerState;
 	visibility: WorkerVisibility;
+	needsUser?: boolean;
+	statusMessage?: string;
+	markedAt?: string;
 	title?: string;
 	paneId?: string;
 	lastPaneId?: string;
@@ -71,6 +74,18 @@ const WorkerKindSchema = StringEnum(["pi", "shell"] as const, {
 const WorkerVisibilitySchema = StringEnum(["hidden", "visible"] as const, {
 	description: "Whether to keep the worker hidden or immediately surface it into Herdr.",
 	default: "hidden",
+});
+
+const WorkerMarkStateSchema = StringEnum(["blocked", "running"] as const, {
+	description: "Manual worker attention state. blocked means the worker needs user/parent attention; running clears that marker.",
+});
+
+const WorkerMarkParams = Type.Object({
+	name: Type.String({ description: "Worker name returned by orchestrator_worker_start/list." }),
+	state: WorkerMarkStateSchema,
+	message: Type.Optional(Type.String({ description: "Short status/attention message to show in lists and Herdr when surfaced." })),
+	needsUser: Type.Optional(Type.Boolean({ description: "Whether this blocked state needs human input. Defaults true when state=blocked, false when state=running." })),
+	force: Type.Optional(Type.Boolean({ description: "Allow mutating a worker owned by another orchestrator session. Default false." })),
 });
 
 const WorkerStartParams = Type.Object({
@@ -402,15 +417,15 @@ async function reportSurfacedTerminal(pi: ExtensionAPI, record: TerminalRecord, 
 			"--state",
 			record.state === "blocked" ? "blocked" : record.state === "running" || record.state === "starting" ? "working" : record.state === "failed" || record.state === "orphaned" || record.state === "unknown" ? "blocked" : "idle",
 			"--message",
-			`Managed tmux terminal ${record.name}`,
+			record.statusMessage || `Managed tmux worker ${record.name}`,
 		],
 		{ signal, timeout: 10_000 },
 	);
 }
 
-async function surfaceTerminal(pi: ExtensionAPI, ctx: ExtensionContext, record: TerminalRecord, focus: boolean, signal?: AbortSignal): Promise<TerminalRecord> {
+async function surfaceTerminal(pi: ExtensionAPI, ctx: ExtensionContext, record: TerminalRecord, focus: boolean, signal?: AbortSignal, placement: "split" | "tab" = "split"): Promise<TerminalRecord> {
 	await ensureHerdr(ctx, false);
-	const paneId = await createPane(pi, record.cwd, focus, {}, signal);
+	const paneId = placement === "tab" ? await createTabPane(pi, record.cwd, record.title || record.name, focus, signal) : await createPane(pi, record.cwd, focus, {}, signal);
 	// A newly split pane can occasionally inherit pending line-editor text from shell startup/hooks.
 	// Clear it before injecting the tmux attach command so we do not accidentally run e.g. "fooenv".
 	await pi.exec("herdr", ["pane", "send-keys", paneId, "ctrl+c"], { signal, timeout: 5_000 });
@@ -457,16 +472,25 @@ async function ensureHerdr(ctx: ExtensionContext, requireTui = true) {
 	}
 }
 
+function parsePaneIdFromHerdrOutput(output: string): string {
+	const parsed = parseFirstJsonObject(output);
+	const paneId = parsed?.result?.pane?.pane_id || parsed?.result?.root_pane?.pane_id || parsed?.result?.rootPane?.pane_id || parsed?.pane?.pane_id || parsed?.root_pane?.pane_id || parsed?.rootPane?.pane_id || parsed?.pane_id;
+	if (typeof paneId !== "string" || !paneId) throw new Error(`Herdr did not return a pane id:\n${output}`);
+	return paneId;
+}
+
 async function createPane(pi: ExtensionAPI, cwd: string, focus: boolean, env: Record<string, string | undefined> = {}, signal?: AbortSignal): Promise<string> {
 	const envArgs = Object.entries(env)
 		.filter((entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].length > 0)
 		.flatMap(([key, value]) => ["--env", `${key}=${value}`]);
 	const args = ["pane", "split", "--current", "--direction", "right", "--cwd", cwd, ...envArgs, focus ? "--focus" : "--no-focus"];
 	const result = await execChecked(pi, "herdr", args, { signal, timeout: 15_000 });
-	const parsed = parseFirstJsonObject(textOf(result));
-	const paneId = parsed?.result?.pane?.pane_id || parsed?.pane?.pane_id || parsed?.pane_id;
-	if (typeof paneId !== "string" || !paneId) throw new Error(`Herdr did not return a pane id:\n${textOf(result)}`);
-	return paneId;
+	return parsePaneIdFromHerdrOutput(textOf(result));
+}
+
+async function createTabPane(pi: ExtensionAPI, cwd: string, label: string, focus: boolean, signal?: AbortSignal): Promise<string> {
+	const result = await execChecked(pi, "herdr", ["tab", "create", "--cwd", cwd, "--label", label, focus ? "--focus" : "--no-focus"], { signal, timeout: 15_000 });
+	return parsePaneIdFromHerdrOutput(textOf(result));
 }
 
 async function startManagedTerminal(
@@ -611,10 +635,41 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			const terminalRecords = await loadTerminalRecords();
 			const refreshed = [] as TerminalRecord[];
 			for (const record of terminalRecords) refreshed.push(await refreshTerminalRecord(pi, record, signal));
-			const text = refreshed
-				.map((r) => `worker:${r.name}\n  state: ${r.state}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
+			const sorted = refreshed.sort((a, b) => (a.state === "blocked" ? 0 : 1) - (b.state === "blocked" ? 0 : 1) || (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
+			const text = sorted
+				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
 				.join("\n\n") || "No orchestrator workers recorded.";
 			return { content: [{ type: "text", text }], details: { workers: refreshed } };
+		},
+	});
+
+	pi.registerTool({
+		name: "orchestrator_worker_mark",
+		label: "Mark Worker State",
+		description: "Manually mark a worker as blocked/needs-user or running. This is the explicit handoff primitive before automatic prompt/auth detection exists.",
+		parameters: WorkerMarkParams,
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const record = await getTerminal(pi, params.name, signal);
+			assertTerminalOwner(record, ctx, params.force);
+			if (!["running", "blocked"].includes(record.state)) {
+				throw new Error(`Cannot mark ${record.name} as ${params.state} because current state is ${record.state}.`);
+			}
+			record.state = params.state;
+			record.needsUser = params.needsUser ?? params.state === "blocked";
+			record.statusMessage = params.state === "blocked" ? params.message || "Worker needs user/parent attention." : params.message;
+			record.markedAt = new Date().toISOString();
+			record.updatedAt = record.markedAt;
+			if (params.state === "running") {
+				record.needsUser = false;
+				if (!params.message) record.statusMessage = undefined;
+			}
+			await saveTerminalRecord(record);
+			if (params.state === "blocked" && record.visibility !== "visible") {
+				await surfaceTerminal(pi, ctx, record, false, signal, "tab");
+			} else if (record.paneId) {
+				await reportSurfacedTerminal(pi, record, record.paneId, signal);
+			}
+			return { content: [{ type: "text", text: `Marked ${record.name} ${record.state}${record.needsUser ? " (needs user)" : ""}.${record.visibility === "visible" ? `\nSurfaced in Herdr pane ${record.paneId}.` : ""}${record.statusMessage ? `\n${record.statusMessage}` : ""}` }], details: { worker: record } };
 		},
 	});
 

@@ -54,6 +54,21 @@ Start a hidden shell worker that runs npm test and keep the output readable.
 
 List workers from the shared registry.
 
+### `orchestrator_worker_mark`
+
+Manually mark a live worker as `blocked` or `running`.
+
+Use this when a worker needs user/parent attention before automatic auth/prompt detection exists.
+
+Important parameters:
+
+- `name`: worker name.
+- `state`: `blocked` or `running`.
+- `message`: short status/attention message.
+- `needsUser`: defaults to `true` for `blocked`, `false` for `running`.
+
+Blocked workers are shown first in `orchestrator_worker_list`. Marking a worker `blocked` always surfaces it into a new Herdr tab without focusing that tab, and reports the blocked state/message to Herdr. Marking it `running` clears `needsUser` and updates Herdr if it is already surfaced.
+
 ### `orchestrator_worker_read`
 
 Read recent output from a hidden or surfaced worker.
@@ -64,7 +79,7 @@ Send text/input to a worker.
 
 ### `orchestrator_worker_surface`
 
-Attach a hidden worker into Herdr and report it in the agents panel.
+Attach a hidden worker into Herdr and report it in the agents panel. Manual surface uses a pane split; blocked handoff via `orchestrator_worker_mark(state: "blocked")` uses a new Herdr tab.
 
 ### `orchestrator_worker_hide`
 
@@ -99,7 +114,7 @@ Lifecycle states:
 
 - `starting`: registry created and tmux launch in progress.
 - `running`: worker process appears alive.
-- `blocked`: worker is known to need user/parent attention.
+- `blocked`: worker is known to need user/parent attention. Currently set explicitly with `orchestrator_worker_mark`; automatic detection is future work.
 - `exited`: command exited with status `0`.
 - `failed`: command exited nonzero, exited by signal, or failed to start.
 - `closed`: orchestrator explicitly closed the worker.
@@ -139,6 +154,6 @@ The old managed terminal implementation remains internally as the worker backend
 
 - `kind=pi` currently starts `pi` in the managed terminal; hidden Pi control is still raw terminal read/send until surfaced.
 - Worktree creation is not part of the worker API yet.
-- Automatic blocked/auth detection is not implemented yet.
+- Automatic blocked/auth detection is not implemented yet; blocked state is explicit/manual via `orchestrator_worker_mark`.
 - Cleanup/reconciliation is still basic, but missing sessions without exit metadata are marked `orphaned`, not `exited`.
 - Surfacing requires Herdr (`HERDR_ENV=1`) and the `herdr` CLI.
