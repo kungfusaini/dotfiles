@@ -59,6 +59,7 @@ interface TerminalRecord {
 const terminals = new Map<string, TerminalRecord>();
 const TMUX_SERVER = "pi-orchestrator";
 const TERMINAL_SOURCE = "pi-orchestrator-managed-terminal";
+const TMUX_HISTORY_LIMIT = 5000;
 
 const TerminalNameParams = Type.Object({
 	name: Type.String({ description: "Worker name returned by orchestrator_worker_start/list." }),
@@ -71,7 +72,7 @@ const TerminalReadParams = Type.Object({
 });
 
 const WorkerPollParams = Type.Object({
-	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to inspect per active worker. Default 200." })),
+	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to inspect per active worker. Default 5000, matching the managed tmux history limit." })),
 });
 
 const TerminalSendParams = Type.Object({
@@ -285,7 +286,7 @@ async function ensureTerminalStore() {
 			"set -g status off",
 			"set -g extended-keys-format csi-u",
 			'set -g default-terminal "tmux-256color"',
-			"set -g history-limit 5000",
+			`set -g history-limit ${TMUX_HISTORY_LIMIT}`,
 			"set -g exit-empty off",
 			"set -g detach-on-destroy off",
 			"set -g remain-on-exit on",
@@ -920,7 +921,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		description: "List unified orchestrator workers.",
 		parameters: Type.Object({}),
 		async execute(_id, _params, signal, _onUpdate, ctx) {
-			const { workers } = await pollWorkersOnce(pi, ctx, 200, signal);
+			const { workers } = await pollWorkersOnce(pi, ctx, TMUX_HISTORY_LIMIT, signal);
 			const sorted = workers.sort((a, b) => (a.state === "blocked" ? 0 : 1) - (b.state === "blocked" ? 0 : 1) || (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
 			const text = sorted
 				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.task ? `\n  task: ${r.task}` : ""}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${r.structuredResult ? `\n  result: ${r.structuredResult.status}` : ""}${r.structuredResultParseError ? `\n  resultParseNote: ${r.structuredResultParseError}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
@@ -935,7 +936,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		description: "Refresh all workers once, parse structured results, and auto-surface hidden blocked workers without dumping full output.",
 		parameters: WorkerPollParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
-			const { workers, events } = await pollWorkersOnce(pi, ctx, params.lines ?? 200, signal);
+			const { workers, events } = await pollWorkersOnce(pi, ctx, params.lines ?? TMUX_HISTORY_LIMIT, signal);
 			const active = workers.filter((worker) => worker.state !== "closed").length;
 			const blocked = workers.filter((worker) => worker.state === "blocked").length;
 			const text = events.length

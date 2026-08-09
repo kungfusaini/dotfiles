@@ -72,7 +72,7 @@ Start a hidden shell worker that runs npm test and keep the output readable.
 
 ### `orchestrator_worker_list`
 
-List workers from the shared registry. Listing performs one poll pass first, so worker states and structured result footers are refreshed before display.
+List workers from the shared registry. Listing performs one full-history poll pass first, so worker states and structured result footers are refreshed before display.
 
 ### `orchestrator_worker_poll`
 
@@ -84,7 +84,9 @@ Refresh all workers once without dumping full pane output. Polling:
 - auto-surfaces hidden blocked/needs-user workers once in a new Herdr tab without focus;
 - returns a compact changed-workers summary.
 
-Use this as the parent orchestration heartbeat until a real event loop/watch mode exists.
+By default poll scans `5000` lines per worker, matching the managed tmux history limit. This keeps token usage low because captured output is inspected internally but not returned unless there is a compact state change summary. Callers may pass a smaller `lines` value for cheaper targeted polling.
+
+Use this as the parent orchestration heartbeat until a real event loop/watch mode exists. Since there is intentionally no foreground watch loop yet, parent agents should call poll opportunistically between orchestration steps and before deciding workers are idle.
 
 ### `orchestrator_worker_mark`
 
@@ -186,6 +188,6 @@ The old managed terminal implementation remains internally as the worker backend
 
 - `kind=pi` currently starts `pi` in the managed terminal; hidden Pi control is still raw terminal read/send until surfaced.
 - Worktree creation is not part of the worker API yet.
-- Automatic auth prompt detection is not implemented yet; blocked/resumed state is explicit/manual via `orchestrator_worker_mark` or worker-declared via final `ORCHESTRATOR_RESULT` parsed during poll/read/list.
+- Automatic auth prompt detection and background watching are not implemented yet; blocked/resumed state is explicit/manual via `orchestrator_worker_mark` or worker-declared via final `ORCHESTRATOR_RESULT` parsed during poll/read/list.
 - Cleanup/reconciliation is still basic, but missing sessions without exit metadata are marked `orphaned`, not `exited`.
 - Surfacing requires Herdr (`HERDR_ENV=1`) and the `herdr` CLI.
