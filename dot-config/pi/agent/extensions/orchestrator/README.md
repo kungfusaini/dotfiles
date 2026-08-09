@@ -1,87 +1,82 @@
 # Pi Orchestrator MVP
 
-A small Herdr-backed Pi extension for opening child Pi agents in visible panels.
+A small Pi extension for running orchestrator workers/subagents that can be hidden or surfaced in Herdr.
 
-The goal is intentionally simple: make delegation easy without building a giant orchestration framework.
-
-## What it does
-
-- Opens a new Herdr pane in the current tab by splitting the current pane to the right.
-- Starts a child `pi` agent in that pane.
-- Gives it a compact handoff prompt, or leaves it for you to drive.
-- Optionally creates an isolated git worktree first.
-- Tracks the children created during the current Pi session.
-- Starts hidden/background terminal workers in a shared orchestrator-managed tmux server, then reads, sends input, surfaces, hides, or closes them on demand.
+The goal is intentionally simple: make delegation easy without building a giant orchestration framework. A Herdr pane is only a visibility surface; the worker itself lives in the orchestrator-managed terminal backend.
 
 ## Mental model
 
-There are only two big choices.
+There is one public concept: a **worker**.
 
-### Workspace mode
+A worker can be:
 
-| Mode | Use when | Behavior |
-| --- | --- | --- |
-| `current` | review/debug/read-only help on the current dirty tree | child starts in the same cwd |
-| `worktree` | independent implementation/experiments | child starts in a new git worktree + branch |
+- a Pi subagent (`kind: pi`);
+- a shell command/process (`kind: shell`).
 
-A worktree is **not** automatic. For reviewing current uncommitted changes, use `current` so the child can see the exact same working tree.
+A worker can be:
 
-### Driver
+- hidden in the managed backend;
+- surfaced into a Herdr pane;
+- hidden again;
+- read, sent input, or closed.
 
-| Driver | Behavior |
-| --- | --- |
-| `parent` | Pi sends the task, waits for the child to settle, reads recent output, and closes the child pane by default |
-| `human` | Pi starts the child and submits the initial handoff without waiting; the panel stays open for you to drive |
+Herdr panes and tmux sessions are implementation details, not separate user-facing worker types.
 
 ## Tools
 
-### `orchestrator_delegate`
+### `orchestrator_worker_start`
 
-Start a child Pi agent.
+Start a worker. Workers are hidden by default.
 
 Important parameters:
 
-- `task`: the child task.
-- `name`: optional worker name; defaults to a generated name.
-- `workspace`: `current` or `worktree`.
-- `driver`: `parent` or `human`.
-- `permission`: `read-only` or `edit`; defaults to `read-only` for `current`, `edit` for `worktree`.
-- `branch`: optional worktree branch name.
-- `worktreePath`: optional worktree checkout path.
-- `focus`: focus the new panel after creation.
-- `closeOnDone`: for `driver=parent`, close the child pane after reading its output. Defaults to `true`. Set `false` to leave it open for follow-up/debugging.
+- `kind`: `pi` or `shell`; defaults to `pi`.
+- `command`: command to run. Defaults to `pi` for `kind=pi`; required for `kind=shell`.
+- `name`: optional stable worker name.
+- `cwd`: working directory.
+- `visibility`: `hidden` or `visible`; defaults to `hidden`.
+- `title`: display title when surfaced.
+- `env`: extra environment variables. Keys must match `^[A-Za-z_][A-Za-z0-9_]*$`; values are applied to the worker script but not stored in the registry.
+- `cols` / `rows`: initial hidden terminal size; defaults to `140x40`.
+- `keepAlive`: keep an interactive shell open after the command exits so output remains readable; defaults to `true`.
 
 Examples:
 
 ```text
-Delegate a read-only review of my current changes to another Pi.
+Start a hidden Pi reviewer named auth-reviewer.
 ```
 
 ```text
-Spin up an implementer in a worktree for the parser cleanup. Let me drive it.
+Start a hidden shell worker that runs npm test and keep the output readable.
 ```
 
-### `orchestrator_list`
+### `orchestrator_worker_list`
 
-List child agents created by this extension in the current session.
+List workers from the shared registry.
 
-### `orchestrator_focus`
+### `orchestrator_worker_read`
 
-Focus a child agent panel by name.
+Read recent output from a hidden or surfaced worker.
 
-### `orchestrator_read`
+### `orchestrator_worker_send`
 
-Read recent terminal output from a child agent panel.
+Send text/input to a worker.
 
-### `orchestrator_prompt`
+### `orchestrator_worker_surface`
 
-Send a follow-up prompt to a child agent. Can optionally wait for it to settle.
+Attach a hidden worker into Herdr and report it in the agents panel.
 
-## Hidden managed terminals
+### `orchestrator_worker_hide`
 
-The orchestrator can also run real terminal processes hidden in tmux, then attach the same live terminal into Herdr when user attention is needed.
+Detach Herdr clients from a surfaced worker while keeping it alive hidden.
 
-All orchestrator instances share one tmux server:
+### `orchestrator_worker_close`
+
+Kill the worker and mark it closed.
+
+## Backend
+
+Workers are backed by real terminal processes in an orchestrator-owned tmux server:
 
 ```bash
 tmux -L pi-orchestrator -f ${XDG_STATE_HOME:-~/.local/state}/pi/orchestrator/terminals/tmux.conf
@@ -95,72 +90,31 @@ ${XDG_STATE_HOME:-~/.local/state}/pi/orchestrator/terminals/registry/<name>.json
 
 The shared tmux server is global, but worker mutation is owner-scoped: each worker record stores the owning Pi session id. Other orchestrators can list/read the registry, but mutating actions require the owner session unless `force=true` is supplied intentionally.
 
-### `orchestrator_terminal_start`
+## Current cutover state
 
-Start a hidden terminal worker.
+The public API is `orchestrator_worker_*` only.
 
-Important parameters:
+Removed public APIs:
 
-- `command`: shell command to run.
-- `name`: optional worker name; it is slugged/validated and made unique if already recorded.
-- `cwd`: working directory; defaults to current Pi cwd.
-- `env`: extra environment variables. Keys must match `^[A-Za-z_][A-Za-z0-9_]*$`; values are applied to the worker script but not stored in the registry.
-- `cols` / `rows`: initial hidden terminal size; defaults to `140x40` to avoid tiny-terminal TUI crashes.
-- `keepAlive`: keep an interactive shell open after the command exits so output remains readable; defaults to `true`.
-- `surface`: immediately attach the terminal into Herdr.
+- `orchestrator_delegate`
+- `orchestrator_list`
+- `orchestrator_focus`
+- `orchestrator_read`
+- `orchestrator_prompt`
+- `orchestrator_terminal_start`
+- `orchestrator_terminal_list`
+- `orchestrator_terminal_read`
+- `orchestrator_terminal_send`
+- `orchestrator_terminal_surface`
+- `orchestrator_terminal_hide`
+- `orchestrator_terminal_close`
 
-### `orchestrator_terminal_list`
-
-List managed terminal workers from the shared registry.
-
-### `orchestrator_terminal_read`
-
-Read recent output with `tmux capture-pane` without surfacing the terminal.
-
-### `orchestrator_terminal_send`
-
-Send text/Enter to a hidden or surfaced terminal with `tmux send-keys`.
-
-### `orchestrator_terminal_surface`
-
-Create a Herdr pane, attach the tmux session, and report pane metadata/session/agent state so the surfaced worker appears in Herdr's agents panel.
-
-### `orchestrator_terminal_hide`
-
-Detach Herdr clients from the tmux session while keeping the terminal process alive hidden.
-
-### `orchestrator_terminal_close`
-
-Kill the tmux session and mark its registry record closed.
-
-## Context handoff policy
-
-The handoff prompt is deliberately compact. It includes:
-
-- task
-- workspace mode
-- cwd/worktree path
-- edit permission
-- expected output
-
-It does **not** paste the parent conversation, worklog, or loaded instructions by default. Child Pi agents receive normal Pi startup context and can use their own tools to inspect files or fetch worklog recap if needed.
-
-## Safety defaults
-
-- `current` workspace defaults to `read-only`.
-- `worktree` workspace defaults to `edit`.
-- worktrees are created outside the repo under `${XDG_DATA_HOME:-~/.local/share}/pi/orchestrator/worktrees` unless `worktreePath` is supplied.
-- relative `worktreePath` values are resolved against the parent Pi cwd.
-- parent-driven delegates close their child pane after completion by default.
-- human-driven delegates stay open by default.
-- no third-party packages are installed.
-
-Important: `permission` is currently a prompt-level policy, not a sandbox. A `read-only` child is instructed not to edit, but it still runs a normal Pi agent unless you add stronger tool restrictions later.
+The old managed terminal implementation remains internally as the worker backend.
 
 ## Limitations
 
-- Visible child-agent delegation and terminal surfacing require Herdr (`HERDR_ENV=1`) and the `herdr` CLI. Hidden terminal start/read/send/hide/close use `tmux` directly unless surfacing is requested.
-- Session worker tracking is lightweight and local to this Pi session/reload history.
-- Worktree creation uses `git worktree add`; merge/review/removal are intentionally manual for now.
-- Partial failures can leave panes, worktrees, branches, tmux sessions, or terminal registry files behind; cleanup is manual in this MVP.
-- Human-driven mode still submits the initial handoff prompt; it just does not wait or keep controlling the child.
+- `kind=pi` currently starts `pi` in the managed terminal; hidden Pi control is still raw terminal read/send until surfaced.
+- Worktree creation is not part of the worker API yet.
+- Automatic blocked/auth detection is not implemented yet.
+- Cleanup/reconciliation is basic: listing marks missing live tmux sessions as `done`; full orphan cleanup is still future work.
+- Surfacing requires Herdr (`HERDR_ENV=1`) and the `herdr` CLI.

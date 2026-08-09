@@ -4,38 +4,7 @@ import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-
-type WorkspaceMode = "current" | "worktree";
-type DriverMode = "parent" | "human";
-type PermissionMode = "read-only" | "edit";
-
-const WORKSPACE_CONTEXT_EVENT = "pi:workspace-context:resolve";
-
-interface WorkspaceContextResult {
-	projectID?: string;
-	streamID?: string;
-}
-
-interface WorkerRecord {
-	name: string;
-	task: string;
-	workspace: WorkspaceMode;
-	driver: DriverMode;
-	permission: PermissionMode;
-	cwd: string;
-	paneId: string;
-	branch?: string;
-	worktreePath?: string;
-	createdAt: string;
-	inheritedStreamID?: string;
-	lastPrompt?: string;
-	paneClosed?: boolean;
-	closedAt?: string;
-	closeError?: string;
-	finalOutput?: string;
-}
 
 interface TerminalRecord {
 	id: string;
@@ -55,88 +24,55 @@ interface TerminalRecord {
 	lastError?: string;
 }
 
-const workers = new Map<string, WorkerRecord>();
 const terminals = new Map<string, TerminalRecord>();
 const TMUX_SERVER = "pi-orchestrator";
 const TERMINAL_SOURCE = "pi-orchestrator-managed-terminal";
 
-const WorkspaceSchema = StringEnum(["current", "worktree"] as const, {
-	description: "Where to start the child: current cwd or a fresh git worktree.",
-	default: "current",
-});
-const DriverSchema = StringEnum(["parent", "human"] as const, {
-	description: "Who drives the child after startup. parent waits for completion; human leaves it visible for manual driving.",
-	default: "parent",
-});
-const PermissionSchema = StringEnum(["read-only", "edit"] as const, {
-	description: "Whether the child may edit. Defaults to read-only in current mode and edit in worktree mode.",
-});
-
-const DelegateParams = Type.Object({
-	task: Type.String({ description: "Task to hand to the child Pi agent." }),
-	name: Type.Optional(Type.String({ description: "Optional short child agent name. Will be slugged and made unique if needed." })),
-	workspace: Type.Optional(WorkspaceSchema),
-	driver: Type.Optional(DriverSchema),
-	permission: Type.Optional(PermissionSchema),
-	branch: Type.Optional(Type.String({ description: "Optional git branch name when workspace=worktree." })),
-	base: Type.Optional(Type.String({ description: "Optional base ref for git worktree add. Defaults to HEAD." })),
-	worktreePath: Type.Optional(Type.String({ description: "Optional checkout path for workspace=worktree." })),
-	focus: Type.Optional(Type.Boolean({ description: "Focus the new pane after creation. Default false." })),
-	inheritStream: Type.Optional(Type.Boolean({ description: "Explicitly pass the parent stream to the child. Defaults true; set false to force project scope." })),
-	closeOnDone: Type.Optional(Type.Boolean({ description: "When driver=parent, read final output and close the child pane after it settles. Default true for parent, false for human." })),
-	waitTimeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Parent driver wait timeout in ms. Omit for Herdr default/indefinite." })),
-});
-
-const WorkerNameParams = Type.Object({
-	name: Type.String({ description: "Worker name returned by orchestrator_delegate or orchestrator_list." }),
-});
-
-const ReadParams = Type.Object({
-	name: Type.String({ description: "Worker name returned by orchestrator_delegate or orchestrator_list." }),
-	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to read. Default 80." })),
-});
-
-const PromptParams = Type.Object({
-	name: Type.String({ description: "Worker name returned by orchestrator_delegate or orchestrator_list." }),
-	prompt: Type.String({ description: "Follow-up prompt to submit to the child." }),
-	wait: Type.Optional(Type.Boolean({ description: "Wait for the child to settle after prompting. Default false." })),
-	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Optional wait timeout in milliseconds." })),
-});
-
-const TerminalStartParams = Type.Object({
-	command: Type.String({ description: "Shell command to run in the hidden managed terminal." }),
-	name: Type.Optional(Type.String({ description: "Optional stable terminal worker name." })),
-	cwd: Type.Optional(Type.String({ description: "Working directory. Defaults to current Pi cwd." })),
-	env: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Extra environment variables for the terminal command." })),
-	cols: Type.Optional(Type.Integer({ minimum: 40, description: "Initial hidden terminal width. Default 140." })),
-	rows: Type.Optional(Type.Integer({ minimum: 10, description: "Initial hidden terminal height. Default 40." })),
-	title: Type.Optional(Type.String({ description: "Display title when surfaced." })),
-	keepAlive: Type.Optional(Type.Boolean({ description: "Keep an interactive shell alive after the command exits so output remains readable. Default true." })),
-	surface: Type.Optional(Type.Boolean({ description: "Immediately surface the terminal into Herdr after it starts. Default false." })),
-	focus: Type.Optional(Type.Boolean({ description: "Focus the surfaced Herdr pane when surface=true. Default true." })),
-});
-
 const TerminalNameParams = Type.Object({
-	name: Type.String({ description: "Terminal worker name returned by orchestrator_terminal_start/list." }),
-	force: Type.Optional(Type.Boolean({ description: "Allow mutating a terminal owned by another orchestrator session. Default false." })),
+	name: Type.String({ description: "Worker name returned by orchestrator_worker_start/list." }),
+	force: Type.Optional(Type.Boolean({ description: "Allow mutating a worker owned by another orchestrator session. Default false." })),
 });
 
 const TerminalReadParams = Type.Object({
-	name: Type.String({ description: "Terminal worker name returned by orchestrator_terminal_start/list." }),
+	name: Type.String({ description: "Worker name returned by orchestrator_worker_start/list." }),
 	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to read. Default 80." })),
 });
 
 const TerminalSendParams = Type.Object({
-	name: Type.String({ description: "Terminal worker name returned by orchestrator_terminal_start/list." }),
-	text: Type.String({ description: "Text to send to the hidden/surfaced terminal." }),
+	name: Type.String({ description: "Worker name returned by orchestrator_worker_start/list." }),
+	text: Type.String({ description: "Text to send to the hidden/surfaced worker." }),
 	enter: Type.Optional(Type.Boolean({ description: "Press Enter after the text. Default true." })),
-	force: Type.Optional(Type.Boolean({ description: "Allow mutating a terminal owned by another orchestrator session. Default false." })),
+	force: Type.Optional(Type.Boolean({ description: "Allow mutating a worker owned by another orchestrator session. Default false." })),
 });
 
 const TerminalSurfaceParams = Type.Object({
-	name: Type.String({ description: "Terminal worker name returned by orchestrator_terminal_start/list." }),
+	name: Type.String({ description: "Worker name returned by orchestrator_worker_start/list." }),
 	focus: Type.Optional(Type.Boolean({ description: "Focus the surfaced Herdr pane. Default true." })),
-	force: Type.Optional(Type.Boolean({ description: "Allow surfacing a terminal owned by another orchestrator session. Default false." })),
+	force: Type.Optional(Type.Boolean({ description: "Allow surfacing a worker owned by another orchestrator session. Default false." })),
+});
+
+const WorkerKindSchema = StringEnum(["pi", "shell"] as const, {
+	description: "Worker kind. pi starts a Pi subagent in the managed terminal; shell runs an arbitrary shell command.",
+	default: "pi",
+});
+
+const WorkerVisibilitySchema = StringEnum(["hidden", "visible"] as const, {
+	description: "Whether to keep the worker hidden or immediately surface it into Herdr.",
+	default: "hidden",
+});
+
+const WorkerStartParams = Type.Object({
+	kind: Type.Optional(WorkerKindSchema),
+	command: Type.Optional(Type.String({ description: "Shell command to run. Defaults to `pi` when kind=pi; required when kind=shell." })),
+	name: Type.Optional(Type.String({ description: "Optional stable worker name." })),
+	cwd: Type.Optional(Type.String({ description: "Working directory. Defaults to current Pi cwd." })),
+	env: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Extra environment variables for the worker command." })),
+	cols: Type.Optional(Type.Integer({ minimum: 40, description: "Initial hidden terminal width. Default 140." })),
+	rows: Type.Optional(Type.Integer({ minimum: 10, description: "Initial hidden terminal height. Default 40." })),
+	title: Type.Optional(Type.String({ description: "Display title when surfaced." })),
+	keepAlive: Type.Optional(Type.Boolean({ description: "Keep an interactive shell alive after the command exits so output remains readable. Default true." })),
+	visibility: Type.Optional(WorkerVisibilitySchema),
+	focus: Type.Optional(Type.Boolean({ description: "Focus the surfaced Herdr pane when visibility=visible. Default true." })),
 });
 
 function slug(input: string, fallback = "worker"): string {
@@ -148,20 +84,6 @@ function slug(input: string, fallback = "worker"): string {
 	if (!cleaned) cleaned = fallback;
 	if (!/^[a-z]/.test(cleaned)) cleaned = `a-${cleaned}`;
 	return cleaned.slice(0, 24);
-}
-
-function uniqueName(requested: string | undefined, task: string): string {
-	const base = slug(requested || task.split(/\s+/).slice(0, 4).join("-"));
-	if (!workers.has(base)) return base;
-	for (let i = 2; i < 100; i++) {
-		const candidate = `${base}-${i}`.slice(0, 32);
-		if (!workers.has(candidate)) return candidate;
-	}
-	return `${base.slice(0, 20)}-${Date.now().toString(36)}`.slice(0, 32);
-}
-
-function xdgDataHome(): string {
-	return process.env.XDG_DATA_HOME || path.join(os.homedir(), ".local", "share");
 }
 
 function xdgStateHome(): string {
@@ -448,442 +370,190 @@ async function createPane(pi: ExtensionAPI, cwd: string, focus: boolean, env: Re
 	return paneId;
 }
 
-async function gitRoot(pi: ExtensionAPI, cwd: string, signal?: AbortSignal): Promise<string> {
-	const result = await execChecked(pi, "git", ["rev-parse", "--show-toplevel"], { cwd, signal, timeout: 10_000 });
-	return result.stdout.trim();
-}
-
-function resolveWorkspaceContext(pi: ExtensionAPI, ctx: ExtensionContext): WorkspaceContextResult | undefined {
-	const request: { cwd: string; sessionID?: string; result?: WorkspaceContextResult } = {
-		cwd: ctx.cwd,
-		sessionID: ctx.sessionManager.getSessionId(),
-	};
-	pi.events.emit(WORKSPACE_CONTEXT_EVENT, request);
-	return request.result;
-}
-
-async function createWorktree(
+async function startManagedTerminal(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
-	name: string,
-	branch: string | undefined,
-	base: string | undefined,
-	worktreePath: string | undefined,
+	params: {
+		command: string;
+		name?: string;
+		cwd?: string;
+		env?: Record<string, string>;
+		cols?: number;
+		rows?: number;
+		title?: string;
+		keepAlive?: boolean;
+		surface?: boolean;
+		focus?: boolean;
+	},
 	signal?: AbortSignal,
-): Promise<{ cwd: string; branch: string }> {
-	const root = await gitRoot(pi, ctx.cwd, signal);
-	const repoName = path.basename(root) || "repo";
-	const stamp = new Date().toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
-	const actualBranch = branch || `agent/${name}-${stamp}`;
-	const defaultPath = path.join(xdgDataHome(), "pi", "orchestrator", "worktrees", `${repoName}-${name}-${stamp}`);
-	const actualPath = worktreePath
-		? path.resolve(path.isAbsolute(worktreePath) ? worktreePath : path.join(ctx.cwd, worktreePath))
-		: defaultPath;
-	await fs.mkdir(path.dirname(actualPath), { recursive: true });
-	await execChecked(pi, "git", ["worktree", "add", "-b", actualBranch, actualPath, base || "HEAD"], {
-		cwd: root,
-		signal,
-		timeout: 60_000,
-	});
-	return { cwd: actualPath, branch: actualBranch };
-}
-
-function buildHandoff(worker: WorkerRecord): string {
-	const lines = [
-		"You are a child Pi agent opened by a parent Pi orchestrator.",
-		"",
-		`Task: ${worker.task}`,
-		"",
-		"Workspace:",
-		`- mode: ${worker.workspace}`,
-		`- cwd: ${worker.cwd}`,
-	];
-	if (worker.branch) lines.push(`- branch: ${worker.branch}`);
-	if (worker.worktreePath) lines.push(`- worktree path: ${worker.worktreePath}`);
-	lines.push(
-		"",
-		"Permissions:",
-		worker.permission === "read-only"
-			? "- Do not edit files. Inspect, run safe read/test commands if useful, and report findings only."
-			: "- You may edit files in this workspace for the assigned task. Keep changes focused.",
-		"",
-		"Context policy:",
-		"- Do not assume you have the parent conversation.",
-		"- Use your own tools to inspect files, git status/diff, and docs as needed.",
-		"- Do not ask the parent to paste worklog/project instructions unless genuinely needed; Pi may already provide normal startup context and worklog tools.",
-		"",
-		"Output expected:",
-		worker.permission === "read-only"
-			? "- Concise report with summary, important findings, and suggested next steps."
-			: "- Summary of changes, files touched, verification run, and any follow-up needed.",
-	);
-	return lines.join("\n");
-}
-
-function summarizeWorker(worker: WorkerRecord): string {
-	return [
-		`${worker.name}`,
-		`  pane: ${worker.paneId}`,
-		`  cwd: ${worker.cwd}`,
-		`  workspace: ${worker.workspace}`,
-		`  driver: ${worker.driver}`,
-		`  permission: ${worker.permission}`,
-		worker.branch ? `  branch: ${worker.branch}` : undefined,
-		worker.inheritedStreamID ? `  stream: ${worker.inheritedStreamID}` : undefined,
-		worker.paneClosed ? `  paneClosed: true${worker.closedAt ? ` (${worker.closedAt})` : ""}` : undefined,
-		worker.closeError ? `  closeError: ${worker.closeError}` : undefined,
-		`  task: ${worker.task}`,
-	]
-		.filter(Boolean)
+): Promise<TerminalRecord> {
+	await ensureTerminalStore();
+	const name = await uniqueTerminalName(params.name, params.command);
+	const cwd = path.resolve(params.cwd ? (path.isAbsolute(params.cwd) ? params.cwd : path.join(ctx.cwd, params.cwd)) : ctx.cwd);
+	const extraEnv = validateEnv(params.env);
+	const tmuxSession = `pi-orch-${name}`;
+	const scriptsDir = path.join(terminalRoot(), "scripts");
+	await fs.mkdir(scriptsDir, { recursive: true });
+	const scriptPath = path.join(scriptsDir, `${name}.sh`);
+	const envLines = Object.entries(extraEnv || {})
+		.map(([key, value]) => `export ${key}=${shellQuote(value)}`)
 		.join("\n");
+	await fs.writeFile(
+		scriptPath,
+		[
+			"#!/usr/bin/env bash",
+			"set -uo pipefail",
+			`printf '%s' ${shellQuote(`\u001b]0;${(params.title || name).replace(/[\u0000-\u001f\u007f]/g, "")}\u0007`)} || true`,
+			envLines,
+			"set +e",
+			`bash -lc ${shellQuote(params.command)}`,
+			"code=$?",
+			"set -e",
+			'echo ""',
+			'echo "[orchestrator] command exited with code $code"',
+			params.keepAlive === false ? 'exit "$code"' : 'exec bash -i',
+			"",
+		].join("\n"),
+		{ mode: 0o700 },
+	);
+	const record: TerminalRecord = {
+		id: randomUUID(),
+		name,
+		command: params.command,
+		cwd,
+		ownerSessionId: ctx.sessionManager.getSessionId(),
+		ownerCwd: ctx.cwd,
+		tmuxServer: TMUX_SERVER,
+		tmuxSession,
+		createdAt: new Date().toISOString(),
+		state: "starting",
+		title: params.title || name,
+	};
+	await saveTerminalRecord(record);
+	try {
+		await execChecked(
+			pi,
+			"tmux",
+			tmuxArgs("new-session", "-d", "-x", String(params.cols ?? 140), "-y", String(params.rows ?? 40), "-s", tmuxSession, "-c", cwd, scriptPath),
+			{ signal, timeout: 15_000 },
+		);
+	} catch (error) {
+		record.state = "failed";
+		record.lastError = error instanceof Error ? error.message : String(error);
+		await saveTerminalRecord(record);
+		throw error;
+	}
+	record.state = "running";
+	await saveTerminalRecord(record);
+	if (params.surface) await surfaceTerminal(pi, ctx, record, params.focus ?? true, signal);
+	return record;
 }
 
 export default function orchestratorExtension(pi: ExtensionAPI) {
-	pi.on("session_start", (_event, ctx) => {
-		workers.clear();
-		for (const entry of ctx.sessionManager.getEntries()) {
-			if (entry.type === "custom" && entry.customType === "orchestrator-worker") {
-				const worker = entry.data as WorkerRecord;
-				if (worker?.name && worker?.paneId) workers.set(worker.name, worker);
-			}
-		}
-	});
-
 	pi.registerTool({
-		name: "orchestrator_delegate",
-		label: "Delegate Pi",
-		description: "Open a visible child Pi agent in Herdr, optionally in a new git worktree, and hand it a compact task prompt.",
-		promptSnippet: "Open a visible child Pi agent in Herdr for delegated review, debugging, or implementation tasks.",
-		promptGuidelines: [
-			"Use orchestrator_delegate when the user explicitly asks to spin up, open, delegate to, or drive another Pi agent/panel.",
-			"For reviewing current uncommitted changes, call orchestrator_delegate with workspace=current and permission=read-only rather than creating a worktree.",
-			"For independent implementation or experiments, prefer orchestrator_delegate with workspace=worktree.",
-		],
-		parameters: DelegateParams,
-		executionMode: "sequential",
-		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
-			await ensureHerdr(ctx);
-			const workspace = params.workspace ?? "current";
-			const driver = params.driver ?? "parent";
-			const permission = params.permission ?? (workspace === "worktree" ? "edit" : "read-only");
-			const closeOnDone = params.closeOnDone ?? driver === "parent";
-			const name = uniqueName(params.name, params.task);
-			const parentWorkspace = resolveWorkspaceContext(pi, ctx);
-			const inheritedStreamID = params.inheritStream === false ? undefined : parentWorkspace?.streamID;
-
-			let cwd = ctx.cwd;
-			let branch: string | undefined;
-			let worktreePath: string | undefined;
-			if (workspace === "worktree") {
-				const created = await createWorktree(pi, ctx, name, params.branch, params.base, params.worktreePath, signal);
-				cwd = created.cwd;
-				branch = created.branch;
-				worktreePath = created.cwd;
-			}
-
-			const paneId = await createPane(pi, cwd, params.focus ?? false, {
-				PI_PROJECT_WORKSPACE_PROJECT_ID: parentWorkspace?.projectID,
-				PI_PROJECT_WORKSPACE_STREAM_ID: params.inheritStream === false ? "__project__" : inheritedStreamID,
-			}, signal);
-			const worker: WorkerRecord = {
-				name,
-				task: params.task,
-				workspace,
-				driver,
-				permission,
-				cwd,
-				paneId,
-				branch,
-				worktreePath,
-				createdAt: new Date().toISOString(),
-				inheritedStreamID,
-			};
-
-			await execChecked(pi, "herdr", ["agent", "start", name, "--kind", "pi", "--pane", paneId], {
+		name: "orchestrator_worker_start",
+		label: "Start Worker",
+		description: "Start a unified orchestrator worker. Workers are managed terminals that may run a Pi subagent or an arbitrary shell command, hidden by default and surfaced into Herdr on demand.",
+		promptSnippet: "Use orchestrator_worker_start for subagents or command workers that can be hidden or visible.",
+		parameters: WorkerStartParams,
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const kind = params.kind ?? "pi";
+			const command = params.command ?? (kind === "pi" ? "pi" : undefined);
+			if (!command) throw new Error("command is required when kind=shell.");
+			const record = await startManagedTerminal(
+				pi,
+				ctx,
+				{
+					command,
+					name: params.name,
+					cwd: params.cwd,
+					env: params.env,
+					cols: params.cols,
+					rows: params.rows,
+					title: params.title || params.name || (kind === "pi" ? "pi-worker" : undefined),
+					keepAlive: params.keepAlive,
+					surface: (params.visibility ?? "hidden") === "visible",
+					focus: params.focus,
+				},
 				signal,
-				timeout: 45_000,
-			});
-
-			const handoff = buildHandoff(worker);
-			worker.lastPrompt = handoff;
-			workers.set(name, worker);
-			pi.appendEntry("orchestrator-worker", worker);
-
-			const promptArgs = ["agent", "prompt", name, handoff];
-			if (driver === "parent") {
-				promptArgs.push("--wait");
-				if (params.waitTimeoutMs) promptArgs.push("--timeout", String(params.waitTimeoutMs));
-			}
-			await execChecked(pi, "herdr", promptArgs, { signal, timeout: driver === "parent" ? params.waitTimeoutMs : 15_000 });
-
-			if (driver === "parent") {
-				try {
-					const readResult = await execChecked(pi, "herdr", ["agent", "read", name, "--lines", "200"], {
-						signal,
-						timeout: 10_000,
-					});
-					worker.finalOutput = textOf(readResult) || undefined;
-				} catch (error) {
-					worker.finalOutput = `Could not read child output before cleanup: ${error instanceof Error ? error.message : String(error)}`;
-				}
-			}
-
-			if (driver === "parent" && closeOnDone) {
-				try {
-					await execChecked(pi, "herdr", ["pane", "close", paneId], { signal, timeout: 10_000 });
-					worker.paneClosed = true;
-					worker.closedAt = new Date().toISOString();
-				} catch (error) {
-					worker.closeError = error instanceof Error ? error.message : String(error);
-				}
-				pi.appendEntry("orchestrator-worker", worker);
-			}
-
+			);
 			return {
 				content: [
 					{
 						type: "text",
-						text: `Started child Pi agent ${name}.\n${summarizeWorker(worker)}${
-							driver === "human" ? "\n\nHuman driver mode: initial handoff submitted; not waiting." : ""
-						}${worker.finalOutput ? `\n\nChild output:\n${worker.finalOutput}` : ""}`,
+						text: `Started ${kind} worker ${record.name} (${record.paneId ? `visible in Herdr pane ${record.paneId}` : "hidden"}).`,
 					},
 				],
-				details: { worker },
-			};
-		},
-		renderCall(args, theme) {
-			const workspace = args.workspace ?? "current";
-			const driver = args.driver ?? "parent";
-			const name = args.name || "new child";
-			return new Text(
-				theme.fg("toolTitle", theme.bold("orchestrator ")) +
-					theme.fg("accent", String(name)) +
-					theme.fg("muted", ` ${workspace}/${driver}`) +
-					`\n  ${theme.fg("dim", String(args.task || ""))}`,
-				0,
-				0,
-			);
-		},
-		renderResult(result, _options, theme) {
-			const worker = (result.details as { worker?: WorkerRecord } | undefined)?.worker;
-			if (!worker) {
-				const first = result.content?.[0];
-				return new Text(first?.type === "text" ? first.text : "", 0, 0);
-			}
-			return new Text(
-				theme.fg("success", "✓ ") +
-					theme.fg("accent", worker.name) +
-					theme.fg("dim", worker.paneClosed ? ` pane ${worker.paneId} closed` : ` pane ${worker.paneId}`),
-				0,
-				0,
-			);
-		},
-	});
-
-	pi.registerTool({
-		name: "orchestrator_list",
-		label: "List Pi Children",
-		description: "List child Pi agents opened by orchestrator_delegate in this session.",
-		parameters: Type.Object({}),
-		async execute() {
-			const all = Array.from(workers.values());
-			return {
-				content: [{ type: "text", text: all.length ? all.map(summarizeWorker).join("\n\n") : "No orchestrator child agents recorded." }],
-				details: { workers: all },
+				details: { worker: record, kind },
 			};
 		},
 	});
 
 	pi.registerTool({
-		name: "orchestrator_focus",
-		label: "Focus Pi Child",
-		description: "Focus a child Pi agent panel by orchestrator worker name.",
-		parameters: WorkerNameParams,
-		async execute(_id, params, signal) {
-			const worker = workers.get(params.name);
-			if (!worker) return { content: [{ type: "text", text: `Unknown worker: ${params.name}` }], details: { found: false } };
-			await execChecked(pi, "herdr", ["agent", "focus", worker.name], { signal, timeout: 10_000 });
-			return { content: [{ type: "text", text: `Focused ${worker.name}.` }], details: { worker } };
-		},
-	});
-
-	pi.registerTool({
-		name: "orchestrator_read",
-		label: "Read Pi Child",
-		description: "Read recent terminal output from a child Pi agent panel.",
-		parameters: ReadParams,
-		async execute(_id, params, signal) {
-			const worker = workers.get(params.name);
-			if (!worker) return { content: [{ type: "text", text: `Unknown worker: ${params.name}` }], details: { found: false } };
-			const result = await execChecked(pi, "herdr", ["agent", "read", worker.name, "--lines", String(params.lines ?? 80)], {
-				signal,
-				timeout: 10_000,
-			});
-			return { content: [{ type: "text", text: textOf(result) || "(no output)" }], details: { worker } };
-		},
-	});
-
-	pi.registerTool({
-		name: "orchestrator_prompt",
-		label: "Prompt Pi Child",
-		description: "Send a follow-up prompt to a child Pi agent by orchestrator worker name.",
-		parameters: PromptParams,
-		async execute(_id, params, signal) {
-			const worker = workers.get(params.name);
-			if (!worker) return { content: [{ type: "text", text: `Unknown worker: ${params.name}` }], details: { found: false } };
-			const args = ["agent", "prompt", worker.name, params.prompt];
-			if (params.wait) {
-				args.push("--wait");
-				if (params.timeoutMs) args.push("--timeout", String(params.timeoutMs));
-			}
-			await execChecked(pi, "herdr", args, { signal, timeout: params.timeoutMs || (params.wait ? undefined : 15_000) });
-			worker.lastPrompt = params.prompt;
-			return { content: [{ type: "text", text: `Prompt sent to ${worker.name}${params.wait ? " and settled" : ""}.` }], details: { worker } };
-		},
-	});
-
-	pi.registerTool({
-		name: "orchestrator_terminal_start",
-		label: "Start Hidden Terminal",
-		description: "Start a hidden managed tmux terminal in the shared pi-orchestrator tmux server. The terminal can later be read, sent input, surfaced into Herdr, hidden, or closed.",
-		promptSnippet: "Use orchestrator_terminal_start for hidden/background terminal work that may later need to be surfaced into Herdr.",
-		parameters: TerminalStartParams,
-		async execute(_id, params, signal, _onUpdate, ctx) {
-			await ensureTerminalStore();
-			const name = await uniqueTerminalName(params.name, params.command);
-			const cwd = path.resolve(params.cwd ? (path.isAbsolute(params.cwd) ? params.cwd : path.join(ctx.cwd, params.cwd)) : ctx.cwd);
-			const extraEnv = validateEnv(params.env);
-			const tmuxSession = `pi-orch-${name}`;
-			const scriptsDir = path.join(terminalRoot(), "scripts");
-			await fs.mkdir(scriptsDir, { recursive: true });
-			const scriptPath = path.join(scriptsDir, `${name}.sh`);
-			const envLines = Object.entries(extraEnv || {})
-				.map(([key, value]) => `export ${key}=${shellQuote(value)}`)
-				.join("\n");
-			await fs.writeFile(
-				scriptPath,
-				[
-					"#!/usr/bin/env bash",
-					"set -uo pipefail",
-					`printf '%s' ${shellQuote(`\u001b]0;${(params.title || name).replace(/[\u0000-\u001f\u007f]/g, "")}\u0007`)} || true`,
-					envLines,
-					"set +e",
-					`bash -lc ${shellQuote(params.command)}`,
-					"code=$?",
-					"set -e",
-					'echo ""',
-					'echo "[orchestrator] command exited with code $code"',
-					params.keepAlive === false ? 'exit "$code"' : 'exec bash -i',
-					"",
-				].join("\n"),
-				{ mode: 0o700 },
-			);
-			const record: TerminalRecord = {
-				id: randomUUID(),
-				name,
-				command: params.command,
-				cwd,
-				ownerSessionId: ctx.sessionManager.getSessionId(),
-				ownerCwd: ctx.cwd,
-				tmuxServer: TMUX_SERVER,
-				tmuxSession,
-				createdAt: new Date().toISOString(),
-				state: "starting",
-				title: params.title || name,
-			};
-			await saveTerminalRecord(record);
-			try {
-				await execChecked(
-					pi,
-					"tmux",
-					tmuxArgs("new-session", "-d", "-x", String(params.cols ?? 140), "-y", String(params.rows ?? 40), "-s", tmuxSession, "-c", cwd, scriptPath),
-					{ signal, timeout: 15_000 },
-				);
-			} catch (error) {
-				record.state = "failed";
-				record.lastError = error instanceof Error ? error.message : String(error);
-				await saveTerminalRecord(record);
-				throw error;
-			}
-			record.state = "running";
-			await saveTerminalRecord(record);
-			if (params.surface) await surfaceTerminal(pi, ctx, record, params.focus ?? true, signal);
-			return {
-				content: [{ type: "text", text: `Started hidden terminal ${name} in shared tmux server ${TMUX_SERVER}.${record.paneId ? `\nSurfaced in Herdr pane ${record.paneId}.` : ""}` }],
-				details: { terminal: record },
-			};
-		},
-	});
-
-	pi.registerTool({
-		name: "orchestrator_terminal_list",
-		label: "List Hidden Terminals",
-		description: "List managed hidden terminals from the shared pi-orchestrator tmux server registry.",
+		name: "orchestrator_worker_list",
+		label: "List Workers",
+		description: "List unified orchestrator workers.",
 		parameters: Type.Object({}),
 		async execute(_id, _params, signal) {
-			const records = await loadTerminalRecords();
-			for (const record of records) {
+			const terminalRecords = await loadTerminalRecords();
+			for (const record of terminalRecords) {
 				if (!(await terminalExists(pi, record, signal)) && record.state !== "closed" && record.state !== "failed") {
 					record.state = "done";
 					record.paneId = undefined;
 					await saveTerminalRecord(record);
 				}
 			}
-			const text = records.length
-				? records
-						.map((r) => `${r.name}\n  state: ${r.state}\n  owner: ${r.ownerSessionId || "unknown"}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  pane: ${r.paneId || "(hidden)"}\n  command: ${r.command}`)
-						.join("\n\n")
-				: "No managed terminals recorded.";
-			return { content: [{ type: "text", text }], details: { terminals: records } };
+			const text = terminalRecords
+				.map((r) => `worker:${r.name}\n  state: ${r.state}\n  visibility: ${r.paneId ? `visible (${r.paneId})` : "hidden"}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}`)
+				.join("\n\n") || "No orchestrator workers recorded.";
+			return { content: [{ type: "text", text }], details: { workers: terminalRecords } };
 		},
 	});
 
 	pi.registerTool({
-		name: "orchestrator_terminal_read",
-		label: "Read Hidden Terminal",
-		description: "Read recent output from a managed hidden/surfaced tmux terminal.",
+		name: "orchestrator_worker_read",
+		label: "Read Worker",
+		description: "Read recent output from a unified managed worker.",
 		parameters: TerminalReadParams,
 		async execute(_id, params, signal) {
 			const record = await getTerminal(pi, params.name, signal);
 			const lines = String(params.lines ?? 80);
 			const result = await execChecked(pi, "tmux", tmuxArgs("capture-pane", "-p", "-t", record.tmuxSession, "-S", `-${lines}`), { signal, timeout: 10_000 });
-			return { content: [{ type: "text", text: result.stdout.trimEnd() || "(no output)" }], details: { terminal: record } };
+			return { content: [{ type: "text", text: result.stdout.trimEnd() || "(no output)" }], details: { worker: record } };
 		},
 	});
 
 	pi.registerTool({
-		name: "orchestrator_terminal_send",
-		label: "Send Hidden Terminal Input",
-		description: "Send text/input to a managed terminal. By default only the owner orchestrator session may mutate it.",
+		name: "orchestrator_worker_send",
+		label: "Send Worker Input",
+		description: "Send text/input to a unified managed worker. By default only the owner orchestrator session may mutate it.",
 		parameters: TerminalSendParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const record = await getTerminal(pi, params.name, signal);
 			assertTerminalOwner(record, ctx, params.force);
 			await execChecked(pi, "tmux", tmuxArgs("send-keys", "-t", record.tmuxSession, "-l", "--", params.text), { signal, timeout: 10_000 });
-			if (params.enter ?? true) {
-				await execChecked(pi, "tmux", tmuxArgs("send-keys", "-t", record.tmuxSession, "Enter"), { signal, timeout: 10_000 });
-			}
-			return { content: [{ type: "text", text: `Sent input to ${record.name}.` }], details: { terminal: record } };
+			if (params.enter ?? true) await execChecked(pi, "tmux", tmuxArgs("send-keys", "-t", record.tmuxSession, "Enter"), { signal, timeout: 10_000 });
+			return { content: [{ type: "text", text: `Sent input to ${record.name}.` }], details: { worker: record } };
 		},
 	});
 
 	pi.registerTool({
-		name: "orchestrator_terminal_surface",
-		label: "Surface Hidden Terminal",
-		description: "Attach a managed hidden terminal into a Herdr pane and report it in the Herdr agents panel.",
+		name: "orchestrator_worker_surface",
+		label: "Surface Worker",
+		description: "Attach a unified managed worker into a Herdr pane.",
 		parameters: TerminalSurfaceParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const record = await getTerminal(pi, params.name, signal);
 			assertTerminalOwner(record, ctx, params.force);
 			await surfaceTerminal(pi, ctx, record, params.focus ?? true, signal);
-			return { content: [{ type: "text", text: `Surfaced ${record.name} in Herdr pane ${record.paneId}.` }], details: { terminal: record } };
+			return { content: [{ type: "text", text: `Surfaced ${record.name} in Herdr pane ${record.paneId}.` }], details: { worker: record } };
 		},
 	});
 
 	pi.registerTool({
-		name: "orchestrator_terminal_hide",
-		label: "Hide Surfaced Terminal",
-		description: "Detach Herdr clients from a managed tmux terminal while keeping the terminal alive hidden.",
+		name: "orchestrator_worker_hide",
+		label: "Hide Worker",
+		description: "Detach Herdr clients from a unified managed worker while keeping it alive hidden.",
 		parameters: TerminalNameParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const record = await getTerminal(pi, params.name, signal);
@@ -891,33 +561,43 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			const detach = await pi.exec("tmux", tmuxArgs("detach-client", "-s", record.tmuxSession), { signal, timeout: 10_000 });
 			if (detach.code !== 0) {
 				const clients = await pi.exec("tmux", tmuxArgs("list-clients", "-t", record.tmuxSession), { signal, timeout: 5_000 });
-				if (clients.code === 0 && clients.stdout.trim()) {
-					throw new Error(`Failed to detach ${record.name}: ${textOf(detach)}`);
-				}
+				if (clients.code === 0 && clients.stdout.trim()) throw new Error(`Failed to detach ${record.name}: ${textOf(detach)}`);
 			}
 			record.paneId = undefined;
 			await saveTerminalRecord(record);
-			return { content: [{ type: "text", text: `Detached/sent ${record.name} back to hidden tmux.` }], details: { terminal: record } };
+			return { content: [{ type: "text", text: `Detached/sent ${record.name} back to hidden.` }], details: { worker: record } };
 		},
 	});
 
 	pi.registerTool({
-		name: "orchestrator_terminal_close",
-		label: "Close Hidden Terminal",
-		description: "Kill a managed terminal session and mark its registry record closed. By default only the owner orchestrator session may close it.",
+		name: "orchestrator_worker_close",
+		label: "Close Worker",
+		description: "Kill a unified managed worker and mark its registry record closed. By default only the owner orchestrator session may close it.",
 		parameters: TerminalNameParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const record = await getTerminal(pi, params.name, signal);
 			assertTerminalOwner(record, ctx, params.force);
 			const killed = await pi.exec("tmux", tmuxArgs("kill-session", "-t", record.tmuxSession), { signal, timeout: 10_000 });
-			if (killed.code !== 0 && (await terminalExists(pi, record, signal))) {
-				throw new Error(`Failed to close ${record.name}: ${textOf(killed)}`);
-			}
+			if (killed.code !== 0 && (await terminalExists(pi, record, signal))) throw new Error(`Failed to close ${record.name}: ${textOf(killed)}`);
 			record.state = "closed";
 			record.closedAt = new Date().toISOString();
 			record.paneId = undefined;
 			await saveTerminalRecord(record);
-			return { content: [{ type: "text", text: `Closed terminal ${record.name}.` }], details: { terminal: record } };
+			return { content: [{ type: "text", text: `Closed worker ${record.name}.` }], details: { worker: record } };
 		},
 	});
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 }
