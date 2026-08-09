@@ -87,7 +87,7 @@ Important parameters:
 - `message`: short status/attention message.
 - `needsUser`: defaults to `true` for `blocked`, `false` for `running`.
 
-Blocked workers are shown first in `orchestrator_worker_list`. Marking a worker `blocked` always surfaces it into a new Herdr tab without focusing that tab, and reports the blocked state/message to Herdr. Marking it `running` clears `needsUser`; if the worker is visible, the Herdr state is updated and the worker is hidden again without killing it.
+Blocked workers are shown first in `orchestrator_worker_list`. Marking a worker `blocked` always surfaces it into a new Herdr tab without focusing that tab, and reports the blocked state/message to Herdr. Marking it `running` clears `needsUser`; if the worker is visible, the Herdr state is updated and the surfaced pane is closed while the worker continues hidden.
 
 ### `orchestrator_worker_read`
 
@@ -103,11 +103,11 @@ Attach a hidden worker into Herdr and report it in the agents panel. Manual surf
 
 ### `orchestrator_worker_hide`
 
-Detach Herdr clients from a surfaced worker while keeping it alive hidden.
+Detach Herdr clients and close the surfaced pane while keeping the worker alive hidden.
 
 ### `orchestrator_worker_close`
 
-Kill the worker and mark it closed.
+Kill the worker, close any surfaced pane, and mark it closed.
 
 ## Backend
 

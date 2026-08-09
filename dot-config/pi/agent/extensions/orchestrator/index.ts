@@ -53,6 +53,7 @@ interface TerminalRecord {
 	exitSignal?: string;
 	exitFile: string;
 	lastError?: string;
+	surfaceCloseError?: string;
 }
 
 const terminals = new Map<string, TerminalRecord>();
@@ -568,12 +569,27 @@ async function surfaceTerminal(pi: ExtensionAPI, ctx: ExtensionContext, record: 
 	return record;
 }
 
+async function closeSurfacePane(pi: ExtensionAPI, record: TerminalRecord, signal?: AbortSignal): Promise<void> {
+	if (!record.paneId) return;
+	const paneId = record.paneId;
+	const closed = await pi.exec("herdr", ["pane", "close", paneId], { signal, timeout: 10_000 });
+	if (closed.code !== 0) {
+		const output = textOf(closed);
+		if (!/not found|unknown pane|pane .* not found/i.test(output)) {
+			record.surfaceCloseError = output || `Failed to close pane ${paneId}`;
+			return;
+		}
+	}
+	record.surfaceCloseError = undefined;
+}
+
 async function hideTerminal(pi: ExtensionAPI, record: TerminalRecord, signal?: AbortSignal): Promise<TerminalRecord> {
 	const detach = await pi.exec("tmux", tmuxArgs("detach-client", "-s", record.tmuxSession), { signal, timeout: 10_000 });
 	if (detach.code !== 0) {
 		const clients = await pi.exec("tmux", tmuxArgs("list-clients", "-t", record.tmuxSession), { signal, timeout: 5_000 });
 		if (clients.code === 0 && clients.stdout.trim()) throw new Error(`Failed to detach ${record.name}: ${textOf(detach)}`);
 	}
+	await closeSurfacePane(pi, record, signal);
 	record.lastPaneId = record.paneId || record.lastPaneId;
 	record.paneId = undefined;
 	record.visibility = "hidden";
@@ -963,6 +979,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			assertTerminalOwner(record, ctx, params.force);
 			const killed = await pi.exec("tmux", tmuxArgs("kill-session", "-t", record.tmuxSession), { signal, timeout: 10_000 });
 			if (killed.code !== 0 && (await terminalExists(pi, record, signal))) throw new Error(`Failed to close ${record.name}: ${textOf(killed)}`);
+			await closeSurfacePane(pi, record, signal);
 			record.state = "closed";
 			record.closedAt = new Date().toISOString();
 			record.updatedAt = record.closedAt;
