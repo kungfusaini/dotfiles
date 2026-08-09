@@ -38,6 +38,11 @@ Important parameters:
 - `includeToolCalls`: include compact tool call/result summaries in recent interactions; defaults to `false`.
 - `handoffMaxChars`: maximum rendered handoff context size; defaults to `12000`.
 - `name`: optional stable worker name.
+- `workspace`: `current` or `worktree`; defaults to `current`.
+- `branch`: branch name for `workspace=worktree`; defaults to `pi-orch/<worker-name>`.
+- `base`: base ref for `workspace=worktree`; defaults to `HEAD`.
+- `worktreePath`: checkout path for `workspace=worktree`; defaults to `<repo-parent>/.worktrees/<repo>/<worker>`.
+- `cleanupWorktreeOnClose`: remove orchestrator-created worktree on close if clean; defaults to `true` for worktree workers.
 - `cwd`: working directory.
 - `visibility`: `hidden` or `visible`; defaults to `hidden`.
 - `title`: display title when surfaced.
@@ -55,6 +60,8 @@ Start a hidden Pi reviewer named auth-reviewer with task "Review the current dif
 For `kind=pi` plus `task`, the orchestrator starts `pi`, polls the hidden terminal for prompt/readiness, then sends a compact task prompt. If readiness is not detected before `taskPromptTimeoutMs`, it sends the task anyway and records `promptReadyTimedOut` on the worker.
 
 Optional handoff fields let the parent pass only text context: an explicit `handoffPrompt`, plus the last `recentInteractions` user/assistant messages. Tool calls/results are omitted by default; when `includeToolCalls=true`, only compact summaries are included, bounded by `handoffMaxChars`.
+
+For `workspace=worktree`, the worker is still based on the current git repository. The orchestrator creates an adjacent checkout by default under `<repo-parent>/.worktrees/<repo>/<worker>`, starts the worker there, and records the source repo, branch, base, and path. `orchestrator_worker_close` attempts `git worktree remove`; if the worktree is dirty or removal fails, it is preserved and the cleanup error is stored on the worker record. After a clean worktree removal, close also tries safe branch cleanup with `git branch -d`; unmerged branches are preserved and reported instead of force-deleted.
 
 The task prompt asks hidden Pi workers to end with an optional final footer:
 
@@ -205,7 +212,6 @@ The old managed terminal implementation remains internally as the worker backend
 ## Limitations
 
 - `kind=pi` currently starts `pi` in the managed terminal; hidden Pi control is still raw terminal read/send until surfaced.
-- Worktree creation is not part of the worker API yet.
 - Automatic auth prompt detection and background watching are not implemented yet; blocked/resumed state is explicit/manual via `orchestrator_worker_mark` or worker-declared via final `ORCHESTRATOR_RESULT` parsed during poll/read/list.
 - Cleanup/reconciliation is still basic, but missing sessions without exit metadata are marked `orphaned`, not `exited`.
 - Surfacing requires Herdr (`HERDR_ENV=1`) and the `herdr` CLI.

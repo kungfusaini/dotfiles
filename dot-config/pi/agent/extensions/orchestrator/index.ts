@@ -8,6 +8,7 @@ import { Type } from "typebox";
 
 type WorkerState = "starting" | "running" | "blocked" | "exited" | "failed" | "closed" | "orphaned" | "unknown";
 type WorkerVisibility = "hidden" | "visible" | "unknown";
+type WorkerWorkspace = "current" | "worktree";
 
 interface StructuredResult {
 	status: "done" | "blocked" | "failed";
@@ -22,6 +23,14 @@ interface TerminalRecord {
 	name: string;
 	command: string;
 	cwd: string;
+	workspace?: WorkerWorkspace;
+	worktreePath?: string;
+	worktreeBranch?: string;
+	worktreeBase?: string;
+	worktreeRepoRoot?: string;
+	cleanupWorktreeOnClose?: boolean;
+	worktreeCleanupError?: string;
+	worktreeBranchCleanupError?: string;
 	ownerSessionId?: string;
 	ownerCwd: string;
 	tmuxServer: string;
@@ -105,6 +114,11 @@ const WorkerVisibilitySchema = StringEnum(["hidden", "visible"] as const, {
 	default: "hidden",
 });
 
+const WorkerWorkspaceSchema = StringEnum(["current", "worktree"] as const, {
+	description: "Workspace mode. current runs in the current checkout; worktree creates an isolated git worktree from the current repository.",
+	default: "current",
+});
+
 const WorkerMarkStateSchema = StringEnum(["blocked", "running"] as const, {
 	description: "Manual worker attention state. blocked means the worker needs user/parent attention; running clears that marker.",
 });
@@ -126,7 +140,12 @@ const WorkerStartParams = Type.Object({
 	includeToolCalls: Type.Optional(Type.Boolean({ description: "Include compact tool call/result summaries in recent interactions. Default false." })),
 	handoffMaxChars: Type.Optional(Type.Integer({ minimum: 1000, description: "Maximum characters for the rendered handoff context. Default 12000." })),
 	name: Type.Optional(Type.String({ description: "Optional stable worker name." })),
-	cwd: Type.Optional(Type.String({ description: "Working directory. Defaults to current Pi cwd." })),
+	cwd: Type.Optional(Type.String({ description: "Working directory. Defaults to current Pi cwd. Ignored when workspace=worktree unless worktreePath is also supplied." })),
+	workspace: Type.Optional(WorkerWorkspaceSchema),
+	branch: Type.Optional(Type.String({ description: "Branch name to create/use for workspace=worktree. Defaults to pi-orch/<worker-name>." })),
+	base: Type.Optional(Type.String({ description: "Base ref for git worktree add when workspace=worktree. Defaults to HEAD." })),
+	worktreePath: Type.Optional(Type.String({ description: "Checkout path for workspace=worktree. Defaults to <repo-parent>/.worktrees/<repo>/<worker>. Relative paths are resolved from repo root." })),
+	cleanupWorktreeOnClose: Type.Optional(Type.Boolean({ description: "Remove orchestrator-created worktree on worker close if clean. Default true for workspace=worktree." })),
 	env: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Extra environment variables for the worker command." })),
 	cols: Type.Optional(Type.Integer({ minimum: 40, description: "Initial hidden terminal width. Default 140." })),
 	rows: Type.Optional(Type.Integer({ minimum: 10, description: "Initial hidden terminal height. Default 40." })),
@@ -448,6 +467,65 @@ async function uniqueTerminalName(requested: string | undefined, command: string
 	return `${base.slice(0, 20)}-${randomUUID().slice(0, 8)}`;
 }
 
+function validateBranchName(branch: string): string {
+	if (!branch || branch.startsWith("-") || /[\0\s~^:?*\[\\]/.test(branch) || branch.includes("..") || branch.endsWith(".") || branch.includes("@{")) {
+		throw new Error(`Invalid git branch name ${JSON.stringify(branch)}.`);
+	}
+	return branch;
+}
+
+async function gitOutput(pi: ExtensionAPI, cwd: string, args: string[], signal?: AbortSignal): Promise<string> {
+	const result = await execChecked(pi, "git", ["-C", cwd, ...args], { signal, timeout: 15_000 });
+	return result.stdout.trim();
+}
+
+async function createWorkerWorktree(
+	pi: ExtensionAPI,
+	ctx: ExtensionContext,
+	params: { name: string; cwd?: string; branch?: string; base?: string; worktreePath?: string; cleanupWorktreeOnClose?: boolean },
+	signal?: AbortSignal,
+): Promise<Pick<TerminalRecord, "cwd" | "workspace" | "worktreePath" | "worktreeBranch" | "worktreeBase" | "worktreeRepoRoot" | "cleanupWorktreeOnClose">> {
+	const sourceCwd = path.resolve(params.cwd ? (path.isAbsolute(params.cwd) ? params.cwd : path.join(ctx.cwd, params.cwd)) : ctx.cwd);
+	const repoRoot = await gitOutput(pi, sourceCwd, ["rev-parse", "--show-toplevel"], signal);
+	const repoName = path.basename(repoRoot);
+	const worktreePath = path.resolve(params.worktreePath ? (path.isAbsolute(params.worktreePath) ? params.worktreePath : path.join(repoRoot, params.worktreePath)) : path.join(path.dirname(repoRoot), ".worktrees", repoName, params.name));
+	const branch = validateBranchName(params.branch || `pi-orch/${params.name}`);
+	const base = params.base || "HEAD";
+	await fs.mkdir(path.dirname(worktreePath), { recursive: true });
+	await execChecked(pi, "git", ["-C", repoRoot, "worktree", "add", "-b", branch, worktreePath, base], { signal, timeout: 60_000 });
+	return {
+		cwd: worktreePath,
+		workspace: "worktree",
+		worktreePath,
+		worktreeBranch: branch,
+		worktreeBase: base,
+		worktreeRepoRoot: repoRoot,
+		cleanupWorktreeOnClose: params.cleanupWorktreeOnClose ?? true,
+	};
+}
+
+async function cleanupWorkerWorktree(pi: ExtensionAPI, record: TerminalRecord, signal?: AbortSignal): Promise<string | undefined> {
+	if (record.workspace !== "worktree" || !record.worktreePath || !record.worktreeRepoRoot || record.cleanupWorktreeOnClose === false) return undefined;
+	const removed = await pi.exec("git", ["-C", record.worktreeRepoRoot, "worktree", "remove", record.worktreePath], { signal, timeout: 60_000 });
+	if (removed.code !== 0) {
+		record.worktreeCleanupError = textOf(removed) || `Failed to remove worktree ${record.worktreePath}`;
+		return `\nKept worktree ${record.worktreePath}: ${record.worktreeCleanupError}`;
+	}
+	record.worktreeCleanupError = undefined;
+	let note = `\nRemoved clean worktree ${record.worktreePath}.`;
+	if (record.worktreeBranch) {
+		const deleted = await pi.exec("git", ["-C", record.worktreeRepoRoot, "branch", "-d", record.worktreeBranch], { signal, timeout: 30_000 });
+		if (deleted.code === 0) {
+			record.worktreeBranchCleanupError = undefined;
+			note += `\nDeleted merged worktree branch ${record.worktreeBranch}.`;
+		} else {
+			record.worktreeBranchCleanupError = textOf(deleted) || `Failed to delete branch ${record.worktreeBranch}`;
+			note += `\nKept branch ${record.worktreeBranch}: ${record.worktreeBranchCleanupError}`;
+		}
+	}
+	return note;
+}
+
 function assertTerminalOwner(record: TerminalRecord, ctx: ExtensionContext, force?: boolean) {
 	if (force) return;
 	const current = ctx.sessionManager.getSessionId();
@@ -647,10 +725,11 @@ function compactValue(value: unknown): string | undefined {
 
 function formatWorkerStatusLine(record: TerminalRecord): string {
 	const flags = [record.needsUser ? "needs-user" : undefined, record.visibility === "visible" && record.paneId ? `pane:${record.paneId}` : record.visibility].filter(Boolean).join(", ");
+	const workspace = record.workspace === "worktree" && record.worktreeBranch ? ` branch:${record.worktreeBranch}` : "";
 	const result = record.structuredResult?.status ? ` result:${record.structuredResult.status}` : "";
 	const summary = record.statusMessage || record.structuredResult?.summary;
 	const next = compactValue(record.structuredResult?.next_action);
-	return `- ${record.name}: ${record.state}${flags ? ` (${flags})` : ""}${result}${summary ? ` — ${summary}` : ""}${next ? ` | next: ${next}` : ""}`;
+	return `- ${record.name}: ${record.state}${flags ? ` (${flags})` : ""}${workspace}${result}${summary ? ` — ${summary}` : ""}${next ? ` | next: ${next}` : ""}`;
 }
 
 function formatWorkerDashboard(workers: TerminalRecord[], includeClosed: boolean): string {
@@ -915,6 +994,12 @@ async function startManagedTerminal(
 		command: string;
 		name?: string;
 		cwd?: string;
+		workspace?: WorkerWorkspace;
+		worktreePath?: string;
+		worktreeBranch?: string;
+		worktreeBase?: string;
+		worktreeRepoRoot?: string;
+		cleanupWorktreeOnClose?: boolean;
 		env?: Record<string, string>;
 		cols?: number;
 		rows?: number;
@@ -975,6 +1060,12 @@ async function startManagedTerminal(
 		updatedAt: now,
 		state: "starting",
 		visibility: "hidden",
+		workspace: params.workspace || "current",
+		worktreePath: params.worktreePath,
+		worktreeBranch: params.worktreeBranch,
+		worktreeBase: params.worktreeBase,
+		worktreeRepoRoot: params.worktreeRepoRoot,
+		cleanupWorktreeOnClose: params.cleanupWorktreeOnClose,
 		title: params.title || name,
 		exitFile,
 	};
@@ -1013,25 +1104,42 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			if (params.task && kind !== "pi") throw new Error("task is only supported for kind=pi workers.");
 			const command = params.command ?? (kind === "pi" ? "pi" : undefined);
 			if (!command) throw new Error("command is required when kind=shell.");
-			const record = await startManagedTerminal(
-				pi,
-				ctx,
-				{
-					command,
-					name: params.name,
-					cwd: params.cwd,
-					env: params.env,
-					cols: params.cols,
-					rows: params.rows,
-					title: params.title || params.name || (kind === "pi" ? "pi-worker" : undefined),
-					keepAlive: params.keepAlive,
-					surface: (params.visibility ?? "hidden") === "visible",
-					focus: params.focus,
-				},
-				signal,
-			);
+			const name = await uniqueTerminalName(params.name, command);
+			const workspace = params.workspace ?? "current";
+			const workspaceRecord = workspace === "worktree" ? await createWorkerWorktree(pi, ctx, { name, cwd: params.cwd, branch: params.branch, base: params.base, worktreePath: params.worktreePath, cleanupWorktreeOnClose: params.cleanupWorktreeOnClose }, signal) : { cwd: params.cwd, workspace: "current" as const };
+			let record: TerminalRecord;
+			try {
+				record = await startManagedTerminal(
+					pi,
+					ctx,
+					{
+						command,
+						name,
+						cwd: workspaceRecord.cwd,
+						workspace: workspaceRecord.workspace,
+						worktreePath: workspaceRecord.worktreePath,
+						worktreeBranch: workspaceRecord.worktreeBranch,
+						worktreeBase: workspaceRecord.worktreeBase,
+						worktreeRepoRoot: workspaceRecord.worktreeRepoRoot,
+						cleanupWorktreeOnClose: workspaceRecord.cleanupWorktreeOnClose,
+						env: params.env,
+						cols: params.cols,
+						rows: params.rows,
+						title: params.title || params.name || (kind === "pi" ? "pi-worker" : undefined),
+						keepAlive: params.keepAlive,
+						surface: (params.visibility ?? "hidden") === "visible",
+						focus: params.focus,
+					},
+					signal,
+				);
+			} catch (error) {
+				if (workspaceRecord.workspace === "worktree") {
+					await cleanupWorkerWorktree(pi, { id: "", name, command, cwd: workspaceRecord.cwd || ctx.cwd, ownerCwd: ctx.cwd, tmuxServer: TMUX_SERVER, tmuxSession: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), state: "failed", visibility: "hidden", exitFile: terminalExitPath(name), ...workspaceRecord }, signal).catch(() => undefined);
+				}
+				throw error;
+			}
 			if (params.task && kind === "pi") {
-					record.task = params.task;
+				record.task = params.task;
 				const handoffContext = buildHandoffContext(ctx, {
 					handoffPrompt: params.handoffPrompt,
 					recentInteractions: params.recentInteractions,
@@ -1053,7 +1161,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 				content: [
 					{
 						type: "text",
-						text: `Started ${kind} worker ${record.name} (${record.paneId ? `visible in Herdr pane ${record.paneId}` : "hidden"})${params.task ? " and sent task prompt" : ""}.`,
+						text: `Started ${kind} worker ${record.name} (${record.paneId ? `visible in Herdr pane ${record.paneId}` : "hidden"})${params.task ? " and sent task prompt" : ""}${record.workspace === "worktree" ? ` in worktree ${record.worktreePath}` : ""}.`,
 					},
 				],
 				details: { worker: record, kind },
@@ -1070,7 +1178,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			const { workers } = await pollWorkersOnce(pi, ctx, TMUX_HISTORY_LIMIT, signal);
 			const sorted = workers.sort((a, b) => (a.state === "blocked" ? 0 : 1) - (b.state === "blocked" ? 0 : 1) || (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
 			const text = sorted
-				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.task ? `\n  task: ${r.task}` : ""}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${r.structuredResult ? `\n  result: ${r.structuredResult.status}` : ""}${r.structuredResultParseError ? `\n  resultParseNote: ${r.structuredResultParseError}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
+				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  workspace: ${r.workspace || "current"}${r.worktreeBranch ? ` (${r.worktreeBranch})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.task ? `\n  task: ${r.task}` : ""}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${r.structuredResult ? `\n  result: ${r.structuredResult.status}` : ""}${r.structuredResultParseError ? `\n  resultParseNote: ${r.structuredResultParseError}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.worktreeCleanupError ? `\n  worktreeCleanupError: ${r.worktreeCleanupError}` : ""}${r.worktreeBranchCleanupError ? `\n  worktreeBranchCleanupError: ${r.worktreeBranchCleanupError}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
 				.join("\n\n") || "No orchestrator workers recorded.";
 			return { content: [{ type: "text", text }], details: { workers } };
 		},
@@ -1209,6 +1317,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			const killed = await pi.exec("tmux", tmuxArgs("kill-session", "-t", record.tmuxSession), { signal, timeout: 10_000 });
 			if (killed.code !== 0 && (await terminalExists(pi, record, signal))) throw new Error(`Failed to close ${record.name}: ${textOf(killed)}`);
 			await closeSurfacePane(pi, record, signal);
+			const worktreeNote = await cleanupWorkerWorktree(pi, record, signal);
 			record.state = "closed";
 			record.closedAt = new Date().toISOString();
 			record.updatedAt = record.closedAt;
@@ -1216,7 +1325,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			record.paneId = undefined;
 			record.visibility = "hidden";
 			await saveTerminalRecord(record);
-			return { content: [{ type: "text", text: `Closed worker ${record.name}.` }], details: { worker: record } };
+			return { content: [{ type: "text", text: `Closed worker ${record.name}.${worktreeNote || ""}` }], details: { worker: record } };
 		},
 	});
 
