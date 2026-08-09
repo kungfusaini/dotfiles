@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { randomUUID } from "node:crypto";
 import { StringEnum } from "@earendil-works/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
 type WorkerState = "starting" | "running" | "blocked" | "exited" | "failed" | "closed" | "orphaned" | "unknown";
@@ -60,6 +60,8 @@ const terminals = new Map<string, TerminalRecord>();
 const TMUX_SERVER = "pi-orchestrator";
 const TERMINAL_SOURCE = "pi-orchestrator-managed-terminal";
 const TMUX_HISTORY_LIMIT = 5000;
+const DEFAULT_HANDOFF_MAX_CHARS = 12_000;
+const TOOL_SUMMARY_MAX_CHARS = 1_000;
 
 const TerminalNameParams = Type.Object({
 	name: Type.String({ description: "Worker name returned by orchestrator_worker_start/list." }),
@@ -119,6 +121,10 @@ const WorkerStartParams = Type.Object({
 	kind: Type.Optional(WorkerKindSchema),
 	command: Type.Optional(Type.String({ description: "Shell command to run. Defaults to `pi` when kind=pi; required when kind=shell." })),
 	task: Type.Optional(Type.String({ description: "Task prompt to send after startup. Supported for kind=pi workers." })),
+	handoffPrompt: Type.Optional(Type.String({ description: "Optional parent-written context to include in the Pi worker task prompt." })),
+	recentInteractions: Type.Optional(Type.Integer({ minimum: 0, description: "Number of recent user/assistant interactions to include in the handoff prompt. Default 0." })),
+	includeToolCalls: Type.Optional(Type.Boolean({ description: "Include compact tool call/result summaries in recent interactions. Default false." })),
+	handoffMaxChars: Type.Optional(Type.Integer({ minimum: 1000, description: "Maximum characters for the rendered handoff context. Default 12000." })),
 	name: Type.Optional(Type.String({ description: "Optional stable worker name." })),
 	cwd: Type.Optional(Type.String({ description: "Working directory. Defaults to current Pi cwd." })),
 	env: Type.Optional(Type.Record(Type.String(), Type.String(), { description: "Extra environment variables for the worker command." })),
@@ -203,6 +209,90 @@ function textOf(result: { stdout?: string; stderr?: string; code?: number }): st
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+type MessageEntry = Extract<SessionEntry, { type: "message" }>;
+
+function truncateMiddle(value: string, maxChars: number): string {
+	if (value.length <= maxChars) return value;
+	const head = Math.floor(maxChars * 0.65);
+	const tail = Math.max(0, maxChars - head - 32);
+	return `${value.slice(0, head).trimEnd()}\n…[truncated ${value.length - head - tail} chars]…\n${value.slice(-tail).trimStart()}`;
+}
+
+function safeJson(value: unknown): string {
+	try {
+		return JSON.stringify(value) ?? String(value);
+	} catch {
+		return String(value);
+	}
+}
+
+function textFromContent(content: unknown, includeToolCalls: boolean): string {
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	const sections: string[] = [];
+	for (const part of content) {
+		if (!part || typeof part !== "object") continue;
+		const typed = part as Record<string, unknown>;
+		if (typed.type === "text" && typeof typed.text === "string") sections.push(typed.text);
+		else if (includeToolCalls && typed.type === "toolCall") {
+			const name = typeof typed.name === "string" ? typed.name : "tool";
+			const args = typed.arguments === undefined ? "" : ` ${truncateMiddle(safeJson(typed.arguments), TOOL_SUMMARY_MAX_CHARS)}`;
+			sections.push(`[tool call: ${name}${args}]`);
+		} else if (includeToolCalls && typed.type === "toolResult") {
+			const text = typeof typed.text === "string" ? typed.text : safeJson(typed);
+			sections.push(`[tool result: ${truncateMiddle(text, TOOL_SUMMARY_MAX_CHARS)}]`);
+		}
+	}
+	return sections.join("\n");
+}
+
+function roleLabel(role: string): string | undefined {
+	if (role === "user") return "User";
+	if (role === "assistant") return "Assistant";
+	if (role === "tool" || role === "toolResult") return "Tool";
+	return undefined;
+}
+
+function renderRecentInteractions(entries: SessionEntry[], count: number, includeToolCalls: boolean, maxChars: number): string | undefined {
+	if (count <= 0) return undefined;
+	const selected: MessageEntry[] = [];
+	let interactions = 0;
+	for (let i = entries.length - 1; i >= 0; i--) {
+		const entry = entries[i];
+		if (entry.type !== "message") continue;
+		const role = String(entry.message.role ?? "");
+		const isInteraction = role === "user" || role === "assistant";
+		const isTool = role === "tool" || role === "toolResult";
+		if (!isInteraction && !(includeToolCalls && isTool)) continue;
+		if (isInteraction) interactions++;
+		selected.push(entry as MessageEntry);
+		if (interactions >= count) break;
+	}
+	selected.reverse();
+	const rendered = selected
+		.map((entry) => {
+			const role = String(entry.message.role ?? "");
+			const label = roleLabel(role);
+			if (!label) return undefined;
+			const text = textFromContent(entry.message.content, includeToolCalls).trim();
+			if (!text) return undefined;
+			return `${label}: ${text}`;
+		})
+		.filter(Boolean)
+		.join("\n\n");
+	if (!rendered.trim()) return undefined;
+	return truncateMiddle(rendered, maxChars);
+}
+
+function buildHandoffContext(ctx: ExtensionContext, params: { handoffPrompt?: string; recentInteractions?: number; includeToolCalls?: boolean; handoffMaxChars?: number }): string | undefined {
+	const sections: string[] = [];
+	if (params.handoffPrompt?.trim()) sections.push(`Parent handoff prompt:\n${params.handoffPrompt.trim()}`);
+	const recent = renderRecentInteractions(ctx.sessionManager.getBranch(), params.recentInteractions ?? 0, params.includeToolCalls ?? false, params.handoffMaxChars ?? DEFAULT_HANDOFF_MAX_CHARS);
+	if (recent) sections.push(`Recent conversation excerpt (${params.recentInteractions} user/assistant interactions${params.includeToolCalls ? ", with compact tool summaries" : ", no tool calls"}):\n${recent}`);
+	if (!sections.length) return undefined;
+	return truncateMiddle(sections.join("\n\n---\n\n"), params.handoffMaxChars ?? DEFAULT_HANDOFF_MAX_CHARS);
 }
 
 function extractJsonObject(text: string): { text: string; end: number } | undefined {
@@ -756,7 +846,7 @@ async function createTabPane(pi: ExtensionAPI, cwd: string, label: string, focus
 	return parsePaneIdFromHerdrOutput(textOf(result));
 }
 
-function buildPiTaskPrompt(record: TerminalRecord, task: string): string {
+function buildPiTaskPrompt(record: TerminalRecord, task: string, handoffContext?: string): string {
 	return [
 		"You are a hidden Pi worker started by the parent orchestrator.",
 		"",
@@ -765,6 +855,7 @@ function buildPiTaskPrompt(record: TerminalRecord, task: string): string {
 		"",
 		"Task:",
 		task,
+		...(handoffContext ? ["", "Context handoff bundle:", handoffContext] : []),
 		"",
 		"Expectations:",
 		"- Work independently in this terminal.",
@@ -940,8 +1031,14 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 				signal,
 			);
 			if (params.task && kind === "pi") {
-				record.task = params.task;
-				const prompt = buildPiTaskPrompt(record, params.task);
+					record.task = params.task;
+				const handoffContext = buildHandoffContext(ctx, {
+					handoffPrompt: params.handoffPrompt,
+					recentInteractions: params.recentInteractions,
+					includeToolCalls: params.includeToolCalls,
+					handoffMaxChars: params.handoffMaxChars,
+				});
+				const prompt = buildPiTaskPrompt(record, params.task, handoffContext);
 				record.lastPrompt = prompt;
 				await saveTerminalRecord(record);
 				const ready = await waitForWorkerPromptReady(pi, record, params.taskPromptTimeoutMs ?? 8000, signal);

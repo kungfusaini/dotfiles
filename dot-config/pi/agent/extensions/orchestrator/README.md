@@ -33,6 +33,10 @@ Important parameters:
 - `kind`: `pi` or `shell`; defaults to `pi`.
 - `command`: command to run. Defaults to `pi` for `kind=pi`; required for `kind=shell`.
 - `task`: task prompt to send after startup. Supported for `kind=pi` workers.
+- `handoffPrompt`: optional parent-written context included in the hidden Pi task prompt.
+- `recentInteractions`: number of recent user/assistant interactions to include in the handoff bundle; defaults to `0`.
+- `includeToolCalls`: include compact tool call/result summaries in recent interactions; defaults to `false`.
+- `handoffMaxChars`: maximum rendered handoff context size; defaults to `12000`.
 - `name`: optional stable worker name.
 - `cwd`: working directory.
 - `visibility`: `hidden` or `visible`; defaults to `hidden`.
@@ -49,6 +53,8 @@ Start a hidden Pi reviewer named auth-reviewer with task "Review the current dif
 ```
 
 For `kind=pi` plus `task`, the orchestrator starts `pi`, polls the hidden terminal for prompt/readiness, then sends a compact task prompt. If readiness is not detected before `taskPromptTimeoutMs`, it sends the task anyway and records `promptReadyTimedOut` on the worker.
+
+Optional handoff fields let the parent pass only text context: an explicit `handoffPrompt`, plus the last `recentInteractions` user/assistant messages. Tool calls/results are omitted by default; when `includeToolCalls=true`, only compact summaries are included, bounded by `handoffMaxChars`.
 
 The task prompt asks hidden Pi workers to end with an optional final footer:
 
