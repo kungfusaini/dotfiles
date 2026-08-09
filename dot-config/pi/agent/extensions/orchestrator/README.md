@@ -64,6 +64,8 @@ ORCHESTRATOR_RESULT:
 
 If present, the footer must be valid JSON and final non-whitespace output. `orchestrator_worker_read` and `orchestrator_worker_list` parse and store it on the worker record.
 
+If the parsed result has `status: "blocked"` or `needs_user: true`, the worker is marked blocked/needs-user. If it is hidden, it is surfaced once into a new Herdr tab without focus, using the same handoff behavior as `orchestrator_worker_mark(state: "blocked")`.
+
 ```text
 Start a hidden shell worker that runs npm test and keep the output readable.
 ```

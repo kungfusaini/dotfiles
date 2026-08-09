@@ -33,6 +33,7 @@ interface TerminalRecord {
 	needsUser?: boolean;
 	statusMessage?: string;
 	markedAt?: string;
+	blockedSurfacedAt?: string;
 	task?: string;
 	lastPrompt?: string;
 	promptedAt?: string;
@@ -462,6 +463,17 @@ async function captureWorkerOutput(pi: ExtensionAPI, record: TerminalRecord, lin
 	return output;
 }
 
+async function autoSurfaceBlockedWorker(pi: ExtensionAPI, ctx: ExtensionContext, record: TerminalRecord, signal?: AbortSignal): Promise<boolean> {
+	if (record.state !== "blocked" || record.needsUser !== true) return false;
+	if (record.visibility === "visible" || record.paneId) return false;
+	if (record.blockedSurfacedAt) return false;
+	await surfaceTerminal(pi, ctx, record, false, signal, "tab");
+	record.blockedSurfacedAt = new Date().toISOString();
+	record.updatedAt = record.blockedSurfacedAt;
+	await saveTerminalRecord(record);
+	return true;
+}
+
 async function reportSurfacedTerminal(pi: ExtensionAPI, record: TerminalRecord, paneId: string, signal?: AbortSignal) {
 	const title = record.title || record.name;
 	await execChecked(pi, "herdr", ["pane", "rename", paneId, title], { signal, timeout: 10_000 });
@@ -827,13 +839,16 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		label: "List Workers",
 		description: "List unified orchestrator workers.",
 		parameters: Type.Object({}),
-		async execute(_id, _params, signal) {
+		async execute(_id, _params, signal, _onUpdate, ctx) {
 			const terminalRecords = await loadTerminalRecords();
 			const refreshed = [] as TerminalRecord[];
 			for (const record of terminalRecords) {
 				const current = await refreshTerminalRecord(pi, record, signal);
 				if (current.state === "running" || current.state === "blocked" || current.state === "exited" || current.state === "failed") {
 					await captureWorkerOutput(pi, current, 200, signal).catch(() => "");
+					await autoSurfaceBlockedWorker(pi, ctx, current, signal).catch((error) => {
+						current.lastError = error instanceof Error ? error.message : String(error);
+					});
 				}
 				refreshed.push(current);
 			}
@@ -863,6 +878,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			record.updatedAt = record.markedAt;
 			if (params.state === "running") {
 				record.needsUser = false;
+				record.blockedSurfacedAt = undefined;
 				if (!params.message) record.statusMessage = undefined;
 			}
 			await saveTerminalRecord(record);
@@ -887,11 +903,13 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		label: "Read Worker",
 		description: "Read recent output from a unified managed worker.",
 		parameters: TerminalReadParams,
-		async execute(_id, params, signal) {
+		async execute(_id, params, signal, _onUpdate, ctx) {
 			const record = await getTerminal(pi, params.name, signal);
 			const output = await captureWorkerOutput(pi, record, params.lines ?? 80, signal);
+			const surfaced = await autoSurfaceBlockedWorker(pi, ctx, record, signal);
 			const resultNote = record.structuredResult ? `\n\nParsed ORCHESTRATOR_RESULT:\n${JSON.stringify(record.structuredResult, null, 2)}` : record.structuredResultParseError ? `\n\nResult footer parse note: ${record.structuredResultParseError}` : "";
-			return { content: [{ type: "text", text: `${output || "(no output)"}${resultNote}` }], details: { worker: record } };
+			const surfaceNote = surfaced ? `\n\nBlocked worker surfaced in Herdr pane ${record.paneId}.` : "";
+			return { content: [{ type: "text", text: `${output || "(no output)"}${resultNote}${surfaceNote}` }], details: { worker: record } };
 		},
 	});
 
