@@ -6,6 +6,9 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
+type WorkerState = "starting" | "running" | "blocked" | "exited" | "failed" | "closed" | "orphaned" | "unknown";
+type WorkerVisibility = "hidden" | "visible" | "unknown";
+
 interface TerminalRecord {
 	id: string;
 	name: string;
@@ -16,11 +19,20 @@ interface TerminalRecord {
 	tmuxServer: string;
 	tmuxSession: string;
 	createdAt: string;
-	state: "starting" | "running" | "blocked" | "done" | "failed" | "closed";
+	updatedAt: string;
+	state: WorkerState;
+	visibility: WorkerVisibility;
 	title?: string;
 	paneId?: string;
+	lastPaneId?: string;
 	surfacedAt?: string;
+	hiddenAt?: string;
 	closedAt?: string;
+	startedAt?: string;
+	endedAt?: string;
+	exitCode?: number;
+	exitSignal?: string;
+	exitFile: string;
 	lastError?: string;
 }
 
@@ -70,7 +82,7 @@ const WorkerStartParams = Type.Object({
 	cols: Type.Optional(Type.Integer({ minimum: 40, description: "Initial hidden terminal width. Default 140." })),
 	rows: Type.Optional(Type.Integer({ minimum: 10, description: "Initial hidden terminal height. Default 40." })),
 	title: Type.Optional(Type.String({ description: "Display title when surfaced." })),
-	keepAlive: Type.Optional(Type.Boolean({ description: "Keep an interactive shell alive after the command exits so output remains readable. Default true." })),
+	keepAlive: Type.Optional(Type.Boolean({ description: "Open an interactive shell after the command exits instead of exiting. Default false; exited panes remain inspectable via tmux." })),
 	visibility: Type.Optional(WorkerVisibilitySchema),
 	focus: Type.Optional(Type.Boolean({ description: "Focus the surfaced Herdr pane when visibility=visible. Default true." })),
 });
@@ -96,6 +108,14 @@ function terminalRoot(): string {
 
 function terminalRegistryDir(): string {
 	return path.join(terminalRoot(), "registry");
+}
+
+function terminalExitDir(): string {
+	return path.join(terminalRoot(), "exit");
+}
+
+function terminalExitPath(name: string): string {
+	return path.join(terminalExitDir(), `${validateTerminalName(name)}.json`);
 }
 
 function terminalTmuxConfPath(): string {
@@ -147,6 +167,7 @@ async function execChecked(pi: ExtensionAPI, command: string, args: string[], op
 
 async function ensureTerminalStore() {
 	await fs.mkdir(terminalRegistryDir(), { recursive: true });
+	await fs.mkdir(terminalExitDir(), { recursive: true });
 	await fs.writeFile(
 		terminalTmuxConfPath(),
 		[
@@ -156,6 +177,7 @@ async function ensureTerminalStore() {
 			"set -g history-limit 5000",
 			"set -g exit-empty off",
 			"set -g detach-on-destroy off",
+			"set -g remain-on-exit on",
 			"set -g set-titles on",
 			'run-shell -b "true"',
 			"",
@@ -235,14 +257,88 @@ async function terminalExists(pi: ExtensionAPI, record: TerminalRecord, signal?:
 	return result.code === 0;
 }
 
+async function readExitMetadata(record: TerminalRecord): Promise<Partial<TerminalRecord> | undefined> {
+	try {
+		const parsed = JSON.parse(await fs.readFile(record.exitFile || terminalExitPath(record.name), "utf8"));
+		return {
+			startedAt: typeof parsed.startedAt === "string" ? parsed.startedAt : undefined,
+			endedAt: typeof parsed.endedAt === "string" ? parsed.endedAt : undefined,
+			exitCode: typeof parsed.exitCode === "number" ? parsed.exitCode : undefined,
+			exitSignal: typeof parsed.exitSignal === "string" ? parsed.exitSignal : undefined,
+		};
+	} catch (error: any) {
+		if (error?.code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+function applyExitMetadata(record: TerminalRecord, metadata: Partial<TerminalRecord>): boolean {
+	if (metadata.startedAt) record.startedAt = metadata.startedAt;
+	if (metadata.endedAt) record.endedAt = metadata.endedAt;
+	if (typeof metadata.exitCode === "number") record.exitCode = metadata.exitCode;
+	if (metadata.exitSignal) record.exitSignal = metadata.exitSignal;
+	if (record.endedAt || typeof record.exitCode === "number" || record.exitSignal) {
+		record.state = record.exitSignal || (record.exitCode ?? 0) !== 0 ? "failed" : "exited";
+		return true;
+	}
+	return false;
+}
+
+async function refreshTerminalRecord(pi: ExtensionAPI, record: TerminalRecord, signal?: AbortSignal): Promise<TerminalRecord> {
+	if (!record.exitFile) record.exitFile = terminalExitPath(record.name);
+	if (!record.visibility) record.visibility = record.paneId ? "visible" : "hidden";
+	if (record.state === "closed") return record;
+	if (record.state === "failed" && record.lastError && !record.startedAt) return record;
+
+	try {
+		const panes = await pi.exec(
+			"tmux",
+			tmuxArgs("list-panes", "-t", record.tmuxSession, "-F", "#{pane_dead}\t#{pane_dead_status}\t#{pane_dead_signal}\t#{pane_dead_time}"),
+			{ signal, timeout: 5_000 },
+		);
+		if (panes.code === 0) {
+			const [dead, status, paneSignal, deadTime] = panes.stdout.trim().split("\t");
+			const metadata = await readExitMetadata(record);
+			if (metadata) applyExitMetadata(record, metadata);
+			if (dead === "1") {
+				const code = Number(status);
+				if (Number.isFinite(code)) record.exitCode = code;
+				if (paneSignal) record.exitSignal = paneSignal;
+				if (deadTime && !record.endedAt) record.endedAt = new Date(Number(deadTime) * 1000).toISOString();
+				record.state = record.exitSignal || (record.exitCode ?? 0) !== 0 ? "failed" : "exited";
+			} else if (!metadata || !applyExitMetadata(record, metadata)) {
+				record.state = record.state === "blocked" ? "blocked" : "running";
+			}
+			record.visibility = record.paneId ? "visible" : "hidden";
+			record.updatedAt = new Date().toISOString();
+			await saveTerminalRecord(record);
+			return record;
+		}
+
+		const metadata = await readExitMetadata(record);
+		if (metadata && applyExitMetadata(record, metadata)) {
+			record.visibility = "hidden";
+			record.paneId = undefined;
+		} else {
+			record.state = "orphaned";
+			record.visibility = "unknown";
+			record.paneId = undefined;
+			record.lastError = textOf(panes) || `tmux session ${record.tmuxSession} is missing`;
+		}
+	} catch (error) {
+		record.state = "unknown";
+		record.visibility = "unknown";
+		record.lastError = error instanceof Error ? error.message : String(error);
+	}
+	record.updatedAt = new Date().toISOString();
+	await saveTerminalRecord(record);
+	return record;
+}
+
 async function getTerminal(pi: ExtensionAPI, name: string, signal?: AbortSignal): Promise<TerminalRecord> {
 	const record = await loadTerminalRecord(name);
-	if (!record) throw new Error(`Unknown terminal worker: ${name}`);
-	if (!(await terminalExists(pi, record, signal)) && record.state !== "closed" && record.state !== "failed") {
-		record.state = "done";
-		await saveTerminalRecord(record);
-	}
-	return record;
+	if (!record) throw new Error(`Unknown worker: ${name}`);
+	return refreshTerminalRecord(pi, record, signal);
 }
 
 async function reportSurfacedTerminal(pi: ExtensionAPI, record: TerminalRecord, paneId: string, signal?: AbortSignal) {
@@ -304,7 +400,7 @@ async function reportSurfacedTerminal(pi: ExtensionAPI, record: TerminalRecord, 
 			"--agent",
 			record.name,
 			"--state",
-			record.state === "blocked" ? "blocked" : record.state === "running" || record.state === "starting" ? "working" : "idle",
+			record.state === "blocked" ? "blocked" : record.state === "running" || record.state === "starting" ? "working" : record.state === "failed" || record.state === "orphaned" || record.state === "unknown" ? "blocked" : "idle",
 			"--message",
 			`Managed tmux terminal ${record.name}`,
 		],
@@ -319,7 +415,10 @@ async function surfaceTerminal(pi: ExtensionAPI, ctx: ExtensionContext, record: 
 	// Clear it before injecting the tmux attach command so we do not accidentally run e.g. "fooenv".
 	await pi.exec("herdr", ["pane", "send-keys", paneId, "ctrl+c"], { signal, timeout: 5_000 });
 	record.paneId = paneId;
+	record.lastPaneId = paneId;
+	record.visibility = "visible";
 	record.surfacedAt = new Date().toISOString();
+	record.updatedAt = record.surfacedAt;
 	await reportSurfacedTerminal(pi, record, paneId, signal);
 	await execChecked(
 		pi,
@@ -395,27 +494,35 @@ async function startManagedTerminal(
 	const scriptsDir = path.join(terminalRoot(), "scripts");
 	await fs.mkdir(scriptsDir, { recursive: true });
 	const scriptPath = path.join(scriptsDir, `${name}.sh`);
+	const exitFile = terminalExitPath(name);
 	const envLines = Object.entries(extraEnv || {})
 		.map(([key, value]) => `export ${key}=${shellQuote(value)}`)
 		.join("\n");
+	await fs.rm(exitFile, { force: true });
 	await fs.writeFile(
 		scriptPath,
 		[
 			"#!/usr/bin/env bash",
 			"set -uo pipefail",
+			"tmux set-option -w remain-on-exit on 2>/dev/null || true",
 			`printf '%s' ${shellQuote(`\u001b]0;${(params.title || name).replace(/[\u0000-\u001f\u007f]/g, "")}\u0007`)} || true`,
+			`EXIT_FILE=${shellQuote(exitFile)}`,
+			"STARTED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)",
 			envLines,
 			"set +e",
 			`bash -lc ${shellQuote(params.command)}`,
 			"code=$?",
 			"set -e",
+			"ENDED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+			'printf \'{"startedAt":"%s","endedAt":"%s","exitCode":%s,"reason":"command_exit"}\\n\' "$STARTED_AT" "$ENDED_AT" "$code" > "$EXIT_FILE"',
 			'echo ""',
 			'echo "[orchestrator] command exited with code $code"',
-			params.keepAlive === false ? 'exit "$code"' : 'exec bash -i',
+			params.keepAlive === true ? 'exec bash -i' : 'exit "$code"',
 			"",
 		].join("\n"),
 		{ mode: 0o700 },
 	);
+	const now = new Date().toISOString();
 	const record: TerminalRecord = {
 		id: randomUUID(),
 		name,
@@ -425,9 +532,12 @@ async function startManagedTerminal(
 		ownerCwd: ctx.cwd,
 		tmuxServer: TMUX_SERVER,
 		tmuxSession,
-		createdAt: new Date().toISOString(),
+		createdAt: now,
+		updatedAt: now,
 		state: "starting",
+		visibility: "hidden",
 		title: params.title || name,
+		exitFile,
 	};
 	await saveTerminalRecord(record);
 	try {
@@ -439,11 +549,14 @@ async function startManagedTerminal(
 		);
 	} catch (error) {
 		record.state = "failed";
+		record.updatedAt = new Date().toISOString();
 		record.lastError = error instanceof Error ? error.message : String(error);
 		await saveTerminalRecord(record);
 		throw error;
 	}
 	record.state = "running";
+	record.startedAt = new Date().toISOString();
+	record.updatedAt = record.startedAt;
 	await saveTerminalRecord(record);
 	if (params.surface) await surfaceTerminal(pi, ctx, record, params.focus ?? true, signal);
 	return record;
@@ -496,17 +609,12 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		parameters: Type.Object({}),
 		async execute(_id, _params, signal) {
 			const terminalRecords = await loadTerminalRecords();
-			for (const record of terminalRecords) {
-				if (!(await terminalExists(pi, record, signal)) && record.state !== "closed" && record.state !== "failed") {
-					record.state = "done";
-					record.paneId = undefined;
-					await saveTerminalRecord(record);
-				}
-			}
-			const text = terminalRecords
-				.map((r) => `worker:${r.name}\n  state: ${r.state}\n  visibility: ${r.paneId ? `visible (${r.paneId})` : "hidden"}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}`)
+			const refreshed = [] as TerminalRecord[];
+			for (const record of terminalRecords) refreshed.push(await refreshTerminalRecord(pi, record, signal));
+			const text = refreshed
+				.map((r) => `worker:${r.name}\n  state: ${r.state}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
 				.join("\n\n") || "No orchestrator workers recorded.";
-			return { content: [{ type: "text", text }], details: { workers: terminalRecords } };
+			return { content: [{ type: "text", text }], details: { workers: refreshed } };
 		},
 	});
 
@@ -563,7 +671,11 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 				const clients = await pi.exec("tmux", tmuxArgs("list-clients", "-t", record.tmuxSession), { signal, timeout: 5_000 });
 				if (clients.code === 0 && clients.stdout.trim()) throw new Error(`Failed to detach ${record.name}: ${textOf(detach)}`);
 			}
+			record.lastPaneId = record.paneId || record.lastPaneId;
 			record.paneId = undefined;
+			record.visibility = "hidden";
+			record.hiddenAt = new Date().toISOString();
+			record.updatedAt = record.hiddenAt;
 			await saveTerminalRecord(record);
 			return { content: [{ type: "text", text: `Detached/sent ${record.name} back to hidden.` }], details: { worker: record } };
 		},
@@ -581,7 +693,10 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			if (killed.code !== 0 && (await terminalExists(pi, record, signal))) throw new Error(`Failed to close ${record.name}: ${textOf(killed)}`);
 			record.state = "closed";
 			record.closedAt = new Date().toISOString();
+			record.updatedAt = record.closedAt;
+			record.lastPaneId = record.paneId || record.lastPaneId;
 			record.paneId = undefined;
+			record.visibility = "hidden";
 			await saveTerminalRecord(record);
 			return { content: [{ type: "text", text: `Closed worker ${record.name}.` }], details: { worker: record } };
 		},
