@@ -70,6 +70,10 @@ const TerminalReadParams = Type.Object({
 	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to read. Default 80." })),
 });
 
+const WorkerPollParams = Type.Object({
+	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to inspect per active worker. Default 200." })),
+});
+
 const TerminalSendParams = Type.Object({
 	name: Type.String({ description: "Worker name returned by orchestrator_worker_start/list." }),
 	text: Type.String({ description: "Text to send to the hidden/surfaced worker." }),
@@ -475,6 +479,66 @@ async function autoSurfaceBlockedWorker(pi: ExtensionAPI, ctx: ExtensionContext,
 	return true;
 }
 
+type WorkerPollEvent = {
+	name: string;
+	beforeState?: WorkerState;
+	afterState: WorkerState;
+	beforeVisibility?: WorkerVisibility;
+	afterVisibility: WorkerVisibility;
+	structuredStatus?: StructuredResult["status"];
+	message?: string;
+	surfaced?: boolean;
+	error?: string;
+};
+
+function shouldInspectOutput(record: TerminalRecord): boolean {
+	return record.state === "running" || record.state === "blocked" || record.state === "exited" || record.state === "failed";
+}
+
+async function pollWorkersOnce(pi: ExtensionAPI, ctx: ExtensionContext, lines: number, signal?: AbortSignal): Promise<{ workers: TerminalRecord[]; events: WorkerPollEvent[] }> {
+	const terminalRecords = await loadTerminalRecords();
+	const refreshed: TerminalRecord[] = [];
+	const events: WorkerPollEvent[] = [];
+	for (const record of terminalRecords) {
+		const beforeState = record.state;
+		const beforeVisibility = record.visibility;
+		const beforeResult = record.structuredResult ? JSON.stringify(record.structuredResult) : undefined;
+		const beforePaneId = record.paneId;
+		const current = await refreshTerminalRecord(pi, record, signal);
+		let error: string | undefined;
+		let surfaced = false;
+		if (shouldInspectOutput(current)) {
+			await captureWorkerOutput(pi, current, lines, signal).catch((caught) => {
+				error = caught instanceof Error ? caught.message : String(caught);
+				current.lastError = error;
+			});
+			await autoSurfaceBlockedWorker(pi, ctx, current, signal).then((didSurface) => {
+				surfaced = didSurface;
+			}).catch((caught) => {
+				error = caught instanceof Error ? caught.message : String(caught);
+				current.lastError = error;
+			});
+		}
+		const afterResult = current.structuredResult ? JSON.stringify(current.structuredResult) : undefined;
+		const changed = beforeState !== current.state || beforeVisibility !== current.visibility || beforeResult !== afterResult || beforePaneId !== current.paneId || surfaced || error;
+		if (changed) {
+			events.push({
+				name: current.name,
+				beforeState,
+				afterState: current.state,
+				beforeVisibility,
+				afterVisibility: current.visibility,
+				structuredStatus: current.structuredResult?.status,
+				message: current.statusMessage,
+				surfaced,
+				error,
+			});
+		}
+		refreshed.push(current);
+	}
+	return { workers: refreshed, events };
+}
+
 async function reportSurfacedTerminal(pi: ExtensionAPI, record: TerminalRecord, paneId: string, signal?: AbortSignal) {
 	const title = record.title || record.name;
 	await execChecked(pi, "herdr", ["pane", "rename", paneId, title], { signal, timeout: 10_000 });
@@ -856,23 +920,28 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		description: "List unified orchestrator workers.",
 		parameters: Type.Object({}),
 		async execute(_id, _params, signal, _onUpdate, ctx) {
-			const terminalRecords = await loadTerminalRecords();
-			const refreshed = [] as TerminalRecord[];
-			for (const record of terminalRecords) {
-				const current = await refreshTerminalRecord(pi, record, signal);
-				if (current.state === "running" || current.state === "blocked" || current.state === "exited" || current.state === "failed") {
-					await captureWorkerOutput(pi, current, 200, signal).catch(() => "");
-					await autoSurfaceBlockedWorker(pi, ctx, current, signal).catch((error) => {
-						current.lastError = error instanceof Error ? error.message : String(error);
-					});
-				}
-				refreshed.push(current);
-			}
-			const sorted = refreshed.sort((a, b) => (a.state === "blocked" ? 0 : 1) - (b.state === "blocked" ? 0 : 1) || (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
+			const { workers } = await pollWorkersOnce(pi, ctx, 200, signal);
+			const sorted = workers.sort((a, b) => (a.state === "blocked" ? 0 : 1) - (b.state === "blocked" ? 0 : 1) || (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
 			const text = sorted
 				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.task ? `\n  task: ${r.task}` : ""}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${r.structuredResult ? `\n  result: ${r.structuredResult.status}` : ""}${r.structuredResultParseError ? `\n  resultParseNote: ${r.structuredResultParseError}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
 				.join("\n\n") || "No orchestrator workers recorded.";
-			return { content: [{ type: "text", text }], details: { workers: refreshed } };
+			return { content: [{ type: "text", text }], details: { workers } };
+		},
+	});
+
+	pi.registerTool({
+		name: "orchestrator_worker_poll",
+		label: "Poll Workers",
+		description: "Refresh all workers once, parse structured results, and auto-surface hidden blocked workers without dumping full output.",
+		parameters: WorkerPollParams,
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const { workers, events } = await pollWorkersOnce(pi, ctx, params.lines ?? 200, signal);
+			const active = workers.filter((worker) => worker.state !== "closed").length;
+			const blocked = workers.filter((worker) => worker.state === "blocked").length;
+			const text = events.length
+				? events.map((event) => `worker:${event.name}\n  state: ${event.beforeState} -> ${event.afterState}\n  visibility: ${event.beforeVisibility} -> ${event.afterVisibility}${event.surfaced ? "\n  surfaced: true" : ""}${event.structuredStatus ? `\n  result: ${event.structuredStatus}` : ""}${event.message ? `\n  message: ${event.message}` : ""}${event.error ? `\n  error: ${event.error}` : ""}`).join("\n\n")
+				: "No worker changes detected.";
+			return { content: [{ type: "text", text: `Polled ${workers.length} workers (${active} active, ${blocked} blocked).\n\n${text}` }], details: { workers, events } };
 		},
 	});
 
