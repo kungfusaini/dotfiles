@@ -156,6 +156,11 @@ const WorkerStartParams = Type.Object({
 	focus: Type.Optional(Type.Boolean({ description: "Focus the surfaced Herdr pane when visibility=visible. Default true." })),
 });
 
+const WorkerStartManyParams = Type.Object({
+	workers: Type.Array(WorkerStartParams, { minItems: 1, description: "Workers to start. Each item accepts the same fields as orchestrator_worker_start." }),
+	continueOnError: Type.Optional(Type.Boolean({ description: "Continue starting later workers if one fails. Default true." })),
+});
+
 function slug(input: string, fallback = "worker"): string {
 	let cleaned = input
 		.toLowerCase()
@@ -1092,6 +1097,71 @@ async function startManagedTerminal(
 	return record;
 }
 
+async function startWorkerFromParams(pi: ExtensionAPI, ctx: ExtensionContext, params: any, signal?: AbortSignal): Promise<{ record: TerminalRecord; kind: "pi" | "shell" }> {
+	const kind = params.kind ?? "pi";
+	if (params.task && kind !== "pi") throw new Error("task is only supported for kind=pi workers.");
+	const command = params.command ?? (kind === "pi" ? "pi" : undefined);
+	if (!command) throw new Error("command is required when kind=shell.");
+	const name = await uniqueTerminalName(params.name, command);
+	const workspace = params.workspace ?? "current";
+	const workspaceRecord = workspace === "worktree" ? await createWorkerWorktree(pi, ctx, { name, cwd: params.cwd, branch: params.branch, base: params.base, worktreePath: params.worktreePath, cleanupWorktreeOnClose: params.cleanupWorktreeOnClose }, signal) : { cwd: params.cwd, workspace: "current" as const };
+	let record: TerminalRecord;
+	try {
+		record = await startManagedTerminal(
+			pi,
+			ctx,
+			{
+				command,
+				name,
+				cwd: workspaceRecord.cwd,
+				workspace: workspaceRecord.workspace,
+				worktreePath: workspaceRecord.worktreePath,
+				worktreeBranch: workspaceRecord.worktreeBranch,
+				worktreeBase: workspaceRecord.worktreeBase,
+				worktreeRepoRoot: workspaceRecord.worktreeRepoRoot,
+				cleanupWorktreeOnClose: workspaceRecord.cleanupWorktreeOnClose,
+				env: params.env,
+				cols: params.cols,
+				rows: params.rows,
+				title: params.title || params.name || (kind === "pi" ? "pi-worker" : undefined),
+				keepAlive: params.keepAlive,
+				surface: (params.visibility ?? "hidden") === "visible",
+				focus: params.focus,
+			},
+			signal,
+		);
+	} catch (error) {
+		if (workspaceRecord.workspace === "worktree") {
+			await cleanupWorkerWorktree(pi, { id: "", name, command, cwd: workspaceRecord.cwd || ctx.cwd, ownerCwd: ctx.cwd, tmuxServer: TMUX_SERVER, tmuxSession: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), state: "failed", visibility: "hidden", exitFile: terminalExitPath(name), ...workspaceRecord }, signal).catch(() => undefined);
+		}
+		throw error;
+	}
+	if (params.task && kind === "pi") {
+		record.task = params.task;
+		const handoffContext = buildHandoffContext(ctx, {
+			handoffPrompt: params.handoffPrompt,
+			recentInteractions: params.recentInteractions,
+			includeToolCalls: params.includeToolCalls,
+			handoffMaxChars: params.handoffMaxChars,
+		});
+		const prompt = buildPiTaskPrompt(record, params.task, handoffContext);
+		record.lastPrompt = prompt;
+		await saveTerminalRecord(record);
+		const ready = await waitForWorkerPromptReady(pi, record, params.taskPromptTimeoutMs ?? 8000, signal);
+		record.promptReadyTimedOut = !ready;
+		if (ready) record.promptReadyAt = new Date().toISOString();
+		await sendWorkerText(pi, record, prompt, signal);
+		record.promptedAt = new Date().toISOString();
+		record.updatedAt = record.promptedAt;
+		await saveTerminalRecord(record);
+	}
+	return { record, kind };
+}
+
+function startedWorkerText(record: TerminalRecord, kind: "pi" | "shell"): string {
+	return `Started ${kind} worker ${record.name} (${record.paneId ? `visible in Herdr pane ${record.paneId}` : "hidden"})${record.task ? " and sent task prompt" : ""}${record.workspace === "worktree" ? ` in worktree ${record.worktreePath}` : ""}.`;
+}
+
 export default function orchestratorExtension(pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "orchestrator_worker_start",
@@ -1100,72 +1170,35 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		promptSnippet: "Use orchestrator_worker_start for subagents or command workers that can be hidden or visible.",
 		parameters: WorkerStartParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
-			const kind = params.kind ?? "pi";
-			if (params.task && kind !== "pi") throw new Error("task is only supported for kind=pi workers.");
-			const command = params.command ?? (kind === "pi" ? "pi" : undefined);
-			if (!command) throw new Error("command is required when kind=shell.");
-			const name = await uniqueTerminalName(params.name, command);
-			const workspace = params.workspace ?? "current";
-			const workspaceRecord = workspace === "worktree" ? await createWorkerWorktree(pi, ctx, { name, cwd: params.cwd, branch: params.branch, base: params.base, worktreePath: params.worktreePath, cleanupWorktreeOnClose: params.cleanupWorktreeOnClose }, signal) : { cwd: params.cwd, workspace: "current" as const };
-			let record: TerminalRecord;
-			try {
-				record = await startManagedTerminal(
-					pi,
-					ctx,
-					{
-						command,
-						name,
-						cwd: workspaceRecord.cwd,
-						workspace: workspaceRecord.workspace,
-						worktreePath: workspaceRecord.worktreePath,
-						worktreeBranch: workspaceRecord.worktreeBranch,
-						worktreeBase: workspaceRecord.worktreeBase,
-						worktreeRepoRoot: workspaceRecord.worktreeRepoRoot,
-						cleanupWorktreeOnClose: workspaceRecord.cleanupWorktreeOnClose,
-						env: params.env,
-						cols: params.cols,
-						rows: params.rows,
-						title: params.title || params.name || (kind === "pi" ? "pi-worker" : undefined),
-						keepAlive: params.keepAlive,
-						surface: (params.visibility ?? "hidden") === "visible",
-						focus: params.focus,
-					},
-					signal,
-				);
-			} catch (error) {
-				if (workspaceRecord.workspace === "worktree") {
-					await cleanupWorkerWorktree(pi, { id: "", name, command, cwd: workspaceRecord.cwd || ctx.cwd, ownerCwd: ctx.cwd, tmuxServer: TMUX_SERVER, tmuxSession: "", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), state: "failed", visibility: "hidden", exitFile: terminalExitPath(name), ...workspaceRecord }, signal).catch(() => undefined);
+			const { record, kind } = await startWorkerFromParams(pi, ctx, params, signal);
+			return { content: [{ type: "text", text: startedWorkerText(record, kind) }], details: { worker: record, kind } };
+		},
+	});
+
+	pi.registerTool({
+		name: "orchestrator_worker_start_many",
+		label: "Start Many Workers",
+		description: "Start multiple orchestrator workers. Each array item accepts the same fields as orchestrator_worker_start.",
+		promptSnippet: "Use orchestrator_worker_start_many when launching several independent workers with distinct tasks/instructions.",
+		parameters: WorkerStartManyParams,
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const started: Array<{ record: TerminalRecord; kind: "pi" | "shell" }> = [];
+			const failed: Array<{ index: number; name?: string; error: string }> = [];
+			for (let index = 0; index < params.workers.length; index++) {
+				const workerParams = params.workers[index];
+				try {
+					started.push(await startWorkerFromParams(pi, ctx, workerParams, signal));
+				} catch (error) {
+					failed.push({ index, name: workerParams.name, error: error instanceof Error ? error.message : String(error) });
+					if (params.continueOnError === false) break;
 				}
-				throw error;
 			}
-			if (params.task && kind === "pi") {
-				record.task = params.task;
-				const handoffContext = buildHandoffContext(ctx, {
-					handoffPrompt: params.handoffPrompt,
-					recentInteractions: params.recentInteractions,
-					includeToolCalls: params.includeToolCalls,
-					handoffMaxChars: params.handoffMaxChars,
-				});
-				const prompt = buildPiTaskPrompt(record, params.task, handoffContext);
-				record.lastPrompt = prompt;
-				await saveTerminalRecord(record);
-				const ready = await waitForWorkerPromptReady(pi, record, params.taskPromptTimeoutMs ?? 8000, signal);
-				record.promptReadyTimedOut = !ready;
-				if (ready) record.promptReadyAt = new Date().toISOString();
-				await sendWorkerText(pi, record, prompt, signal);
-				record.promptedAt = new Date().toISOString();
-				record.updatedAt = record.promptedAt;
-				await saveTerminalRecord(record);
-			}
-			return {
-				content: [
-					{
-						type: "text",
-						text: `Started ${kind} worker ${record.name} (${record.paneId ? `visible in Herdr pane ${record.paneId}` : "hidden"})${params.task ? " and sent task prompt" : ""}${record.workspace === "worktree" ? ` in worktree ${record.worktreePath}` : ""}.`,
-					},
-				],
-				details: { worker: record, kind },
-			};
+			const lines = [
+				`Started ${started.length}/${params.workers.length} workers${failed.length ? `; ${failed.length} failed` : ""}.`,
+				...started.map(({ record, kind }) => `- ${record.name}: ${kind}, ${record.workspace || "current"}${record.worktreePath ? `, ${record.worktreePath}` : ""}`),
+				...failed.map((failure) => `- failed[${failure.index}]${failure.name ? ` ${failure.name}` : ""}: ${failure.error}`),
+			];
+			return { content: [{ type: "text", text: lines.join("\n") }], details: { started: started.map((item) => item.record), failed } };
 		},
 	});
 

@@ -83,6 +83,23 @@ If the parsed result has `status: "blocked"` or `needs_user: true`, the worker i
 Start a hidden shell worker that runs npm test and keep the output readable.
 ```
 
+### `orchestrator_worker_start_many`
+
+Start multiple workers in one tool call. This is intentionally simple: `workers` is an array of normal `orchestrator_worker_start` inputs, so each worker can have distinct `task`, `command`, `workspace`, `handoffPrompt`, branch, and cleanup settings.
+
+Example shape:
+
+```json
+{
+  "workers": [
+    { "name": "api", "kind": "pi", "task": "Inspect API changes", "workspace": "worktree" },
+    { "name": "tests", "kind": "shell", "command": "npm test", "workspace": "worktree" }
+  ]
+}
+```
+
+Starts are attempted in order. By default later workers still start if one fails; set `continueOnError: false` to stop on the first failure.
+
 ### `orchestrator_worker_list`
 
 List workers from the shared registry. Listing performs one full-history poll pass first, so worker states and structured result footers are refreshed before display.
