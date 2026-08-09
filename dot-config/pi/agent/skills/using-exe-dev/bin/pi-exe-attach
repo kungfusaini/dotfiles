@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  pi-exe-attach HOST_OR_VM_NAME
+
+Attach to an exe.dev Pi VM with optimized SSH. When run inside Herdr, this also
+reverse-forwards the local Herdr socket and injects HERDR_* so remote Pi reports
+state and blocked orchestrator subagents into the local Herdr priority sidebar.
+EOF
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  usage
+  exit 0
+fi
+
+if [[ -z "${1:-}" ]]; then
+  usage >&2
+  exit 2
+fi
+
+raw_host="$1"
+case "$raw_host" in
+  *.exe.xyz) HOST="$raw_host" ;;
+  *) HOST="$raw_host.exe.xyz" ;;
+esac
+
+REMOTE_SOCK="/tmp/herdr-local-pi-${HERDR_PANE_ID:-manual}.sock"
+REMOTE_SOCK="${REMOTE_SOCK//:/-}"
+LOCAL_HERDR_SOCK="${HERDR_SOCKET_PATH:-}"
+LOCAL_PANE_ID="${HERDR_PANE_ID:-}"
+
+SSH=(/usr/bin/ssh
+  -o ControlMaster=auto
+  -o ControlPersist=30m
+  -o ControlPath="$HOME/.ssh/cm-%C"
+  -o Compression=no
+  -o IPQoS=lowdelay
+  -o ServerAliveInterval=30
+  -o ServerAliveCountMax=2
+  -o TCPKeepAlive=yes
+  -o ExitOnForwardFailure=yes
+)
+
+PROJECT_ENV=""
+if [[ -n "${PI_PROJECT_WORKSPACE_PROJECT_ID:-}" ]]; then
+  PROJECT_ENV+=" PI_PROJECT_WORKSPACE_PROJECT_ID='${PI_PROJECT_WORKSPACE_PROJECT_ID}'"
+fi
+if [[ -n "${PI_PROJECT_WORKSPACE_STREAM_ID:-}" ]]; then
+  PROJECT_ENV+=" PI_PROJECT_WORKSPACE_STREAM_ID='${PI_PROJECT_WORKSPACE_STREAM_ID}'"
+fi
+
+if [[ -n "$LOCAL_HERDR_SOCK" && -n "$LOCAL_PANE_ID" ]]; then
+  "${SSH[@]}" "$HOST" "rm -f '$REMOTE_SOCK'" >/dev/null 2>&1 || true
+  exec "${SSH[@]}" -tt -R "$REMOTE_SOCK:$LOCAL_HERDR_SOCK" "$HOST" \
+    "export TERM=xterm-256color HERDR_ENV=1 HERDR_SOCKET_PATH='$REMOTE_SOCK' HERDR_PANE_ID='$LOCAL_PANE_ID' HERDR_REMOTE_ATTACH_TARGET='$HOST' PI_EXE_HOST='$HOST'$PROJECT_ENV; cd ~; exec pi"
+else
+  exec "${SSH[@]}" -tt "$HOST" "export TERM=xterm-256color PI_EXE_HOST='$HOST'$PROJECT_ENV; cd ~; exec pi"
+fi

@@ -1,0 +1,218 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+  cat <<'EOF'
+Usage:
+  pi-exe-setup [--name VM_NAME]
+  pi-exe-setup --existing HOST_OR_VM_NAME
+
+Creates or prepares an exe.dev exeuntu VM for remote Pi + local Herdr integration.
+
+What it does:
+  - creates an exeuntu VM when --existing is not supplied
+  - syncs local Pi config into remote ~/.pi/agent
+  - copies auth.json and npm package resources
+  - disables VM-incompatible tree-tab-toggle.ts
+  - installs /usr/local/bin/herdr shim for local Herdr socket forwarding
+  - verifies Pi package config loads
+EOF
+}
+
+NAME="pi-remote-$(date +%Y%m%d-%H%M)"
+EXISTING=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --name)
+      NAME="${2:?--name requires a value}"
+      shift 2
+      ;;
+    --existing)
+      EXISTING="${2:?--existing requires a host or VM name}"
+      shift 2
+      ;;
+    --help|-h)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+normalize_host() {
+  case "$1" in
+    *.exe.xyz) printf '%s\n' "$1" ;;
+    *) printf '%s.exe.xyz\n' "$1" ;;
+  esac
+}
+
+if [[ -n "$EXISTING" ]]; then
+  HOST="$(normalize_host "$EXISTING")"
+  VM_NAME="${HOST%.exe.xyz}"
+else
+  echo "Creating exe.dev VM: $NAME" >&2
+  CREATE_JSON="$(ssh exe.dev "new --json --name=$NAME --comment=\"Private exeuntu VM for Pi remote + local Herdr integration\" --image=exeuntu --cpu=1 --memory=2GB --disk=10GB --no-email")"
+  HOST="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ssh_host"])' <<<"$CREATE_JSON")"
+  VM_NAME="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["vm_name"])' <<<"$CREATE_JSON")"
+  echo "$CREATE_JSON" >&2
+fi
+
+echo "Waiting for SSH: $HOST" >&2
+for _ in $(seq 1 40); do
+  if ssh -o BatchMode=yes -o ConnectTimeout=5 "$HOST" 'true' >/dev/null 2>&1; then
+    break
+  fi
+  sleep 3
+done
+ssh -o BatchMode=yes -o ConnectTimeout=10 "$HOST" 'echo remote-ready >/dev/null'
+
+LOCAL_CONFIG="${PI_LOCAL_CONFIG:-$HOME/.config/pi/agent}"
+LOCAL_AUTH="${PI_LOCAL_AUTH:-$HOME/.local/state/pi/agent/auth.json}"
+LOCAL_NPM="${PI_LOCAL_NPM:-$HOME/.local/share/pi/agent/npm}"
+
+[[ -d "$LOCAL_CONFIG" ]] || { echo "Missing local Pi config: $LOCAL_CONFIG" >&2; exit 1; }
+[[ -f "$LOCAL_AUTH" ]] || { echo "Missing local Pi auth: $LOCAL_AUTH" >&2; exit 1; }
+[[ -d "$LOCAL_NPM" ]] || { echo "Missing local Pi npm package dir: $LOCAL_NPM" >&2; exit 1; }
+
+echo "Preparing remote dirs" >&2
+ssh "$HOST" 'mkdir -p ~/.pi/agent ~/.local/state/pi/agent ~/.local/share/pi/agent ~/.cache/pi/agent ~/.pi/agent/bin'
+
+echo "Syncing Pi config -> $HOST:~/.pi/agent" >&2
+rsync -az --delete \
+  --exclude='auth.json' \
+  --exclude='bin' \
+  --exclude='npm' \
+  "$LOCAL_CONFIG/" "$HOST":~/.pi/agent/
+
+echo "Syncing auth and npm package resources" >&2
+rsync -az "$LOCAL_AUTH" "$HOST":~/.pi/agent/auth.json
+rsync -az "$LOCAL_AUTH" "$HOST":~/.local/state/pi/agent/auth.json
+rsync -az --delete "$LOCAL_NPM/" "$HOST":~/.local/share/pi/agent/npm/
+
+ssh "$HOST" 'set -e
+  chmod 600 ~/.pi/agent/auth.json ~/.local/state/pi/agent/auth.json ~/.pi/agent/models-store.json 2>/dev/null || true
+  ln -sfn ~/.local/share/pi/agent/npm ~/.pi/agent/npm
+  mkdir -p ~/.pi/agent/extensions.disabled
+  mv ~/.pi/agent/extensions/tree-tab-toggle.ts ~/.pi/agent/extensions.disabled/tree-tab-toggle.ts 2>/dev/null || true
+  rm -f ~/.config/pi/agent/auth.json ~/.config/pi/agent/npm ~/.config/pi/agent/bin 2>/dev/null || true
+  mkdir -p ~/.config/pi/agent ~/.pi/agent/bin
+  ln -sfn ~/.pi/agent/auth.json ~/.config/pi/agent/auth.json
+  ln -sfn ~/.pi/agent/npm ~/.config/pi/agent/npm
+  ln -sfn ~/.pi/agent/bin ~/.config/pi/agent/bin
+'
+
+echo "Installing remote Herdr shim" >&2
+cat <<'PY' | ssh "$HOST" 'cat >/tmp/herdr-shim && sudo install -m 0755 /tmp/herdr-shim /usr/local/bin/herdr'
+#!/usr/bin/env python3
+import json, os, re, shlex, socket, sys, time
+
+SOCK = os.environ.get('HERDR_SOCKET_PATH')
+REMOTE = os.environ.get('HERDR_REMOTE_ATTACH_TARGET', os.environ.get('PI_EXE_HOST', ''))
+if not REMOTE:
+    REMOTE = os.popen("hostname 2>/dev/null").read().strip() + ".exe.xyz"
+
+def die(msg, code=1):
+    print(msg, file=sys.stderr)
+    sys.exit(code)
+
+def request(method, params):
+    if not SOCK:
+        die('HERDR_SOCKET_PATH is not set')
+    req = {'id': f'remote-herdr-shim:{int(time.time()*1000)}', 'method': method, 'params': params}
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.settimeout(10)
+    s.connect(SOCK)
+    s.sendall((json.dumps(req) + '\n').encode())
+    data = b''
+    while b'\n' not in data:
+        chunk = s.recv(65536)
+        if not chunk:
+            break
+        data += chunk
+    s.close()
+    text = data.decode(errors='replace').strip()
+    print(text)
+    try:
+        resp = json.loads(text)
+    except Exception:
+        sys.exit(1)
+    if 'error' in resp:
+        sys.exit(1)
+    return resp
+
+def val(args, flag, default=None):
+    if flag in args:
+        i = args.index(flag)
+        if i + 1 < len(args):
+            return args[i+1]
+    return default
+
+def has(args, flag): return flag in args
+
+def collect(args, flag):
+    out=[]; i=0
+    while i < len(args):
+        if args[i] == flag and i+1 < len(args):
+            out.append(args[i+1]); i += 2
+        else:
+            i += 1
+    return out
+
+def tokens_from(args):
+    tokens={}
+    for item in collect(args, '--token'):
+        if '=' in item:
+            k,v = item.split('=',1); tokens[k]=v
+    return tokens
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ('--help','-h'):
+        print('remote herdr shim for exe.dev -> local Herdr socket')
+        return
+    group = args[0]; sub = args[1] if len(args)>1 else None; rest = args[2:]
+
+    if group == 'tab' and sub == 'create':
+        request('tab.create', {'cwd': None, 'label': val(rest, '--label'), 'focus': has(rest, '--focus') and not has(rest, '--no-focus')}); return
+    if group == 'pane' and sub == 'split':
+        request('pane.split', {'pane_id': os.environ.get('HERDR_PANE_ID') if has(rest, '--current') else None, 'direction': val(rest, '--direction', 'right'), 'cwd': None, 'env': {}, 'focus': has(rest, '--focus') and not has(rest, '--no-focus')}); return
+    if group == 'pane' and sub == 'rename':
+        request('pane.rename', {'pane_id': rest[0], 'label': rest[1] if len(rest)>1 else None}); return
+    if group == 'pane' and sub == 'send-keys':
+        request('pane.send_keys', {'pane_id': rest[0], 'keys': rest[1:]}); return
+    if group == 'pane' and sub == 'run':
+        pane_id, cmd = rest[0], rest[1]
+        cmd = re.sub(r"\s+-f\s+(?:'[^']*'|\"[^\"]*\"|\S+)", "", cmd, count=1)
+        remote_cmd = "export TERM=xterm-256color; " + cmd
+        local_cmd = f"ssh -tt {shlex.quote(REMOTE)} {shlex.quote(remote_cmd)}"
+        request('pane.send_text', {'pane_id': pane_id, 'text': local_cmd + '\n'}); return
+    if group == 'pane' and sub == 'close':
+        request('pane.close', {'pane_id': rest[0]}); return
+    if group == 'pane' and sub == 'report-metadata':
+        request('pane.report_metadata', {'pane_id': rest[0], 'source': val(rest, '--source', 'remote-herdr-shim'), 'display_agent': val(rest, '--display-agent'), 'title': val(rest, '--title'), 'tokens': tokens_from(rest), 'ttl_ms': int(val(rest, '--ttl-ms', '600000'))}); return
+    if group == 'pane' and sub == 'report-agent-session':
+        request('pane.report_agent_session', {'pane_id': rest[0], 'source': val(rest, '--source', 'remote-herdr-shim'), 'agent': val(rest, '--agent', 'agent'), 'agent_session_id': val(rest, '--agent-session-id'), 'agent_session_path': val(rest, '--agent-session-path'), 'session_start_source': val(rest, '--session-start-source')}); return
+    if group == 'pane' and sub == 'report-agent':
+        request('pane.report_agent', {'pane_id': rest[0], 'source': val(rest, '--source', 'remote-herdr-shim'), 'agent': val(rest, '--agent', 'agent'), 'state': val(rest, '--state', 'idle'), 'message': val(rest, '--message')}); return
+    if group == 'agent' and sub == 'list': request('agent.list', {}); return
+    if group == 'api' and sub == 'snapshot': request('session.snapshot', {}); return
+    die('unsupported herdr shim command: ' + ' '.join(args))
+
+if __name__ == '__main__': main()
+PY
+
+echo "Verifying remote Pi package config" >&2
+ssh "$HOST" 'set -e; command -v pi; pi --version; pi list >/dev/null; test -x /usr/local/bin/herdr; echo setup-ok'
+
+cat <<EOF
+$VM_NAME
+$HOST
+
+Setup complete. Attach from a local Herdr pane with:
+  pi-exe-attach $HOST
+EOF

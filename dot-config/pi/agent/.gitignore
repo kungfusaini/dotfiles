@@ -3,5 +3,7 @@ auth.json
 models-store.json
 sessions/
 bin/
+!skills/using-exe-dev/bin/
+!skills/using-exe-dev/bin/*
 npm/*
 !npm/.gitignore

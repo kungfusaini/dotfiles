@@ -1,0 +1,267 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DATA_HOME="${XDG_DATA_HOME:-$HOME/.local/share}"
+PROJECT_REGISTRY="$DATA_HOME/pi/projects/registry.json"
+VM_REGISTRY="$DATA_HOME/pi/exe-dev/vms.json"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  rpi
+
+Open remote Pi for the current selected Herdr/Pi project. `rpi` resolves the
+selected Herdr workspace's pi_project_id token first; cwd is only a fallback
+outside Herdr. It syncs the selected stream worklog before/after attach, then
+attaches to the linked exe.dev VM with optimized SSH + local Herdr socket
+forwarding via pi-exe-attach.
+
+Link/manage VMs from the Herdr prefix+s picker with the `v` key.
+EOF
+}
+
+canonical() {
+  python3 -c 'import os,sys; print(os.path.realpath(os.path.expanduser(sys.argv[1])))' "$1"
+}
+
+project_json_for_herdr() {
+  command -v herdr >/dev/null 2>&1 || return 1
+  local snapshot
+  snapshot="$(herdr api snapshot 2>/dev/null || true)"
+  [[ -n "$snapshot" ]] || return 1
+  python3 - "$PROJECT_REGISTRY" "$snapshot" "${HERDR_PANE_ID:-}" "${HERDR_WORKSPACE_ID:-}" <<'PY'
+import json, sys
+reg_path, snapshot_s, pane_id, workspace_id = sys.argv[1:5]
+try:
+    reg=json.load(open(reg_path))
+    snap=json.loads(snapshot_s).get('result',{}).get('snapshot',{})
+except Exception:
+    sys.exit(1)
+workspaces=snap.get('workspaces') or []
+panes=snap.get('panes') or []
+if not workspace_id and pane_id:
+    for pane in panes:
+        if pane.get('pane_id') == pane_id:
+            workspace_id = pane.get('workspace_id') or ''
+            break
+ws=None
+if workspace_id:
+    ws=next((w for w in workspaces if w.get('workspace_id') == workspace_id), None)
+if not ws:
+    ws=next((w for w in workspaces if w.get('focused')), None)
+if not ws:
+    sys.exit(2)
+tokens=ws.get('tokens') or {}
+project_id=tokens.get('pi_project_id')
+projects=reg.get('projects') or {}
+project=projects.get(project_id) if project_id else None
+if not project:
+    label=ws.get('label') or tokens.get('pi_project')
+    project=next((p for p in projects.values() if p.get('name') == label or p.get('id') == label), None)
+if not project:
+    sys.exit(3)
+print(json.dumps(project))
+PY
+}
+
+project_json_for_cwd() {
+  local cwd="$(canonical "${RPI_CWD:-$PWD}")"
+  python3 - "$PROJECT_REGISTRY" "$cwd" <<'PY'
+import json, os, sys
+reg_path, cwd = sys.argv[1], os.path.realpath(sys.argv[2])
+try:
+    reg=json.load(open(reg_path))
+except Exception:
+    sys.exit(1)
+projects=list((reg.get('projects') or {}).values())
+def roots(p):
+    return [p.get('root'), *(p.get('aliases') or [])]
+best=None
+for p in projects:
+    for r in roots(p):
+        if not r: continue
+        rr=os.path.realpath(os.path.expanduser(r))
+        if cwd == rr or cwd.startswith(rr.rstrip('/') + '/'):
+            score=len(rr)
+            if best is None or score > best[0]: best=(score,p)
+if not best:
+    sys.exit(2)
+print(json.dumps(best[1]))
+PY
+}
+
+stream_json_for_herdr() {
+  local project_id="$1"
+  command -v herdr >/dev/null 2>&1 || return 1
+  local snapshot
+  snapshot="$(herdr api snapshot 2>/dev/null || true)"
+  [[ -n "$snapshot" ]] || return 1
+  python3 - "$DATA_HOME" "$project_id" "$snapshot" "${HERDR_PANE_ID:-}" "${HERDR_WORKSPACE_ID:-}" <<'PY'
+import json, os, sys
+from pathlib import Path
+data_home, project_id, snapshot_s, pane_id, workspace_id = sys.argv[1:6]
+try: snap=json.loads(snapshot_s).get('result',{}).get('snapshot',{})
+except Exception: sys.exit(1)
+panes=snap.get('panes') or []
+tabs=snap.get('tabs') or []
+workspaces=snap.get('workspaces') or []
+if not workspace_id and pane_id:
+    pane=next((p for p in panes if p.get('pane_id') == pane_id), None)
+    if pane: workspace_id=pane.get('workspace_id') or ''
+ws=next((w for w in workspaces if w.get('workspace_id') == workspace_id), None) if workspace_id else None
+if not ws: ws=next((w for w in workspaces if w.get('focused')), None)
+tokens=(ws or {}).get('tokens') or {}
+stream_id=tokens.get('pi_stream_id')
+tab_id=None
+if pane_id:
+    pane=next((p for p in panes if p.get('pane_id') == pane_id), None)
+    tab_id=pane.get('tab_id') if pane else None
+tab=next((t for t in tabs if t.get('tab_id') == tab_id), None) if tab_id else next((t for t in tabs if t.get('workspace_id') == workspace_id and t.get('focused')), None)
+stream_label=(tab or {}).get('label') or tokens.get('pi_stream')
+stream_dir=Path(data_home)/'pi'/'projects'/project_id/'streams'
+if not stream_dir.exists(): sys.exit(2)
+streams=[]
+for child in stream_dir.iterdir():
+    f=child/'stream.json'
+    if f.exists():
+        try: streams.append(json.load(open(f)))
+        except Exception: pass
+stream=None
+if stream_id:
+    stream=next((s for s in streams if s.get('id') == stream_id), None)
+if not stream and stream_label:
+    stream=next((s for s in streams if s.get('name') == stream_label or s.get('id') == stream_label), None)
+if not stream: sys.exit(3)
+print(json.dumps(stream))
+PY
+}
+
+prepare_remote_context() {
+  local host="$1"
+  local project_json="$2"
+  local stream_json="${3:-}"
+  local project_b64 stream_b64
+  project_b64="$(printf '%s' "$project_json" | base64 | tr -d '\n')"
+  stream_b64="$(printf '%s' "$stream_json" | base64 | tr -d '\n')"
+  ssh "$host" "PROJECT_B64='$project_b64' STREAM_B64='$stream_b64' python3 - <<'PY'
+import base64, datetime, json, os
+from pathlib import Path
+home=Path.home(); data=Path(os.environ.get('XDG_DATA_HOME', home/'.local/share'))
+project=json.loads(base64.b64decode(os.environ['PROJECT_B64']).decode())
+stream_s=base64.b64decode(os.environ.get('STREAM_B64','')).decode() if os.environ.get('STREAM_B64') else ''
+stream=json.loads(stream_s) if stream_s else None
+now=datetime.datetime.now(datetime.UTC).isoformat(timespec='milliseconds').replace('+00:00','Z')
+project_id=project['id']; project_dir=data/'pi'/'projects'/project_id
+remote_root=str(home)
+project_remote={**project, 'root': remote_root, 'dir': str(project_dir), 'aliases': list(dict.fromkeys([remote_root, *project.get('aliases', [])])), 'updatedAt': now}
+project_dir.mkdir(parents=True, exist_ok=True)
+(project_dir/'project.json').write_text(json.dumps(project_remote, indent=2)+'\n')
+reg_path=data/'pi'/'projects'/'registry.json'; reg_path.parent.mkdir(parents=True, exist_ok=True)
+try: reg=json.loads(reg_path.read_text())
+except Exception: reg={'v':1,'projects':{}}
+reg.setdefault('projects',{})[project_id]={k:project_remote.get(k) for k in ['id','name','root','dir','aliases','status','pinned','updatedAt']}
+reg['v']=1; reg['updatedAt']=now
+reg_path.write_text(json.dumps(reg, indent=2)+'\n')
+if stream:
+    stream_dir=project_dir/'streams'/stream['id']; stream_dir.mkdir(parents=True, exist_ok=True)
+    stream_remote={**stream, 'dir': str(stream_dir), 'workspace': {**(stream.get('workspace') or {}), 'mode': 'shared-workdir', 'path': remote_root}, 'updatedAt': now}
+    (stream_dir/'stream.json').write_text(json.dumps(stream_remote, indent=2)+'\n')
+PY"
+}
+
+sync_worklog() {
+  local host="$1"
+  local project_id="$2"
+  local stream_id="${3:-}"
+  [[ -n "$stream_id" ]] || return 0
+  local rel="pi/projects/$project_id/streams/$stream_id/worklog.jsonl"
+  local local_file="$DATA_HOME/$rel"
+  local remote_file=".local/share/$rel"
+  local tmpdir local_copy remote_copy merged
+  tmpdir="$(mktemp -d)"
+  local_copy="$tmpdir/local.jsonl"
+  remote_copy="$tmpdir/remote.jsonl"
+  merged="$tmpdir/merged.jsonl"
+  mkdir -p "$(dirname "$local_file")"
+  touch "$local_file"
+  cp "$local_file" "$local_copy"
+  ssh "$host" "mkdir -p \"\$(dirname ~/$remote_file)\"; touch ~/$remote_file; cat ~/$remote_file" >"$remote_copy" 2>/dev/null || touch "$remote_copy"
+  python3 - "$local_copy" "$remote_copy" "$merged" <<'PY'
+import sys
+seen=set()
+out=[]
+for file in sys.argv[1:3]:
+    try:
+        lines=open(file, 'r', encoding='utf-8').read().splitlines()
+    except FileNotFoundError:
+        lines=[]
+    for line in lines:
+        key=line.strip()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(line.rstrip('\n'))
+open(sys.argv[3], 'w', encoding='utf-8').write(('\n'.join(out) + ('\n' if out else '')))
+PY
+  cp "$merged" "$local_file"
+  scp -q "$merged" "$host:$remote_file"
+  rm -rf "$tmpdir"
+}
+
+link_json_for_project() {
+  local project_id="$1"
+  python3 - "$VM_REGISTRY" "$project_id" <<'PY'
+import json, sys
+path, pid = sys.argv[1], sys.argv[2]
+try: reg=json.load(open(path))
+except Exception: sys.exit(1)
+link=(reg.get('links') or {}).get(pid)
+if not link: sys.exit(2)
+vm_name=link.get('defaultVm')
+vm=(link.get('vms') or {}).get(vm_name, {}) if vm_name else {}
+host=vm.get('host') or (vm_name + '.exe.xyz' if vm_name else None)
+if not host: sys.exit(3)
+print(json.dumps({'projectID':pid, 'vmName':vm_name, 'host':host, 'link':link, 'vm':vm}))
+PY
+}
+
+project_json="$(project_json_for_herdr || project_json_for_cwd || true)"
+if [[ -z "$project_json" ]]; then
+  echo "rpi: could not resolve a Pi project from the current Herdr workspace or cwd: $PWD" >&2
+  exit 1
+fi
+project_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$project_json")"
+project_name="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("name") or json.loads(sys.argv[1])["id"])' "$project_json")"
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" || "${1:-}" == "help" ]]; then
+  usage
+  exit 0
+fi
+if [[ $# -gt 0 ]]; then
+  echo "rpi takes no arguments. Link/manage VMs from prefix+s with the v key." >&2
+  exit 2
+fi
+
+link_json="$(link_json_for_project "$project_id" 2>/dev/null || true)"
+if [[ -z "$link_json" ]]; then
+  echo "rpi: no exe.dev VM linked to project $project_name" >&2
+  echo "Open prefix+s, select the project, press v to link a VM." >&2
+  exit 1
+fi
+host="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["host"])' "$link_json")"
+stream_json="$(stream_json_for_herdr "$project_id" 2>/dev/null || true)"
+prepare_remote_context "$host" "$project_json" "$stream_json"
+export PI_PROJECT_WORKSPACE_PROJECT_ID="$project_id"
+stream_id=""
+if [[ -n "$stream_json" ]]; then
+  stream_id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["id"])' "$stream_json")"
+  export PI_PROJECT_WORKSPACE_STREAM_ID="$stream_id"
+  sync_worklog "$host" "$project_id" "$stream_id"
+fi
+"$SCRIPT_DIR/pi-exe-attach" "$host"
+exit_code=$?
+if [[ -n "$stream_id" ]]; then
+  sync_worklog "$host" "$project_id" "$stream_id" || true
+fi
+exit "$exit_code"

@@ -26,6 +26,7 @@ function clip(text, width) { const s = String(text || ""); return s.length > wid
 function dataHome() { return process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"); }
 function registryPath() { return path.join(dataHome(), "herdr-pi", "workspaces.json"); }
 function piRegistryPath() { return path.join(dataHome(), "pi", "projects", "registry.json"); }
+function exeVmRegistryPath() { return path.join(dataHome(), "pi", "exe-dev", "vms.json"); }
 function now() { return new Date().toISOString(); }
 function slugify(input) { return String(input).replace(/[^a-z0-9._-]+/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 80); }
 function readJson(file, fallback) { if (!existsSync(file)) return fallback; try { return JSON.parse(readFileSync(file, "utf8")); } catch { return fallback; } }
@@ -104,6 +105,64 @@ function loadLiveHerdrSpaceRecords() {
       };
     });
 }
+function emptyExeVmRegistry() { return { version: 1, links: {} }; }
+function readExeVmRegistry() {
+  const registry = readJson(exeVmRegistryPath(), emptyExeVmRegistry());
+  return { version: registry.version || 1, links: registry.links && typeof registry.links === "object" ? registry.links : {} };
+}
+function writeExeVmRegistry(registry) { writeJson(exeVmRegistryPath(), { ...registry, version: 1, updatedAt: now() }); }
+function projectLinkKey(record) { return record?.pi?.projectID || (!record?.herdrOnly ? record?.id : undefined); }
+function vmLinkForRecord(record) {
+  const key = projectLinkKey(record);
+  if (!key) return undefined;
+  const link = readExeVmRegistry().links?.[key];
+  const vmName = link?.defaultVm;
+  return vmName ? link?.vms?.[vmName] || { vmName, host: `${vmName}.exe.xyz` } : undefined;
+}
+function hasLinkedVm(record) { return Boolean(vmLinkForRecord(record)); }
+function normalizeExeHost(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return undefined;
+  return raw.endsWith(".exe.xyz") ? raw : `${raw}.exe.xyz`;
+}
+function vmNameFromHost(value) { return String(value || "").replace(/\.exe\.xyz$/, ""); }
+function exeVmList() {
+  const result = spawnSync("ssh", ["exe.dev", "ls", "--json"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  if ((result.status ?? 1) !== 0 || !result.stdout) return [];
+  try {
+    const parsed = JSON.parse(result.stdout);
+    return (parsed.vms || []).map((vm) => ({ vmName: vm.vm_name, host: vm.ssh_host || vm.ssh_dest || `${vm.vm_name}.exe.xyz`, comment: vm.comment, status: vm.status })).filter((vm) => vm.vmName && vm.host);
+  } catch { return []; }
+}
+function linkVmToRecord(record, vm) {
+  const key = projectLinkKey(record);
+  if (!key || !vm?.host) return undefined;
+  const registry = readExeVmRegistry();
+  const vmName = vm.vmName || vmNameFromHost(vm.host);
+  const existing = registry.links[key] || { vms: {}, createdAt: now() };
+  const nextVm = { vmName, host: normalizeExeHost(vm.host), status: vm.status || "active", comment: vm.comment, linkedAt: existing.vms?.[vmName]?.linkedAt || now(), updatedAt: now() };
+  registry.links[key] = {
+    ...existing,
+    projectID: record.pi?.projectID || record.id,
+    projectName: record.pi?.name || record.name,
+    projectRoot: record.pi?.root || record.root,
+    defaultVm: vmName,
+    vms: { ...(existing.vms || {}), [vmName]: nextVm },
+    updatedAt: now(),
+  };
+  writeExeVmRegistry(registry);
+  return nextVm;
+}
+function unlinkVmFromRecord(record) {
+  const key = projectLinkKey(record);
+  if (!key) return false;
+  const registry = readExeVmRegistry();
+  if (!registry.links?.[key]) return false;
+  delete registry.links[key];
+  writeExeVmRegistry(registry);
+  return true;
+}
+
 function loadRecords() {
   // Durable Pi/shared projects plus currently-open Herdr-only spaces. This makes
   // the picker a complete space navigator while keeping scratch spaces unlinked.
@@ -310,6 +369,45 @@ async function createNewStreamFromPicker(record) {
   if (!stream) return false;
   return openStream(record, stream);
 }
+async function manageVmLinkForRecord(record) {
+  if (!record || record.herdrOnly) {
+    console.clear();
+    await question("VMs can only be linked to shared Pi projects. Press enter...");
+    return false;
+  }
+  console.clear();
+  const current = vmLinkForRecord(record);
+  console.log(`exe.dev VM link for ${record.name}\n`);
+  if (current) console.log(`Current: ${current.vmName || vmNameFromHost(current.host)} (${current.host})\n`);
+  const vms = exeVmList();
+  if (vms.length) {
+    console.log("Available exe.dev VMs:");
+    vms.slice(0, 20).forEach((vm, index) => {
+      const comment = vm.comment ? ` — ${vm.comment}` : "";
+      console.log(`  ${index + 1}. ${vm.vmName} (${vm.status || "unknown"})${comment}`);
+    });
+    console.log("");
+  } else {
+    console.log("No exe.dev VMs found via `ssh exe.dev ls --json` (you can still type a VM name/host).\n");
+  }
+  const prompt = current
+    ? "Enter number/name/host to relink, 'u' to unlink, or blank to cancel: "
+    : "Enter number/name/host to link, or blank to cancel: ";
+  const answer = String(await question(prompt)).trim();
+  if (!answer) return false;
+  if (current && ["u", "unlink", "remove"].includes(answer.toLowerCase())) {
+    unlinkVmFromRecord(record);
+    return true;
+  }
+  const numeric = Number(answer);
+  const selected = Number.isInteger(numeric) && numeric >= 1 && numeric <= vms.length
+    ? vms[numeric - 1]
+    : vms.find((vm) => vm.vmName === answer || vm.host === answer || vm.host === normalizeExeHost(answer))
+      || { vmName: vmNameFromHost(normalizeExeHost(answer)), host: normalizeExeHost(answer), status: "active" };
+  if (!selected?.host) return false;
+  linkVmToRecord(record, selected);
+  return true;
+}
 function recordKey(record) { return record.herdrOnly ? record.id : (record.pi?.projectID || record.id || record.root || record.name); }
 function pickerItems(records, expandedKey, archiveExpandedKey) {
   const items = [];
@@ -391,9 +489,11 @@ function fzfLine(item, index) {
   else {
     const isOpen = Boolean(item.herdr?.workspaceID);
     const isClosedProject = !item.herdrOnly && !isOpen;
-    const icon = item.herdrOnly ? " " : (isClosedProject ? c("muted", "") : c("accent", ""));
+    const chainIcon = item.herdrOnly ? " " : (isClosedProject ? c("muted", "") : c("accent", ""));
+    const vmIcon = !item.herdrOnly && hasLinkedVm(item) ? (isClosedProject ? c("muted", "") : c("accent", "")) : "";
+    const icons = vmIcon ? `${chainIcon} ${vmIcon}` : `${chainIcon}  `;
     const name = isClosedProject ? c("muted", item.name) : item.name;
-    display = `${icon} ${name}`;
+    display = `${icons} ${name}`;
   }
   return `${display}${FIELD_SEP}${encodePayload(itemPayload(item))}`;
 }
@@ -469,7 +569,7 @@ function renderPicker(items, selected) {
     lines.push(`${pointer} ${colored}${" ".repeat(Math.max(0, width - raw.length - 2))}`);
   });
   while (lines.length < height - footerLines - 1) lines.push("");
-  lines.push(c("muted", "↑/↓ j/k move   enter open/create   tab streams/archive   a archive/restore   x close   q cancel"));
+  lines.push(c("muted", "↑/↓ j/k move   enter open/create   tab streams/archive   v link VM   a archive/restore   x close   q cancel"));
   process.stdout.write("\x1b[?25l\x1b[H\x1b[J" + lines.slice(0, height).join("\n"));
 }
 function readKey() {
@@ -609,6 +709,21 @@ async function runInlinePicker(initialRecords) {
             const candidatePayload = itemPayload(candidate);
             return candidatePayload.projectKey === payload.projectKey && !candidatePayload.special;
           }));
+        }
+        continue;
+      }
+      if (key === "v") {
+        const item = items[selected];
+        const targetRecord = item?.record || (!item?.special ? item : undefined);
+        const keyValue = targetRecord ? recordKey(targetRecord) : undefined;
+        const changed = await manageVmLinkForRecord(targetRecord);
+        if (changed) {
+          records = loadRecords();
+          if (keyValue) {
+            const nextItems = pickerItems(records, expandedKey, archiveExpandedKey);
+            const nextIndex = nextItems.findIndex((candidate) => itemPayload(candidate).projectKey === keyValue && !itemPayload(candidate).special);
+            selected = nextIndex >= 0 ? nextIndex : Math.min(selected, nextItems.length - 1);
+          }
         }
         continue;
       }

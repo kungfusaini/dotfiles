@@ -82,6 +82,30 @@ ssh exe.dev share set-private <vm>
 
 Use exeuntu only when its batteries-included environment is worth the extra disk usage, such as running Pi, Codex, Claude, Shelley, or an agent inside the VM.
 
+For Sumeet's remote Pi + local Herdr workflow, use the helper commands instead of hand-rolling setup. The canonical scripts live inside this skill at `bin/pi-exe-setup`, `bin/pi-exe-attach`, and `bin/rpi`. The skill `bin/` directory is added to the shell PATH for convenience; do not create separate `~/.local/bin` copies.
+
+```sh
+# Create and fully prepare a new exeuntu VM for remote Pi + local Herdr integration.
+pi-exe-setup --name <vm-name>
+
+# Or retrofit an existing exe.dev VM/host.
+pi-exe-setup --existing <vm-name-or-host.exe.xyz>
+
+# Attach from a local Herdr pane with optimized SSH and Herdr state forwarding.
+pi-exe-attach <vm-name-or-host.exe.xyz>
+
+# High-level current-project remote Pi: resolves the VM linked in prefix+s.
+rpi
+```
+
+`pi-exe-setup` syncs local Pi config to the exeuntu path `~/.pi/agent`, copies auth and npm package resources, disables the VM-incompatible `tree-tab-toggle.ts` extension, and installs a remote `/usr/local/bin/herdr` shim. The shim talks to the reverse-forwarded local Herdr Unix socket so remote Pi and remote orchestrator workers can show in local Herdr priority/sidebar, including blocked hidden subagents.
+
+`pi-exe-attach` uses optimized SSH (`ControlMaster`, `ControlPersist`, `Compression=no`, `IPQoS=lowdelay`, keepalives). When run inside Herdr, it reverse-forwards `$HERDR_SOCKET_PATH` to a remote `/tmp/herdr-local-pi-*.sock` and starts Pi with `HERDR_ENV=1`, `HERDR_SOCKET_PATH`, `HERDR_PANE_ID`, and `HERDR_REMOTE_ATTACH_TARGET` set.
+
+The Herdr `prefix+s` project picker can link projects to exe.dev VMs with the `v` key. A linked project row shows a terminal icon (``) next to the chain icon. Links are stored in `~/.local/share/pi/exe-dev/vms.json`. The high-level `bin/rpi` helper intentionally has no subcommands: it resolves the current selected Herdr workspace's `pi_project_id` first, falling back to cwd only outside Herdr, reads that registry, syncs the selected stream worklog before/after attach, and attaches to the linked VM with `bin/pi-exe-attach`.
+
+Mosh/Tailscale note from experiments: exe.dev did not provide a useful low-latency UDP path for this VM. Mosh failed because UDP 60000-61000 was unreachable; Tailscale connected only through DERP at higher latency and SSH over Tailnet timed out. Prefer optimized exe.dev SSH unless a future exe.dev networking change or different provider gives direct UDP/lower RTT.
+
 Empirical comparison with identical `1 CPU / 2GB RAM / 10GB disk` VMs:
 
 - `ubuntu:22.04`: about 106 MB used on `/`, about 47 MiB idle memory, no Pi/Codex/Claude/Python detected by default.
@@ -130,4 +154,10 @@ ssh exe.dev stat --json <vm>
 ssh exe.dev rm --json <vm>
 ssh <vm>.exe.xyz
 scp file.txt <vm>.exe.xyz:~/
+
+# Sumeet remote Pi workflow helpers
+pi-exe-setup --name <vm-name>
+pi-exe-setup --existing <vm-name-or-host.exe.xyz>
+pi-exe-attach <vm-name-or-host.exe.xyz>
+rpi
 ```
