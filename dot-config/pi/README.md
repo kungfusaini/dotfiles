@@ -15,6 +15,8 @@ Personal configuration for [Pi Coding Agent](https://github.com/earendil-works/p
 - `agent/extensions/tree-tab-toggle.ts` — Tab-based folding in tree selectors
 - `agent/extensions/project-workspaces/` — project/stream scopes, scoped worklogs, session ownership, and workspace commands
 - `agent/extensions/question.ts` — deterministic multiple-choice prompts
+- `agent/extensions/herdr-agent-state.ts` — Herdr agent lifecycle status reporter
+- `agent/extensions/herdr-user-input-bridge.ts` — universal Pi UI prompt → Herdr waiting-status bridge
 - `agent/extensions/chatid.ts` — copy the current chat ID to the clipboard
 
 ## Packages

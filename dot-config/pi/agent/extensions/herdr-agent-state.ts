@@ -201,15 +201,14 @@ export default function (pi) {
   }
 
   let agentActive = false;
-  let blockedCount = 0;
-  let blockedMessage: string | undefined;
+  const blockedStack: Array<string | undefined> = [];
   let lastState: AgentState | undefined;
   let lastMessage: string | undefined;
   let rootSession = false;
 
   function desiredState() {
-    if (blockedCount > 0) {
-      return { state: "blocked" as const, message: blockedMessage };
+    if (blockedStack.length > 0) {
+      return { state: "blocked" as const, message: blockedStack[blockedStack.length - 1] };
     }
     if (agentActive) {
       return { state: "working" as const, message: undefined };
@@ -232,16 +231,12 @@ export default function (pi) {
       return;
     }
     if (!data?.active) {
-      blockedCount = Math.max(0, blockedCount - 1);
-      if (blockedCount === 0) {
-        blockedMessage = undefined;
-      }
+      blockedStack.pop();
       publishState();
       return;
     }
 
-    blockedCount += 1;
-    blockedMessage = data.label;
+    blockedStack.push(data.label);
     publishState();
   });
 
