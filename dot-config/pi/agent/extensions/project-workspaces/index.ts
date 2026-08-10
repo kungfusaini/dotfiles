@@ -8,6 +8,7 @@ import {
 	archiveStream,
 	createStream,
 	ensureProject,
+	hydrateProject,
 	listProjects,
 	listStreams,
 	recordSessionOwner,
@@ -101,8 +102,42 @@ function worklogInfoFromOwner(owner: any): ProjectContextInfo | undefined {
 	return undefined;
 }
 
+function worklogInfoFromLaunchEnv(ctx: ExtensionContext): ProjectContextInfo | undefined {
+	const projectID = process.env.PI_PROJECT_WORKSPACE_PROJECT_ID;
+	if (!projectID) return undefined;
+	const project = hydrateProject(projectID);
+	if (!project) return undefined;
+
+	const streamID = process.env.PI_PROJECT_WORKSPACE_STREAM_ID;
+	const stream = streamID && streamID !== "__project__"
+		? (listStreams(project, "all") as any[]).find((item) => item.id === streamID || item.name === streamID)
+		: undefined;
+	const sessionID = ctx.sessionManager.getSessionId();
+	if (sessionID) {
+		recordSessionOwner(project, sessionID, stream?.id, { scope: stream ? "stream" : "project", projectID: project.id, streamID: stream?.id });
+	}
+
+	if (stream) {
+		return ensureStore({
+			scope: "stream",
+			project,
+			stream,
+			id: `${project.id}/${stream.id}`,
+			root: stream.workspace?.path || project.root,
+			dir: stream.dir,
+		});
+	}
+	return ensureStore({
+		scope: "project",
+		project,
+		id: project.id,
+		root: project.root,
+		dir: project.dir,
+	});
+}
+
 function worklogInfoFromCtx(ctx: ExtensionContext): ProjectContextInfo | undefined {
-	return worklogInfoFromOwner(resolveSessionOwner(ctx.sessionManager.getSessionId()));
+	return worklogInfoFromOwner(resolveSessionOwner(ctx.sessionManager.getSessionId())) || worklogInfoFromLaunchEnv(ctx);
 }
 
 function textResult(text: string, details: Record<string, unknown> = {}) {
@@ -272,9 +307,8 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 	});
 
 	function updateStatus(ctx: ExtensionContext): void {
-		const owner = resolveSessionOwner(ctx.sessionManager.getSessionId());
-		if (owner) {
-			const info = contextInfoFromCtx(ctx);
+		const info = worklogInfoFromCtx(ctx);
+		if (info) {
 			ctx.ui.setStatus("workspace", ctx.ui.theme.fg("muted", workspaceLabel(info)));
 		} else {
 			ctx.ui.setStatus("workspace", undefined);
@@ -742,7 +776,9 @@ export default function projectWorkspacesExtension(pi: ExtensionAPI) {
 		if (selected === "__new__") {
 			const projectPath = await chooseDirectory(ctx, ctx.cwd);
 			if (!projectPath) return;
-			const project = ensureProject(projectPath);
+			const defaultName = path.basename(projectPath) || "project";
+			const name = (await ctx.ui.input("Project name", defaultName))?.trim() || defaultName;
+			const project = ensureProject(projectPath, { name, separateIdentity: true });
 			updateStatus(ctx);
 			ctx.ui.notify(`Project selected: ${project.name || project.id}`, "info");
 			await showStreamPicker(ctx, project);

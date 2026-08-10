@@ -3,7 +3,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { hydrateProject, listProjects, listStreams, recordSessionOwner, resolveContext } from "./project-workspaces/projects.ts";
+import { ensureProject, hydrateProject, listProjects, listStreams, recordSessionOwner, resolveContext } from "./project-workspaces/projects.ts";
 
 const REGISTRY_VERSION = 1;
 const SOURCE = "pi-herdr-workspace-sync";
@@ -29,7 +29,7 @@ function piRegistryPath(): string { return path.join(dataHome(), "pi", "projects
 function herdrSessionPath(): string { return path.join(configHome(), "herdr", "session.json"); }
 function now(): string { return new Date().toISOString(); }
 function slugify(input: string): string { return input.replace(/[^a-z0-9._-]+/gi, "-").replace(/-+/g, "-").replace(/^-|-$/g, "").toLowerCase().slice(0, 80); }
-function stableID(root: string): string { return `${slugify(path.basename(root) || "workspace")}--${Buffer.from(root).toString("hex").slice(-12)}`; }
+function stableID(root: string, identity?: string): string { return `${slugify(identity || path.basename(root) || "workspace")}--${Buffer.from(`${root}\0${identity || ""}`).toString("hex").slice(-12)}`; }
 function readJson<T>(file: string, fallback: T): T { if (!existsSync(file)) return fallback; try { return JSON.parse(readFileSync(file, "utf8")); } catch { return fallback; } }
 function writeJson(file: string, value: unknown): void { mkdirSync(path.dirname(file), { recursive: true }); writeFileSync(file, `${JSON.stringify(value, null, 2)}\n`, "utf8"); }
 function canonicalRoot(value: string): string {
@@ -45,13 +45,25 @@ function readShared(): SharedRegistry {
 }
 function writeShared(registry: SharedRegistry): void { writeJson(registryPath(), { ...registry, version: REGISTRY_VERSION, updatedAt: now() }); }
 
+function sharedKey(root: string, patch: Partial<SharedRecord>): string {
+	if (patch.herdr?.workspaceID) return `herdr:${patch.herdr.workspaceID}`;
+	if (patch.pi?.projectID) return `pi:${patch.pi.projectID}`;
+	return `root:${root}`;
+}
+
+function findRecord(registry: SharedRegistry, root: string, patch: Partial<SharedRecord>): SharedRecord | undefined {
+	const key = sharedKey(root, patch);
+	return registry.workspaces[key] || registry.workspaces[root]; // legacy root-keyed records
+}
+
 function upsert(registry: SharedRegistry, rootInput: string, patch: Partial<SharedRecord>): SharedRecord {
 	const root = canonicalRoot(rootInput);
-	const existing = registry.workspaces[root];
+	const key = sharedKey(root, patch);
+	const existing = findRecord(registry, root, patch);
 	const time = now();
 	const aliases = [...new Set([root, ...(existing?.aliases || []), ...((patch.aliases || []) as string[])].map(canonicalRoot))];
 	const next: SharedRecord = {
-		id: existing?.id || patch.id || stableID(root),
+		id: patch.pi?.projectID || patch.id || existing?.id || stableID(root, patch.name || patch.pi?.name || patch.herdr?.label),
 		name: patch.pi || !existing?.pi ? (patch.name || existing?.name || path.basename(root) || root) : existing.name,
 		root,
 		aliases,
@@ -61,7 +73,8 @@ function upsert(registry: SharedRegistry, rootInput: string, patch: Partial<Shar
 		createdAt: existing?.createdAt || time,
 		updatedAt: time,
 	};
-	registry.workspaces[root] = next;
+	registry.workspaces[key] = next;
+	if (key !== root) delete registry.workspaces[root]; // migrate old root-keyed record when touched
 	return next;
 }
 
@@ -83,7 +96,15 @@ function syncPiProjects(registry: SharedRegistry): number {
 }
 
 function labelMatchesRecord(label: string | undefined, record: SharedRecord | undefined): boolean {
-	return Boolean(label && record && (label === record.name || label === record.pi?.name));
+	return Boolean(label && record && (label === record.name || label === record.pi?.name || label === record.herdr?.label));
+}
+
+function findRecordByRootAndLabel(registry: SharedRegistry, rootInput: string, label: string | undefined): SharedRecord | undefined {
+	const root = canonicalRoot(rootInput);
+	return (Object.values(registry.workspaces) as SharedRecord[]).find((record) => {
+		if (!record?.root || canonicalRoot(record.root) !== root) return false;
+		return !label || labelMatchesRecord(label, record);
+	});
 }
 
 function syncHerdrSession(registry: SharedRegistry): number {
@@ -94,14 +115,14 @@ function syncHerdrSession(registry: SharedRegistry): number {
 		const firstPane = activeTab?.panes ? (Object.values(activeTab.panes) as any[])[0] : undefined;
 		const root = ws.identity_cwd || firstPane?.cwd;
 		if (!root) continue;
-		const key = canonicalRoot(root);
-		const record = registry.workspaces[key];
 		const label = ws.custom_name || path.basename(root) || root;
+		const record = findRecordByRootAndLabel(registry, root, label);
 		if (!labelMatchesRecord(label, record)) continue;
 		if (record?.herdr) { count += 1; continue; }
 		upsert(registry, root, {
 			name: label,
 			aliases: [root],
+			pi: record?.pi,
 			herdr: { workspaceID: ws.id, label, identityCwd: root, updatedAt: now() },
 		});
 		count += 1;
@@ -124,14 +145,14 @@ function syncHerdrSnapshot(registry: SharedRegistry): number {
 		const pane = panesByWorkspace.get(ws.workspace_id);
 		const root = pane?.cwd || pane?.foreground_cwd;
 		if (!root) continue;
-		const key = canonicalRoot(root);
-		const record = registry.workspaces[key];
 		const label = ws.label || path.basename(root) || root;
+		const record = findRecordByRootAndLabel(registry, root, label);
 		if (!labelMatchesRecord(label, record)) continue;
 		if (record?.herdr) { count += 1; continue; }
 		upsert(registry, root, {
 			name: label,
 			aliases: [root],
+			pi: record?.pi,
 			herdr: { workspaceID: ws.workspace_id, label, identityCwd: root, updatedAt: now() },
 		});
 		count += 1;
@@ -176,7 +197,7 @@ function reportMetadata(ctx: ExtensionContext, registry: SharedRegistry): void {
 		: resolveContext(ctx.cwd, { sessionID: ctx.sessionManager.getSessionId() });
 
 	const root = canonicalRoot(info.root);
-	const record = registry.workspaces[root] || upsert(registry, root, {
+	const record = findRecordByRootAndLabel(registry, root, info.project?.name) || upsert(registry, root, {
 		name: info.project?.name || path.basename(root),
 		pi: info.project ? { projectID: info.project.id, name: info.project.name, root: info.project.root, updatedAt: info.project.updatedAt } : undefined,
 	});
@@ -361,7 +382,11 @@ function attachSessionFromHerdr(ctx: ExtensionContext): { attached: boolean; pro
 	// named "Config" attach to the Pi project named "Config" even if the pane cwd is
 	// still ~ or old tokens say Home.
 	const envProject = process.env.PI_PROJECT_WORKSPACE_PROJECT_ID ? hydrateProject(process.env.PI_PROJECT_WORKSPACE_PROJECT_ID) : undefined;
-	const project = envProject || exactProjectByName(workspace.label) || findProjectByToken(tokens);
+	const namedProject = exactProjectByName(workspace.label);
+	const tokenProject = findProjectByToken(tokens);
+	const label = String(workspace.label || "").trim();
+	const canCreateNamedProject = Boolean(label && !isDefaultTabLabel(label));
+	const project = envProject || namedProject || (canCreateNamedProject ? ensureProject(ctx.cwd, { name: label, separateIdentity: true }) : tokenProject);
 	if (!project) return { attached: false };
 
 	const explicitStreamID = process.env.PI_PROJECT_WORKSPACE_STREAM_ID;

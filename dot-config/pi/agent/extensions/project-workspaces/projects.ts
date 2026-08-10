@@ -23,17 +23,19 @@ export function projectMetadataPath(project: any) { return path.join(project.dir
 
 function projectRecordFromInfo(info: ReturnType<typeof projectInfo>, input: any = {}) {
 	const name = input.name?.trim?.() || path.basename(info.root) || info.id;
-	return { v: PROJECT_REGISTRY_VERSION, id: info.id, name, root: info.root, dir: info.dir, aliases: [info.root], status: input.status || "active", pinned: Boolean(input.pinned), createdAt: input.createdAt || now(), updatedAt: now() };
+	return { v: PROJECT_REGISTRY_VERSION, id: info.id, name, root: info.root, dir: info.dir, identity: info.identity, aliases: [info.root], status: input.status || "active", pinned: Boolean(input.pinned), createdAt: input.createdAt || now(), updatedAt: now() };
 }
 
 export function ensureProject(workdir: string, input: any = {}) {
-	const info = projectInfo(workdir);
+	const identity = input.id || input.identity || (input.separateIdentity ? input.name : undefined);
+	const info = projectInfo(workdir, identity);
 	mkdirSync(info.dir, { recursive: true });
 	const existing = readJson<any>(projectMetadataPath(info), null);
 	const project = {
 		...projectRecordFromInfo(info, { ...input, createdAt: existing?.createdAt }),
 		...(existing && typeof existing === "object" ? existing : {}),
 		...(input.name ? { name: input.name } : {}),
+		...(info.identity ? { identity: info.identity } : {}),
 		status: input.status || existing?.status || "active",
 		pinned: input.pinned ?? existing?.pinned ?? false,
 		aliases: [...new Set([info.root, ...((existing?.aliases && Array.isArray(existing.aliases)) ? existing.aliases : []), ...((input.aliases && Array.isArray(input.aliases)) ? input.aliases : [])].map((item) => path.resolve(item)))],
@@ -41,14 +43,14 @@ export function ensureProject(workdir: string, input: any = {}) {
 	};
 	writeJson(projectMetadataPath(info), project);
 	const registry = readRegistry();
-	registry.projects[project.id] = { id: project.id, name: project.name, root: project.root, dir: project.dir, aliases: project.aliases, status: project.status, pinned: project.pinned, archivedAt: project.archivedAt, updatedAt: project.updatedAt };
+	registry.projects[project.id] = { id: project.id, name: project.name, root: project.root, dir: project.dir, identity: project.identity, aliases: project.aliases, status: project.status, pinned: project.pinned, archivedAt: project.archivedAt, updatedAt: project.updatedAt };
 	writeRegistry(registry);
 	return project;
 }
 
 export function hydrateProject(projectID: string) { const record = readRegistry().projects[projectID]; if (!record) return undefined; return readJson(path.join(record.dir, "project.json"), record); }
 export function listProjects(status = "active") { return Object.values(readRegistry().projects).filter((p: any) => status === "all" || (p.status || "active") === status).sort((a: any, b: any) => (Number(Boolean(b.pinned)) - Number(Boolean(a.pinned))) || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")) || String(a.name || a.id).localeCompare(String(b.name || b.id))); }
-export function updateProject(projectID: string, patch: any) { const project: any = hydrateProject(projectID); if (!project) throw new Error(`Project not found: ${projectID}`); const next = { ...project, ...patch, updatedAt: now() }; writeJson(projectMetadataPath(next), next); const registry = readRegistry(); registry.projects[next.id] = { id: next.id, name: next.name, root: next.root, dir: next.dir, aliases: next.aliases, status: next.status, pinned: Boolean(next.pinned), archivedAt: next.archivedAt, updatedAt: next.updatedAt }; writeRegistry(registry); return next; }
+export function updateProject(projectID: string, patch: any) { const project: any = hydrateProject(projectID); if (!project) throw new Error(`Project not found: ${projectID}`); const next = { ...project, ...patch, updatedAt: now() }; writeJson(projectMetadataPath(next), next); const registry = readRegistry(); registry.projects[next.id] = { id: next.id, name: next.name, root: next.root, dir: next.dir, identity: next.identity, aliases: next.aliases, status: next.status, pinned: Boolean(next.pinned), archivedAt: next.archivedAt, updatedAt: next.updatedAt }; writeRegistry(registry); return next; }
 export function renameProject(projectID: string, name: string) { const nextName = name.trim(); if (!nextName) throw new Error("Project name is required"); return updateProject(projectID, { name: nextName }); }
 export function setProjectPinned(projectID: string, pinned: boolean) { return updateProject(projectID, { pinned: Boolean(pinned) }); }
 export function archiveProject(projectID: string) { const project = updateProject(projectID, { status: "archived", pinned: false, archivedAt: now() }); const selection = readSelection(); if (selection.projectID === projectID) writeSelection({ projectID: undefined, streamID: undefined }); return project; }

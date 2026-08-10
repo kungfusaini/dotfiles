@@ -20,15 +20,19 @@ export interface ProjectContextInfo {
 	stream?: any;
 }
 
-export function projectInfo(workdir: string) {
+export function projectInfo(workdir: string, identity?: string) {
 	const root = path.resolve(workdir);
-	const hash = createHash("sha256").update(root).digest("hex").slice(0, 12);
+	const cleanIdentity = identity?.trim();
+	const hashInput = cleanIdentity ? `${root}\0${cleanIdentity}` : root;
+	const hash = createHash("sha256").update(hashInput).digest("hex").slice(0, 12);
 	const parent = path.basename(path.dirname(root));
 	const leaf = path.basename(root) || "project";
-	const base = slugify(parent && parent !== path.sep ? `${parent}-${leaf}` : leaf);
+	const base = cleanIdentity
+		? slugify(cleanIdentity)
+		: slugify(parent && parent !== path.sep ? `${parent}-${leaf}` : leaf);
 	const id = `${base || "project"}--${hash}`;
 	const dir = path.join(dataHome(), "pi", "projects", id);
-	return { root, id, dir };
+	return { root, id, dir, identity: cleanIdentity };
 }
 
 export function ensureStore<T extends ProjectContextInfo>(info: T): T {
