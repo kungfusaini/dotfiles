@@ -1,19 +1,21 @@
 ---
 name: codex-imagegen
-description: Generate, edit, and display images from Pi using the local codex-imagegen CLI backed by the user's Codex/ChatGPT login. Use when the user asks Pi to create an image, make a picture, generate art/icons/illustrations, edit an existing image, use a reference image, or show generated output in the terminal.
+description: Generate and edit images from Pi using the upstream local codex-imagegen CLI backed by the user's Codex/ChatGPT login. Use when the user asks Pi to create an image, make a picture, generate art/icons/illustrations, edit an existing image, use a reference image, or save generated output.
 compatibility: Requires codex-imagegen on PATH and a valid Codex ChatGPT login at ~/.codex/auth.json from `codex login`.
 ---
 
 # Codex Image Generation
 
-Use the local `codex-imagegen` wrapper to generate and edit images from Pi. This wrapper is installed via the user's Nix flake and automatically sets the Codex version compatibility environment.
+Use the upstream `codex-imagegen` CLI to generate and edit images from Pi. Do not assume custom wrapper flags exist.
 
 ## Before generating
 
-1. If the user has not described the image clearly, ask for the missing creative direction only when it materially affects the output.
+1. If the user has not described the image clearly, ask for missing creative direction only when it materially affects the output.
 2. Prefer a concise, literal prompt. Add "no text" unless the user explicitly wants text in the image.
-3. For user-visible test generations, use `--term` so generated images render inline in Kitty. With `--term`, the wrapper auto-adds `--force`, auto-creates an output path when missing, and displays every generated PNG/WebP path it sees.
-4. For scripted or non-terminal generation, pass an explicit `--out` path and do not use `--term` unless the user asked to view output inline.
+3. Always pass an explicit `--out` path for `generate` and `edit`; upstream requires it.
+4. Use `--force` when writing to an auto-created/test output path or when the user has asked to overwrite.
+5. Do **not** use `--term`; upstream `codex-imagegen` does not support it. To display in Kitty after generation, run `kitty +kitten icat <path>` separately.
+6. Until Codex in nixpkgs is new enough, prefix generation commands with `CODEX_IMAGEGEN_CODEX_VERSION=0.200.0` unless the user/environment explicitly overrides it.
 
 ## Readiness check
 
@@ -35,38 +37,46 @@ and choose ChatGPT login, not API-key login.
 
 ## Generate images
 
-Use this for normal terminal-visible output:
+Create an output directory and pass `--out` explicitly:
 
 ```bash
-codex-imagegen generate \
+outdir="$HOME/Pictures/codex-imagegen/$(date +%Y%m%d-%H%M%S)-robot"
+mkdir -p "$outdir"
+CODEX_IMAGEGEN_CODEX_VERSION=0.200.0 codex-imagegen generate \
   --prompt "A simple friendly robot holding a small green plant, clean white background, soft cheerful illustration, no text" \
-  --term
+  --out "$outdir/robot.png" \
+  --force
 ```
 
-The wrapper will save to:
-
-```text
-~/Pictures/codex-imagegen/YYYYMMDD-HHMMSS.png
-```
-
-To generate several alternatives at once, use `--n`. With `--term`, the wrapper prints and displays each generated image inline:
+To generate several alternatives at once, use `--n`. Upstream writes numbered files such as `robot-1.png`, `robot-2.png`, etc. when needed:
 
 ```bash
-codex-imagegen generate \
+outdir="$HOME/Pictures/codex-imagegen/$(date +%Y%m%d-%H%M%S)-robot-variations"
+mkdir -p "$outdir"
+CODEX_IMAGEGEN_CODEX_VERSION=0.200.0 codex-imagegen generate \
   --prompt "Four cute robot mascot variations, clean white background, soft cheerful illustration, no text" \
   --n 4 \
-  --term
+  --out "$outdir/robot.png" \
+  --force
+find "$outdir" -maxdepth 1 -type f -name '*.png' -print
 ```
 
-When `--n` is used with a base `--out`, upstream writes numbered files such as `robot-1.png`, `robot-2.png`, etc.
+## Display output in Kitty
 
-If the user specified a destination, include `--out`:
+After generation, display saved image paths separately:
 
 ```bash
-codex-imagegen generate \
-  --prompt "..." \
-  --out /path/to/output.png \
-  --term
+kitty +kitten icat /path/to/output.png
+```
+
+For multiple outputs:
+
+```bash
+find "$outdir" -maxdepth 1 -type f \( -name '*.png' -o -name '*.webp' \) -print0 |
+  while IFS= read -r -d '' img; do
+    printf '\n%s\n' "$img"
+    kitty +kitten icat "$img" || true
+  done
 ```
 
 ## Edit an image
@@ -74,35 +84,37 @@ codex-imagegen generate \
 Use one to five input images. Preserve the user's requested subject/style constraints.
 
 ```bash
-codex-imagegen edit \
+outdir="$HOME/Pictures/codex-imagegen/$(date +%Y%m%d-%H%M%S)-edit"
+mkdir -p "$outdir"
+CODEX_IMAGEGEN_CODEX_VERSION=0.200.0 codex-imagegen edit \
   --image /path/to/input.png \
   --prompt "Make this a warm pencil sketch while preserving the subject and composition, no text" \
-  --out /path/to/edited.png \
-  --term
+  --out "$outdir/edited.png" \
+  --force
 ```
 
 For style references, use `--style-image` when appropriate:
 
 ```bash
-codex-imagegen edit \
+CODEX_IMAGEGEN_CODEX_VERSION=0.200.0 codex-imagegen edit \
   --image /path/to/content.png \
   --style-image /path/to/style-reference.png \
   --prompt "Apply the visual style while preserving the main subject" \
   --out /path/to/output.png \
-  --term
+  --force
 ```
 
 ## Batch jobs
 
-For batch work, write a JSONL file and use the upstream CLI's `batch` command. Do not add `--term` for batch unless the user only wants command output.
+For batch work, write a JSONL file and use the upstream CLI's `batch` command.
 
 ```bash
-codex-imagegen batch --input jobs.jsonl
+CODEX_IMAGEGEN_CODEX_VERSION=0.200.0 codex-imagegen batch --input jobs.jsonl
 ```
 
 ## Output handling
 
-After generation, report the saved file path or paths clearly. If `--term` was used, every generated PNG/WebP path printed by the CLI should also render inline via Kitty's `icat` kitten.
+After generation, report the saved file path or paths clearly. If the user asked to see the image in the terminal, display it with `kitty +kitten icat` after the files exist.
 
 ## Caveats
 
