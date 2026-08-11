@@ -847,9 +847,7 @@ async function main() {
           ? await createNewStreamFromPicker(item.record)
           : item.special === "project-scope"
             ? openProjectScope(item.record)
-            : !item.special && !item.herdrOnly
-              ? openProjectScope(item)
-              : createOrFocus(item);
+            : createOrFocus(item);
   process.exit(ok ? 0 : 1);
 }
 main().catch((error) => { console.error(error?.stack || error); process.exit(1); });
