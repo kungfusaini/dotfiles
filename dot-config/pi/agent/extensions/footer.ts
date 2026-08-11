@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -32,6 +32,34 @@ let activeTui: { requestRender(): void } | undefined;
 
 function piAgentDir(): string {
   return process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+}
+
+function xdgStateHome(): string {
+  return process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
+}
+
+function runningOrchestratorAgentCount(): number {
+  try {
+    const registryDir = join(xdgStateHome(), "pi", "orchestrator", "terminals", "registry");
+    let count = 0;
+    for (const file of readdirSync(registryDir)) {
+      if (!file.endsWith(".json")) continue;
+      try {
+        const record = JSON.parse(readFileSync(join(registryDir, file), "utf8")) as { state?: unknown };
+        if (record.state === "running" || record.state === "starting") count++;
+      } catch {
+        // Ignore malformed/stale worker records.
+      }
+    }
+    return count;
+  } catch {
+    return 0;
+  }
+}
+
+function formatAgentCount(count: number): string | undefined {
+  if (count <= 0) return undefined;
+  return `${count} ${count === 1 ? "agent" : "agents"}`;
 }
 
 function readCodexAuth(): OAuthCredential | undefined {
@@ -214,11 +242,13 @@ export default function (pi: ExtensionAPI) {
             truncateToWidth(visibleLeft + padding + right, width, ""),
           ];
 
-          const statusLine = Array.from(footerData.getExtensionStatuses().entries())
+          const statusItems = Array.from(footerData.getExtensionStatuses().entries())
             .filter(([key]) => key !== "vim-mode" && key !== "workspace")
             .sort(([a], [b]) => a.localeCompare(b))
-            .map(([, text]) => sanitizeStatusText(text))
-            .join(theme.fg("dim", " • "));
+            .map(([, text]) => sanitizeStatusText(text));
+          const agentCount = formatAgentCount(runningOrchestratorAgentCount());
+          if (agentCount) statusItems.push(theme.fg("muted", agentCount));
+          const statusLine = statusItems.join(theme.fg("dim", " • "));
           if (statusLine) lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
           return lines;
         },
