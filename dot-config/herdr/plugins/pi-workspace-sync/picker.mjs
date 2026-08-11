@@ -89,10 +89,19 @@ function loadLiveHerdrSpaceRecords() {
   for (const pane of snapshot?.panes || []) {
     if (!paneByWorkspace.has(pane.workspace_id)) paneByWorkspace.set(pane.workspace_id, pane);
   }
+  const tabsByWorkspace = new Map();
+  for (const tab of snapshot?.tabs || []) {
+    if (!tab?.workspace_id) continue;
+    if (!tabsByWorkspace.has(tab.workspace_id)) tabsByWorkspace.set(tab.workspace_id, []);
+    tabsByWorkspace.get(tab.workspace_id).push(tab);
+  }
   return (snapshot?.workspaces || [])
     .filter((ws) => ws?.workspace_id)
     .map((ws) => {
       const pane = paneByWorkspace.get(ws.workspace_id);
+      const tabs = tabsByWorkspace.get(ws.workspace_id) || [];
+      const activeTab = tabs.find((tab) => tab.tab_id === ws.active_tab_id) || tabs.find((tab) => tab.focused);
+      const tabLabels = tabs.map((tab) => tab.label).filter((label) => label && !isDefaultTabLabel(label));
       const root = pane?.cwd || pane?.foreground_cwd || homedir();
       return {
         id: `herdr:${ws.workspace_id}`,
@@ -101,7 +110,7 @@ function loadLiveHerdrSpaceRecords() {
         status: "active",
         herdrOnly: true,
         tokens: ws.tokens || {},
-        herdr: { workspaceID: ws.workspace_id, label: ws.label || ws.workspace_id, identityCwd: root, updatedAt: now() },
+        herdr: { workspaceID: ws.workspace_id, label: ws.label || ws.workspace_id, identityCwd: root, activeTabLabel: activeTab?.label, tabLabels, updatedAt: now() },
       };
     });
 }
@@ -170,17 +179,22 @@ function loadRecords() {
   const liveHerdrRecords = loadLiveHerdrSpaceRecords();
   const liveByID = new Map(liveHerdrRecords.map((record) => [record.herdr.workspaceID, record]));
   const openStreamsByProject = new Map();
+  const openProjectScopeByProject = new Set();
   function rememberOpenStream(project, stream) {
     if (!project || !stream) return;
     if (!openStreamsByProject.has(project)) openStreamsByProject.set(project, new Set());
     openStreamsByProject.get(project).add(String(stream).replace(/^↳\s*/, ""));
   }
+  function rememberProjectScope(project) { if (project) openProjectScopeByProject.add(project); }
   for (const live of liveHerdrRecords) {
-    const project = live.tokens?.pi_project;
+    const project = live.tokens?.pi_project || live.name;
+    const labels = live.herdr?.tabLabels || [];
     rememberOpenStream(project, live.tokens?.pi_stream);
     for (const [key, value] of Object.entries(live.tokens || {})) {
       if (/^pi_stream_[0-9]+$/.test(key)) rememberOpenStream(project, value);
     }
+    const streamNames = openStreamsByProject.get(project) || new Set();
+    if (labels.includes(project) || (live.herdr?.workspaceID && labels.every((label) => !streamNames.has(label)))) rememberProjectScope(project);
   }
   const projectRecords = Object.values(registry.workspaces || {})
     .filter((r) => (r.status || "active") === "active")
@@ -190,9 +204,12 @@ function loadRecords() {
           candidate.tokens?.pi_project_id === record.pi?.projectID
           || candidate.tokens?.pi_project === record.pi?.name
           || candidate.name === record.name);
-      const openStream = [...(openStreamsByProject.get(record.name) || []), ...(openStreamsByProject.get(record.pi?.name) || [])][0];
-      const base = openStream ? { ...record, openStream } : record;
-      if (!live) return { ...base, herdr: undefined };
+      const openStreams = [...new Set([...(openStreamsByProject.get(record.name) || []), ...(openStreamsByProject.get(record.pi?.name) || [])])];
+      const hasProjectScopeTab = openProjectScopeByProject.has(record.name) || openProjectScopeByProject.has(record.pi?.name)
+        || live?.herdr?.tabLabels?.includes(record.pi?.name || record.name)
+        || (live?.herdr?.workspaceID && openStreams.length === 0);
+      const base = { ...record, openStreams, openStream: openStreams[0], openProjectScope: hasProjectScopeTab };
+      if (!live) return { ...base, herdr: undefined, openProjectScope: false };
       return { ...base, herdr: live.herdr };
     });
   const linkedWorkspaceIDs = new Set(projectRecords.map((record) => record.herdr?.workspaceID).filter(Boolean));
@@ -282,7 +299,28 @@ function tabList() {
   try { return JSON.parse(result.stdout)?.result?.tabs || []; } catch { return []; }
 }
 function isDefaultTabLabel(label) { return !label || /^[0-9]+$/.test(String(label)); }
-function ensureStreamTab(workspaceID, stream) {
+function projectTabLabel(record) { return record?.pi?.name || record?.name || "Project"; }
+function ensureProjectScopeTab(workspaceID, record, focus = true) {
+  if (!workspaceID || !record) return false;
+  const label = projectTabLabel(record);
+  const cwd = record.pi?.root || record.root || homedir();
+  const tabs = tabList().filter((tab) => tab.workspace_id === workspaceID);
+  const existing = tabs.find((tab) => tab.label === label);
+  if (existing) {
+    if (focus) spawnSync(herdr, ["tab", "focus", existing.tab_id], { stdio: "ignore" });
+    return true;
+  }
+  const active = tabs.find((tab) => tab.focused) || tabs[0];
+  if (active && isDefaultTabLabel(active.label)) {
+    const renamed = spawnSync(herdr, ["tab", "rename", active.tab_id, label], { encoding: "utf8", stdio: "ignore" });
+    if ((renamed.status ?? 1) === 0) return true;
+  }
+  const args = ["tab", "create", "--workspace", workspaceID, "--cwd", cwd, "--label", label, focus ? "--focus" : "--no-focus"];
+  const created = spawnSync(herdr, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if ((created.status ?? 1) !== 0) console.error(created.stderr || created.stdout || `Failed to create Herdr tab ${label}`);
+  return (created.status ?? 1) === 0;
+}
+function ensureStreamTab(workspaceID, stream, record) {
   if (!workspaceID || !stream) return false;
   const label = stream.name || stream.id;
   const cwd = stream.workspace?.path || homedir();
@@ -294,12 +332,28 @@ function ensureStreamTab(workspaceID, stream) {
   }
   const active = tabs.find((tab) => tab.focused) || tabs[0];
   if (active && isDefaultTabLabel(active.label)) {
-    const renamed = spawnSync(herdr, ["tab", "rename", active.tab_id, label], { encoding: "utf8", stdio: "ignore" });
-    if ((renamed.status ?? 1) === 0) return true;
+    // A default tab in a linked project workspace is project scope. Name it with
+    // the project and create a separate stream tab rather than stealing/renaming
+    // the project-scope window.
+    if (record) ensureProjectScopeTab(workspaceID, record, false);
+    else {
+      const renamed = spawnSync(herdr, ["tab", "rename", active.tab_id, label], { encoding: "utf8", stdio: "ignore" });
+      if ((renamed.status ?? 1) === 0) return true;
+    }
   }
   const created = spawnSync(herdr, ["tab", "create", "--workspace", workspaceID, "--cwd", cwd, "--label", label, "--focus"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if ((created.status ?? 1) !== 0) console.error(created.stderr || created.stdout || `Failed to create Herdr tab ${label}`);
   return (created.status ?? 1) === 0;
+}
+function reportProjectScopeMetadata(workspaceID, record) {
+  if (!workspaceID || !record?.pi?.projectID) return;
+  const tokens = [
+    `workspace=${record.name}`,
+    `pi_project_id=${record.pi.projectID}`,
+    `pi_project=${record.pi.name || record.name}`,
+    `root=${record.pi.root || record.root}`,
+  ];
+  spawnSync(herdr, ["workspace", "report-metadata", workspaceID, "--source", "pi-herdr-workspace-sync", ...tokens.flatMap((token) => ["--token", token]), "--clear-token", "pi_stream_id", "--clear-token", "pi_stream"], { stdio: "ignore" });
 }
 function reportStreamMetadata(workspaceID, record, stream) {
   if (!workspaceID || !record?.pi?.projectID || !stream) return;
@@ -313,11 +367,19 @@ function reportStreamMetadata(workspaceID, record, stream) {
   ];
   spawnSync(herdr, ["workspace", "report-metadata", workspaceID, "--source", "pi-herdr-workspace-sync", ...tokens.flatMap((token) => ["--token", token])], { stdio: "ignore" });
 }
+function openProjectScope(record) {
+  const workspaceID = createOrFocus(record);
+  if (!workspaceID) return false;
+  ensureProjectScopeTab(workspaceID, record, true);
+  reportProjectScopeMetadata(workspaceID, record);
+  syncRegistryQuietly();
+  return true;
+}
 function openStream(record, stream) {
   const workspaceID = createOrFocus(record);
   if (!workspaceID) return false;
   reportStreamMetadata(workspaceID, record, stream);
-  ensureStreamTab(workspaceID, stream);
+  ensureStreamTab(workspaceID, stream, record);
   syncRegistryQuietly();
   return true;
 }
@@ -344,7 +406,7 @@ async function createNewProject() {
   const defaultName = path.basename(root) || "Project";
   const nameAnswer = await question(`Project name [${defaultName}]: `);
   const project = ensurePiProject(root, nameAnswer.trim() || defaultName);
-  return createOrFocus({ name: project.name, root: project.root, pi: { projectID: project.id, name: project.name, root: project.root } });
+  return openProjectScope({ name: project.name, root: project.root, pi: { projectID: project.id, name: project.name, root: project.root } });
 }
 async function createUnlinkedSpace() {
   console.clear();
@@ -463,11 +525,12 @@ function fzfLine(item, index) {
   else if (item.special === "unlinked") display = `${c("accent", "+")} ${padAnsi(item.name, 32)} ${c("muted", "space only")}`;
   else if (item.special === "project-scope") {
     const prefix = item.hasStreams ? `${c("muted", "│")}  ` : "   ";
-    display = `  ${prefix}${c("muted", item.name)}`;
+    const name = item.record?.openProjectScope ? item.name : c("muted", item.name);
+    display = `  ${prefix}${name}`;
   }
   else if (item.special === "stream") {
     const streamName = item.stream?.name || item.stream?.id || item.name;
-    const isOpen = item.record?.openStream === streamName || item.record?.openStream === item.stream?.id;
+    const isOpen = (item.record?.openStreams || []).includes(streamName) || (item.record?.openStreams || []).includes(item.stream?.id) || item.record?.openStream === streamName || item.record?.openStream === item.stream?.id;
     const name = isOpen ? streamName : c("muted", streamName);
     const branch = c("muted", `${item.branch || "├"}─`);
     display = `  ${branch} ${name}`;
@@ -783,8 +846,10 @@ async function main() {
           : item.special === "new-stream"
           ? await createNewStreamFromPicker(item.record)
           : item.special === "project-scope"
-            ? createOrFocus(item.record)
-            : createOrFocus(item);
+            ? openProjectScope(item.record)
+            : !item.special && !item.herdrOnly
+              ? openProjectScope(item)
+              : createOrFocus(item);
   process.exit(ok ? 0 : 1);
 }
 main().catch((error) => { console.error(error?.stack || error); process.exit(1); });

@@ -15,7 +15,7 @@ type SharedRecord = {
 	aliases: string[];
 	status: "active" | "archived";
 	pi?: { projectID: string; name?: string; root?: string; updatedAt?: string };
-	herdr?: { workspaceID: string; label?: string; identityCwd?: string; updatedAt?: string };
+	herdr?: { workspaceID: string; label?: string; identityCwd?: string; activeTabLabel?: string; tabLabels?: string[]; updatedAt?: string };
 	createdAt: string;
 	updatedAt: string;
 };
@@ -46,35 +46,63 @@ function readShared(): SharedRegistry {
 function writeShared(registry: SharedRegistry): void { writeJson(registryPath(), { ...registry, version: REGISTRY_VERSION, updatedAt: now() }); }
 
 function sharedKey(root: string, patch: Partial<SharedRecord>): string {
-	if (patch.herdr?.workspaceID) return `herdr:${patch.herdr.workspaceID}`;
+	// Prefer the durable Pi identity when available. Herdr workspace IDs are UI
+	// identities and can be attached to an existing Pi project record.
 	if (patch.pi?.projectID) return `pi:${patch.pi.projectID}`;
+	if (patch.herdr?.workspaceID) return `herdr:${patch.herdr.workspaceID}`;
 	return `root:${root}`;
 }
 
+function recordKeys(root: string, record: Partial<SharedRecord> | undefined): string[] {
+	return [
+		record?.pi?.projectID ? `pi:${record.pi.projectID}` : undefined,
+		record?.herdr?.workspaceID ? `herdr:${record.herdr.workspaceID}` : undefined,
+		`root:${root}`,
+		root, // legacy root-keyed records
+	].filter(Boolean) as string[];
+}
+
 function findRecord(registry: SharedRegistry, root: string, patch: Partial<SharedRecord>): SharedRecord | undefined {
-	const key = sharedKey(root, patch);
-	return registry.workspaces[key] || registry.workspaces[root]; // legacy root-keyed records
+	for (const key of recordKeys(root, patch)) {
+		const record = registry.workspaces[key];
+		if (record) return record;
+	}
+	const label = patch.name || patch.pi?.name || patch.herdr?.label;
+	return findRecordByRootAndLabel(registry, root, label);
 }
 
 function upsert(registry: SharedRegistry, rootInput: string, patch: Partial<SharedRecord>): SharedRecord {
 	const root = canonicalRoot(rootInput);
-	const key = sharedKey(root, patch);
 	const existing = findRecord(registry, root, patch);
+	const mergedPatch: Partial<SharedRecord> = {
+		...patch,
+		pi: patch.pi || existing?.pi,
+		herdr: patch.herdr || existing?.herdr,
+	};
+	const key = sharedKey(root, mergedPatch);
 	const time = now();
 	const aliases = [...new Set([root, ...(existing?.aliases || []), ...((patch.aliases || []) as string[])].map(canonicalRoot))];
 	const next: SharedRecord = {
-		id: patch.pi?.projectID || patch.id || existing?.id || stableID(root, patch.name || patch.pi?.name || patch.herdr?.label),
-		name: patch.pi || !existing?.pi ? (patch.name || existing?.name || path.basename(root) || root) : existing.name,
+		id: mergedPatch.pi?.projectID || patch.id || existing?.id || stableID(root, patch.name || mergedPatch.pi?.name || mergedPatch.herdr?.label),
+		name: mergedPatch.pi || !existing?.pi ? (patch.name || existing?.name || path.basename(root) || root) : existing.name,
 		root,
 		aliases,
 		status: patch.status || existing?.status || "active",
-		pi: patch.pi || existing?.pi,
-		herdr: patch.herdr || existing?.herdr,
+		pi: mergedPatch.pi,
+		herdr: mergedPatch.herdr,
 		createdAt: existing?.createdAt || time,
 		updatedAt: time,
 	};
 	registry.workspaces[key] = next;
-	if (key !== root) delete registry.workspaces[root]; // migrate old root-keyed record when touched
+	const label = next.name || next.pi?.name || next.herdr?.label;
+	const duplicateKeys = Object.entries(registry.workspaces).filter(([candidateKey, record]) => {
+		if (candidateKey === key) return false;
+		if (!record?.root || canonicalRoot(record.root) !== root) return false;
+		return !label || labelMatchesRecord(label, record);
+	}).map(([candidateKey]) => candidateKey);
+	for (const oldKey of new Set([...recordKeys(root, patch), ...recordKeys(root, existing), ...duplicateKeys])) {
+		if (oldKey !== key) delete registry.workspaces[oldKey];
+	}
 	return next;
 }
 
@@ -99,6 +127,20 @@ function labelMatchesRecord(label: string | undefined, record: SharedRecord | un
 	return Boolean(label && record && (label === record.name || label === record.pi?.name || label === record.herdr?.label));
 }
 
+function recordMatchingWorkspace(registry: SharedRegistry, ws: any, fallbackRoot: string | undefined): SharedRecord | undefined {
+	const records = Object.values(registry.workspaces || {}) as SharedRecord[];
+	const tokens = ws?.tokens || {};
+	if (tokens.pi_project_id) {
+		const byID = records.find((record) => record.pi?.projectID === tokens.pi_project_id || record.id === tokens.pi_project_id);
+		if (byID) return byID;
+	}
+	if (tokens.pi_project) {
+		const byName = records.find((record) => record.pi?.name === tokens.pi_project || record.name === tokens.pi_project);
+		if (byName) return byName;
+	}
+	return fallbackRoot ? registry.workspaces[canonicalRoot(fallbackRoot)] : undefined;
+}
+
 function findRecordByRootAndLabel(registry: SharedRegistry, rootInput: string, label: string | undefined): SharedRecord | undefined {
 	const root = canonicalRoot(rootInput);
 	return (Object.values(registry.workspaces) as SharedRecord[]).find((record) => {
@@ -117,13 +159,15 @@ function syncHerdrSession(registry: SharedRegistry): number {
 		if (!root) continue;
 		const label = ws.custom_name || path.basename(root) || root;
 		const record = findRecordByRootAndLabel(registry, root, label);
+		const activeTabLabel = activeTab?.custom_name || undefined;
+		const tabLabels = (ws.tabs || []).map((tab: any) => tab?.custom_name).filter(Boolean);
 		if (!labelMatchesRecord(label, record)) continue;
 		if (record?.herdr) { count += 1; continue; }
 		upsert(registry, root, {
 			name: label,
 			aliases: [root],
 			pi: record?.pi,
-			herdr: { workspaceID: ws.id, label, identityCwd: root, updatedAt: now() },
+			herdr: { workspaceID: ws.id, label, identityCwd: root, activeTabLabel, tabLabels, updatedAt: now() },
 		});
 		count += 1;
 	}
@@ -131,29 +175,39 @@ function syncHerdrSession(registry: SharedRegistry): number {
 }
 
 function syncHerdrSnapshot(registry: SharedRegistry): number {
-	const herdr = process.env.HERDR_BIN_PATH || "herdr";
-	const result = spawnSync(herdr, ["api", "snapshot"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
-	if ((result.status ?? 1) !== 0 || !result.stdout) return 0;
-	let snapshot: any;
-	try { snapshot = JSON.parse(result.stdout)?.result?.snapshot; } catch { return 0; }
+	const snapshot = herdrSnapshot();
+	if (!snapshot) return 0;
 	const panesByWorkspace = new Map<string, any>();
 	for (const pane of snapshot?.panes || []) {
 		if (!panesByWorkspace.has(pane.workspace_id)) panesByWorkspace.set(pane.workspace_id, pane);
 	}
+	const tabs = snapshot?.tabs || [];
+	const tabByID = new Map(tabs.map((tab: any) => [tab.tab_id, tab]));
+	const tabLabelsByWorkspace = new Map<string, string[]>();
+	for (const tab of tabs) {
+		if (!tab.workspace_id || !tab.label || /^\d+$/.test(String(tab.label))) continue;
+		if (!tabLabelsByWorkspace.has(tab.workspace_id)) tabLabelsByWorkspace.set(tab.workspace_id, []);
+		tabLabelsByWorkspace.get(tab.workspace_id)!.push(tab.label);
+	}
 	let count = 0;
 	for (const ws of snapshot?.workspaces || []) {
 		const pane = panesByWorkspace.get(ws.workspace_id);
-		const root = pane?.cwd || pane?.foreground_cwd;
+		const activeTabLabel = (tabByID.get(ws.active_tab_id) as any)?.label;
+		const tabLabels = tabLabelsByWorkspace.get(ws.workspace_id) || [];
+		const paneRoot = pane?.cwd || pane?.foreground_cwd;
+		const record = recordMatchingWorkspace(registry, ws, paneRoot);
+		const root = record?.root || paneRoot;
 		if (!root) continue;
 		const label = ws.label || path.basename(root) || root;
-		const record = findRecordByRootAndLabel(registry, root, label);
-		if (!labelMatchesRecord(label, record)) continue;
+		// Prefer explicit Pi metadata reported on the Herdr workspace; otherwise
+		// only auto-link by cwd when the visible Herdr label matches the project.
+		if (!record || (!ws.tokens?.pi_project_id && !ws.tokens?.pi_project && !labelMatchesRecord(label, record))) continue;
 		if (record?.herdr) { count += 1; continue; }
 		upsert(registry, root, {
-			name: label,
+			name: record.name || label,
 			aliases: [root],
-			pi: record?.pi,
-			herdr: { workspaceID: ws.workspace_id, label, identityCwd: root, updatedAt: now() },
+			pi: record.pi,
+			herdr: { workspaceID: ws.workspace_id, label, identityCwd: paneRoot || root, activeTabLabel, tabLabels, updatedAt: now() },
 		});
 		count += 1;
 	}
