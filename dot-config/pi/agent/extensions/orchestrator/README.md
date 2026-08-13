@@ -24,10 +24,11 @@ Herdr panes and tmux sessions are implementation details, not separate user-faci
 
 ## Model routing
 
-- For review, planning, architecture, final synthesis, and high-stakes judgement, keep the parent/current model unless the user asks otherwise.
-- For smaller scoped orchestrator Pi workers, default to Spark high by setting `command: "pi --model openai-codex/gpt-5.3-codex-spark:high"`.
-- Use Spark high for focused implementation, bugfixes, tests, repo inspection, first-pass reviews, and parallel subagent work.
-- Escalate away from Spark high when the task needs image input, very large context beyond Spark's 128K window, deep architectural judgement, or final review.
+- Model routing is the parent orchestrator's decision per worker.
+- Keep the parent/current model for review, planning, architecture, final synthesis, and high-stakes judgement unless the user asks otherwise.
+- Choose Spark high for smaller scoped orchestrator Pi workers by setting `command: "pi --model openai-codex/gpt-5.3-codex-spark:high"`.
+- Spark high is a good fit for focused implementation, bugfixes, tests, repo inspection, first-pass reviews, and parallel subagent work.
+- Do not choose Spark high when the task needs image input, very large context beyond Spark's 128K window, deep architectural judgement, or final review.
 
 ## Tools
 
