@@ -1,5 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Markdown, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { Markdown, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 
 type MarkdownInstance = {
   theme: {
@@ -62,11 +62,14 @@ function gruvboxBlockBg(line: string, width: number): string {
   return `${orangeBg}${" ".repeat(stripWidth)}${blockBg}${contentWithBgReapplied}${padding}${resetBg}`;
 }
 
+const PATCH_VERSION = 3;
+const ORIGINAL_RENDER_TOKEN = Symbol.for("sumeet.pi.prettyCodeBlocks.originalRenderToken");
+
 export default function (_pi: ExtensionAPI) {
   const proto = Markdown.prototype as any;
-  if (proto.__piPrettyCodeBlocksPatched) return;
 
-  const originalRenderToken = proto.renderToken;
+  const originalRenderToken = proto[ORIGINAL_RENDER_TOKEN] ?? proto.renderToken;
+  proto[ORIGINAL_RENDER_TOKEN] = originalRenderToken;
 
   proto.renderToken = function (
     this: MarkdownInstance,
@@ -87,8 +90,14 @@ export default function (_pi: ExtensionAPI) {
       ? this.theme.highlightCode(code, token.lang)
       : code.split("\n").map((line) => this.theme.codeBlock(line));
 
+    const contentWidth = Math.max(1, width - 1);
+    const codeIndent = "  ";
+    const codeTextWidth = Math.max(1, contentWidth - visibleWidth(codeIndent));
     for (const line of highlighted) {
-      lines.push(gruvboxBlockBg(`  ${line}`, width));
+      const wrapped = wrapTextWithAnsi(line, codeTextWidth);
+      for (const wrappedLine of wrapped) {
+        lines.push(gruvboxBlockBg(`${codeIndent}${wrappedLine}`, width));
+      }
     }
 
     if (nextTokenType && nextTokenType !== "space") {
@@ -98,5 +107,5 @@ export default function (_pi: ExtensionAPI) {
     return lines;
   };
 
-  proto.__piPrettyCodeBlocksPatched = true;
+  proto.__piPrettyCodeBlocksPatched = PATCH_VERSION;
 }
