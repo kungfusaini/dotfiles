@@ -6,7 +6,9 @@ import { StringEnum } from "@earendil-works/pi-ai";
 import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-type WorkerState = "starting" | "running" | "blocked" | "exited" | "failed" | "closed" | "orphaned" | "unknown";
+type WorkerState = "starting" | "running" | "blocked" | "done" | "exited" | "failed" | "closed" | "orphaned" | "unknown";
+type AgentLifecycleState = "starting" | "working" | "blocked" | "done" | "failed" | "unknown";
+type AgentLifecycleSource = "orchestrator" | "child" | "manual";
 type WorkerVisibility = "hidden" | "visible" | "unknown";
 type WorkerWorkspace = "current" | "worktree";
 
@@ -16,6 +18,18 @@ interface StructuredResult {
 	needs_user?: boolean;
 	next_action?: unknown;
 	[key: string]: unknown;
+}
+
+
+interface AgentLifecycleRecord {
+	schemaVersion: 1;
+	workerName: string;
+	ownerSessionId?: string;
+	state: AgentLifecycleState;
+	source: AgentLifecycleSource;
+	message?: string;
+	needsUser?: boolean;
+	updatedAt: string;
 }
 
 interface TerminalRecord {
@@ -61,6 +75,12 @@ interface TerminalRecord {
 	exitCode?: number;
 	exitSignal?: string;
 	exitFile: string;
+	lifecycleFile?: string;
+	lifecycleState?: AgentLifecycleState;
+	lifecycleSource?: AgentLifecycleSource;
+	lifecycleUpdatedAt?: string;
+	watcherLastObservedAt?: string;
+	watcherLastError?: string;
 	lastError?: string;
 	surfaceCloseError?: string;
 }
@@ -131,6 +151,16 @@ const WorkerMarkParams = Type.Object({
 	force: Type.Optional(Type.Boolean({ description: "Allow mutating a worker owned by another orchestrator session. Default false." })),
 });
 
+const AgentLifecycleStateSchema = StringEnum(["working", "blocked", "done", "failed", "unknown"] as const, {
+	description: "Lifecycle state reported by the worker itself. The worker identity is inferred from orchestrator environment variables.",
+});
+
+const AgentLifecycleReportParams = Type.Object({
+	state: AgentLifecycleStateSchema,
+	message: Type.Optional(Type.String({ description: "Short state summary for the parent orchestrator." })),
+	needsUser: Type.Optional(Type.Boolean({ description: "Whether this state requires parent/user attention. Defaults true for blocked, false otherwise." })),
+});
+
 const WorkerStartParams = Type.Object({
 	kind: Type.Optional(WorkerKindSchema),
 	command: Type.Optional(Type.String({ description: "Shell command to run. Defaults to `pi` when kind=pi; required when kind=shell." })),
@@ -188,8 +218,16 @@ function terminalExitDir(): string {
 	return path.join(terminalRoot(), "exit");
 }
 
+function terminalLifecycleDir(): string {
+	return path.join(terminalRoot(), "lifecycle");
+}
+
 function terminalExitPath(name: string): string {
 	return path.join(terminalExitDir(), `${validateTerminalName(name)}.json`);
+}
+
+function terminalLifecyclePath(name: string): string {
+	return path.join(terminalLifecycleDir(), `${validateTerminalName(name)}.json`);
 }
 
 function terminalTmuxConfPath(): string {
@@ -217,6 +255,36 @@ function validateEnv(env: Record<string, string> | undefined): Record<string, st
 
 function terminalRecordPath(name: string): string {
 	return path.join(terminalRegistryDir(), `${validateTerminalName(name)}.json`);
+}
+
+function terminalRecordLockPath(name: string): string {
+	return `${terminalRecordPath(name)}.lock`;
+}
+
+async function withTerminalRecordLock<T>(name: string, fn: () => Promise<T>): Promise<T> {
+	await ensureTerminalStore();
+	const lockPath = terminalRecordLockPath(name);
+	const started = Date.now();
+	while (true) {
+		try {
+			await fs.mkdir(lockPath, { mode: 0o700 });
+			break;
+		} catch (error: any) {
+			if (error?.code !== "EEXIST") throw error;
+			const stat = await fs.stat(lockPath).catch(() => undefined);
+			if (stat && Date.now() - stat.mtimeMs > 30_000) {
+				await fs.rm(lockPath, { recursive: true, force: true });
+				continue;
+			}
+			if (Date.now() - started > 5_000) throw new Error(`Timed out waiting for orchestrator registry lock for ${name}.`);
+			await delay(50);
+		}
+	}
+	try {
+		return await fn();
+	} finally {
+		await fs.rm(lockPath, { recursive: true, force: true }).catch(() => undefined);
+	}
 }
 
 function tmuxArgs(...args: string[]): string[] {
@@ -372,8 +440,9 @@ function applyStructuredResult(record: TerminalRecord, output: string): boolean 
 			record.needsUser = parsed.result.needs_user ?? true;
 		} else if (parsed.result.status === "failed") {
 			record.state = "failed";
-		} else if (parsed.result.status === "done" && record.state === "running") {
-			record.state = "exited";
+		} else if (parsed.result.status === "done" && (record.state === "running" || record.state === "blocked")) {
+			record.state = "done";
+			record.needsUser = false;
 		}
 		if (typeof parsed.result.summary === "string") record.statusMessage = parsed.result.summary;
 		record.updatedAt = new Date().toISOString();
@@ -398,6 +467,7 @@ async function execChecked(pi: ExtensionAPI, command: string, args: string[], op
 async function ensureTerminalStore() {
 	await fs.mkdir(terminalRegistryDir(), { recursive: true });
 	await fs.mkdir(terminalExitDir(), { recursive: true });
+	await fs.mkdir(terminalLifecycleDir(), { recursive: true });
 	await fs.writeFile(
 		terminalTmuxConfPath(),
 		[
@@ -418,18 +488,18 @@ async function ensureTerminalStore() {
 
 async function saveTerminalRecord(record: TerminalRecord) {
 	validateTerminalName(record.name);
-	await ensureTerminalStore();
-	const file = terminalRecordPath(record.name);
-	const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-	await fs.writeFile(tmp, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
-	await fs.rename(tmp, file);
-	terminals.set(record.name, record);
+	if (!record.lifecycleFile) record.lifecycleFile = terminalLifecyclePath(record.name);
+	await withTerminalRecordLock(record.name, async () => {
+		const file = terminalRecordPath(record.name);
+		const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+		await fs.writeFile(tmp, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
+		await fs.rename(tmp, file);
+		terminals.set(record.name, record);
+	});
 }
 
 async function loadTerminalRecord(name: string): Promise<TerminalRecord | undefined> {
 	validateTerminalName(name);
-	const cached = terminals.get(name);
-	if (cached) return cached;
 	try {
 		const parsed = JSON.parse(await fs.readFile(terminalRecordPath(name), "utf8")) as TerminalRecord;
 		if (parsed?.name !== name) throw new Error(`Terminal registry name mismatch for ${name}: ${parsed?.name || "missing"}`);
@@ -561,13 +631,75 @@ async function readExitMetadata(record: TerminalRecord): Promise<Partial<Termina
 	}
 }
 
+async function readLifecycleRecord(record: TerminalRecord): Promise<AgentLifecycleRecord | undefined> {
+	try {
+		const parsed = JSON.parse(await fs.readFile(record.lifecycleFile || terminalLifecyclePath(record.name), "utf8"));
+		if (parsed?.schemaVersion !== 1) return undefined;
+		if (parsed.workerName !== record.name) return undefined;
+		if (record.ownerSessionId && parsed.ownerSessionId && parsed.ownerSessionId !== record.ownerSessionId) return undefined;
+		if (!["starting", "working", "blocked", "done", "failed", "unknown"].includes(parsed.state)) return undefined;
+		return parsed as AgentLifecycleRecord;
+	} catch (error: any) {
+		if (error?.code === "ENOENT") return undefined;
+		throw error;
+	}
+}
+
+async function writeLifecycleRecord(record: TerminalRecord, update: { state: AgentLifecycleState; source: AgentLifecycleSource; message?: string; needsUser?: boolean; updatedAt?: string }): Promise<AgentLifecycleRecord> {
+	await ensureTerminalStore();
+	record.lifecycleFile = record.lifecycleFile || terminalLifecyclePath(record.name);
+	const lifecycle: AgentLifecycleRecord = {
+		schemaVersion: 1,
+		workerName: record.name,
+		ownerSessionId: record.ownerSessionId,
+		state: update.state,
+		source: update.source,
+		message: update.message,
+		needsUser: update.needsUser,
+		updatedAt: update.updatedAt || new Date().toISOString(),
+	};
+	const tmp = `${record.lifecycleFile}.${process.pid}.${Date.now()}.tmp`;
+	await fs.writeFile(tmp, `${JSON.stringify(lifecycle, null, 2)}\n`, { mode: 0o600 });
+	await fs.rename(tmp, record.lifecycleFile);
+	return lifecycle;
+}
+
+function applyLifecycleRecord(record: TerminalRecord, lifecycle: AgentLifecycleRecord | undefined): boolean {
+	if (!lifecycle) return false;
+	const manualWins = record.markedAt && lifecycle.source !== "manual" && lifecycle.updatedAt <= record.markedAt;
+	if (manualWins) return false;
+	const before = JSON.stringify({ state: record.state, needsUser: record.needsUser, statusMessage: record.statusMessage, lifecycleState: record.lifecycleState, lifecycleUpdatedAt: record.lifecycleUpdatedAt });
+	record.lifecycleState = lifecycle.state;
+	record.lifecycleSource = lifecycle.source;
+	record.lifecycleUpdatedAt = lifecycle.updatedAt;
+	if (lifecycle.state === "blocked") {
+		record.state = "blocked";
+		record.needsUser = lifecycle.needsUser ?? true;
+	} else if (lifecycle.state === "working") {
+		if (record.state !== "failed" && record.state !== "exited" && record.state !== "closed") record.state = "running";
+		record.needsUser = false;
+		record.blockedSurfacedAt = undefined;
+	} else if (lifecycle.state === "done") {
+		record.state = "done";
+		record.needsUser = false;
+	} else if (lifecycle.state === "failed") {
+		record.state = "failed";
+		record.needsUser = lifecycle.needsUser ?? false;
+	} else if (lifecycle.state === "unknown" && record.state !== "closed") {
+		record.state = "unknown";
+	}
+	if (typeof lifecycle.message === "string") record.statusMessage = lifecycle.message;
+	return before !== JSON.stringify({ state: record.state, needsUser: record.needsUser, statusMessage: record.statusMessage, lifecycleState: record.lifecycleState, lifecycleUpdatedAt: record.lifecycleUpdatedAt });
+}
+
 function applyExitMetadata(record: TerminalRecord, metadata: Partial<TerminalRecord>): boolean {
 	if (metadata.startedAt) record.startedAt = metadata.startedAt;
 	if (metadata.endedAt) record.endedAt = metadata.endedAt;
 	if (typeof metadata.exitCode === "number") record.exitCode = metadata.exitCode;
 	if (metadata.exitSignal) record.exitSignal = metadata.exitSignal;
 	if (record.endedAt || typeof record.exitCode === "number" || record.exitSignal) {
-		record.state = record.exitSignal || (record.exitCode ?? 0) !== 0 ? "failed" : "exited";
+		if (record.exitSignal || (record.exitCode ?? 0) !== 0) record.state = "failed";
+		else record.state = record.lifecycleState === "done" ? "done" : "exited";
 		return true;
 	}
 	return false;
@@ -575,6 +707,7 @@ function applyExitMetadata(record: TerminalRecord, metadata: Partial<TerminalRec
 
 async function refreshTerminalRecord(pi: ExtensionAPI, record: TerminalRecord, signal?: AbortSignal): Promise<TerminalRecord> {
 	if (!record.exitFile) record.exitFile = terminalExitPath(record.name);
+	if (!record.lifecycleFile) record.lifecycleFile = terminalLifecyclePath(record.name);
 	if (!record.visibility) record.visibility = record.paneId ? "visible" : "hidden";
 	if (record.state === "closed") return record;
 	if (record.state === "failed" && record.lastError && !record.startedAt) return record;
@@ -587,16 +720,22 @@ async function refreshTerminalRecord(pi: ExtensionAPI, record: TerminalRecord, s
 		);
 		if (panes.code === 0) {
 			const [dead, status, paneSignal, deadTime] = panes.stdout.trim().split("\t");
+			const lifecycle = await readLifecycleRecord(record);
 			const metadata = await readExitMetadata(record);
-			if (metadata) applyExitMetadata(record, metadata);
+			const hadExitMetadata = metadata ? applyExitMetadata(record, metadata) : false;
 			if (dead === "1") {
 				const code = Number(status);
 				if (Number.isFinite(code)) record.exitCode = code;
 				if (paneSignal) record.exitSignal = paneSignal;
 				if (deadTime && !record.endedAt) record.endedAt = new Date(Number(deadTime) * 1000).toISOString();
-				record.state = record.exitSignal || (record.exitCode ?? 0) !== 0 ? "failed" : "exited";
-			} else if (!metadata || !applyExitMetadata(record, metadata)) {
-				record.state = record.state === "blocked" ? "blocked" : "running";
+				applyLifecycleRecord(record, lifecycle);
+				applyExitMetadata(record, {});
+			} else if (hadExitMetadata) {
+				applyLifecycleRecord(record, lifecycle);
+				applyExitMetadata(record, {});
+			} else {
+				record.state = record.state === "blocked" || record.state === "done" ? record.state : "running";
+				applyLifecycleRecord(record, lifecycle);
 			}
 			record.visibility = record.paneId ? "visible" : "hidden";
 			record.updatedAt = new Date().toISOString();
@@ -606,6 +745,8 @@ async function refreshTerminalRecord(pi: ExtensionAPI, record: TerminalRecord, s
 
 		const metadata = await readExitMetadata(record);
 		if (metadata && applyExitMetadata(record, metadata)) {
+			applyLifecycleRecord(record, await readLifecycleRecord(record));
+			applyExitMetadata(record, {});
 			record.visibility = "hidden";
 			record.paneId = undefined;
 		} else {
@@ -615,7 +756,7 @@ async function refreshTerminalRecord(pi: ExtensionAPI, record: TerminalRecord, s
 			record.lastError = textOf(panes) || `tmux session ${record.tmuxSession} is missing`;
 		}
 	} catch (error) {
-		record.state = "unknown";
+		if (!applyLifecycleRecord(record, await readLifecycleRecord(record).catch(() => undefined))) record.state = "unknown";
 		record.visibility = "unknown";
 		record.lastError = error instanceof Error ? error.message : String(error);
 	}
@@ -741,7 +882,7 @@ function formatWorkerDashboard(workers: TerminalRecord[], includeClosed: boolean
 	const groups: Array<[string, (worker: TerminalRecord) => boolean]> = [
 		["Needs attention", (worker) => worker.state === "blocked" || worker.needsUser === true],
 		["Running", (worker) => worker.state === "running" || worker.state === "starting"],
-		["Completed", (worker) => worker.state === "exited"],
+		["Completed", (worker) => worker.state === "done" || worker.state === "exited"],
 		["Failed / uncertain", (worker) => worker.state === "failed" || worker.state === "orphaned" || worker.state === "unknown"],
 		["Closed", (worker) => worker.state === "closed"],
 	];
@@ -749,7 +890,7 @@ function formatWorkerDashboard(workers: TerminalRecord[], includeClosed: boolean
 		total: visibleWorkers.length,
 		attention: visibleWorkers.filter((worker) => worker.state === "blocked" || worker.needsUser === true).length,
 		running: visibleWorkers.filter((worker) => worker.state === "running" || worker.state === "starting").length,
-		completed: visibleWorkers.filter((worker) => worker.state === "exited").length,
+		completed: visibleWorkers.filter((worker) => worker.state === "done" || worker.state === "exited").length,
 		failed: visibleWorkers.filter((worker) => worker.state === "failed" || worker.state === "orphaned" || worker.state === "unknown").length,
 	};
 	const sections = groups
@@ -970,8 +1111,9 @@ function buildPiTaskPrompt(record: TerminalRecord, task: string, handoffContext?
 		"Expectations:",
 		"- Work independently in this terminal.",
 		"- Keep changes and tool usage focused on the task.",
-		"- If you need user/parent input, print a clear BLOCKED message explaining exactly what is needed and wait.",
-		"- When done, print a concise summary with files changed, verification run, and follow-up needed.",
+		"- If you need user/parent input, call orchestrator_report_state with state=blocked, explain exactly what is needed, then wait.",
+		"- When actively working again after a block, call orchestrator_report_state with state=working.",
+		"- When done, call orchestrator_report_state with state=done and a concise summary with files changed, verification run, and follow-up needed.",
 		"- End with a final structured footer as the last non-whitespace output:",
 		"  ORCHESTRATOR_RESULT:",
 		"  {",
@@ -1050,10 +1192,19 @@ async function startManagedTerminal(
 	await fs.mkdir(scriptsDir, { recursive: true });
 	const scriptPath = path.join(scriptsDir, `${name}.sh`);
 	const exitFile = terminalExitPath(name);
-	const envLines = Object.entries(extraEnv || {})
+	const lifecycleFile = terminalLifecyclePath(name);
+	const ownerSessionId = ctx.sessionManager.getSessionId();
+	const orchestratorEnv = {
+		...(extraEnv || {}),
+		PI_ORCHESTRATOR_WORKER_NAME: name,
+		PI_ORCHESTRATOR_OWNER_SESSION_ID: ownerSessionId || "",
+		PI_ORCHESTRATOR_STATE_FILE: lifecycleFile,
+	};
+	const envLines = Object.entries(orchestratorEnv)
 		.map(([key, value]) => `export ${key}=${shellQuote(value)}`)
 		.join("\n");
 	await fs.rm(exitFile, { force: true });
+	await fs.rm(lifecycleFile, { force: true });
 	await fs.writeFile(
 		scriptPath,
 		[
@@ -1083,7 +1234,7 @@ async function startManagedTerminal(
 		name,
 		command: params.command,
 		cwd,
-		ownerSessionId: ctx.sessionManager.getSessionId(),
+		ownerSessionId,
 		ownerCwd: ctx.cwd,
 		tmuxServer: TMUX_SERVER,
 		tmuxSession,
@@ -1099,7 +1250,10 @@ async function startManagedTerminal(
 		cleanupWorktreeOnClose: params.cleanupWorktreeOnClose,
 		title: params.title || name,
 		exitFile,
+		lifecycleFile,
 	};
+	await writeLifecycleRecord(record, { state: "starting", source: "orchestrator", message: `Starting worker ${name}`, needsUser: false, updatedAt: now });
+	applyLifecycleRecord(record, await readLifecycleRecord(record));
 	await saveTerminalRecord(record);
 	try {
 		await execChecked(
@@ -1118,6 +1272,8 @@ async function startManagedTerminal(
 	record.state = "running";
 	record.startedAt = new Date().toISOString();
 	record.updatedAt = record.startedAt;
+	await writeLifecycleRecord(record, { state: "working", source: "orchestrator", message: `Worker ${name} is running`, needsUser: false, updatedAt: record.startedAt });
+	applyLifecycleRecord(record, await readLifecycleRecord(record));
 	await saveTerminalRecord(record);
 	if (params.surface) await surfaceTerminal(pi, ctx, record, params.focus ?? true, signal);
 	return record;
@@ -1188,15 +1344,116 @@ function startedWorkerText(record: TerminalRecord, kind: "pi" | "shell"): string
 	return `Started ${kind} worker ${record.name} (${record.paneId ? `visible in Herdr pane ${record.paneId}` : "hidden"})${record.task ? " and sent task prompt" : ""}${record.workspace === "worktree" ? ` in worktree ${record.worktreePath}` : ""}.`;
 }
 
+function isActiveForWatcher(record: TerminalRecord): boolean {
+	return record.state === "starting" || record.state === "running" || record.state === "blocked" || record.state === "unknown" || record.state === "orphaned";
+}
+
+function watcherEnabled(): boolean {
+	return !/^(0|false|off|no)$/i.test(process.env.PI_ORCHESTRATOR_WATCH || "");
+}
+
+function watcherIntervalMs(): number {
+	const parsed = Number(process.env.PI_ORCHESTRATOR_WATCH_INTERVAL_MS || "2500");
+	return Number.isFinite(parsed) ? Math.max(1_000, Math.min(parsed, 30_000)) : 2_500;
+}
+
 export default function orchestratorExtension(pi: ExtensionAPI) {
+	let watcherTimer: ReturnType<typeof setTimeout> | undefined;
+	let watcherRunning = false;
+	let watcherStartedAt: string | undefined;
+	let watcherLastTickAt: string | undefined;
+	let watcherLastStopAt: string | undefined;
+	let watcherLastError: string | undefined;
+
+	async function refreshOwnedWorkersStateOnly(ctx: ExtensionContext, signal?: AbortSignal): Promise<TerminalRecord[]> {
+		const currentSessionId = ctx.sessionManager.getSessionId();
+		const records = (await loadTerminalRecords()).filter((record) => record.ownerSessionId === currentSessionId && record.state !== "closed");
+		const refreshed: TerminalRecord[] = [];
+		for (const record of records) {
+			try {
+				const current = await refreshTerminalRecord(pi, record, signal);
+				current.watcherLastObservedAt = new Date().toISOString();
+				current.watcherLastError = undefined;
+				await saveTerminalRecord(current);
+				if (current.paneId && current.visibility === "visible") await reportSurfacedTerminal(pi, current, current.paneId, signal).catch(async (error) => {
+					current.watcherLastError = error instanceof Error ? error.message : String(error);
+					await saveTerminalRecord(current).catch(() => undefined);
+				});
+				refreshed.push(current);
+			} catch (error) {
+				record.watcherLastObservedAt = new Date().toISOString();
+				record.watcherLastError = error instanceof Error ? error.message : String(error);
+				await saveTerminalRecord(record).catch(() => undefined);
+				refreshed.push(record);
+			}
+		}
+		return refreshed;
+	}
+
+	function ensureWatcherStarted(ctx: ExtensionContext) {
+		if (!watcherEnabled() || watcherTimer || watcherRunning) return;
+		watcherStartedAt = new Date().toISOString();
+		const tick = async () => {
+			watcherTimer = undefined;
+			watcherRunning = true;
+			try {
+				watcherLastTickAt = new Date().toISOString();
+				const refreshed = await refreshOwnedWorkersStateOnly(ctx);
+				watcherLastError = undefined;
+				if (refreshed.some(isActiveForWatcher)) {
+					watcherTimer = setTimeout(tick, watcherIntervalMs());
+				} else {
+					watcherLastStopAt = new Date().toISOString();
+				}
+			} catch (error) {
+				watcherLastError = error instanceof Error ? error.message : String(error);
+				watcherTimer = setTimeout(tick, watcherIntervalMs());
+			} finally {
+				watcherRunning = false;
+			}
+		};
+		watcherTimer = setTimeout(tick, watcherIntervalMs());
+	}
+	pi.registerTool({
+		name: "orchestrator_report_state",
+		label: "Report Orchestrator Worker State",
+		description: "Report this worker's lifecycle state to its parent orchestrator without writing or reading terminal transcript content.",
+		promptSnippet: "Use orchestrator_report_state from inside an orchestrator-created worker to report working, blocked, done, or failed.",
+		parameters: AgentLifecycleReportParams,
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const name = process.env.PI_ORCHESTRATOR_WORKER_NAME;
+			const ownerSessionId = process.env.PI_ORCHESTRATOR_OWNER_SESSION_ID;
+			const stateFile = process.env.PI_ORCHESTRATOR_STATE_FILE;
+			if (!name || !stateFile) throw new Error("orchestrator_report_state is only available inside an orchestrator-created worker.");
+			const record = await loadTerminalRecord(name);
+			if (!record) throw new Error(`Unknown orchestrator worker from environment: ${name}`);
+			if (record.ownerSessionId && ownerSessionId !== record.ownerSessionId) throw new Error("Worker owner session mismatch; refusing to report state.");
+			if (path.resolve(stateFile) !== path.resolve(record.lifecycleFile || terminalLifecyclePath(record.name))) throw new Error("Worker lifecycle state file mismatch; refusing to report state.");
+			const updatedAt = new Date().toISOString();
+			const lifecycle = await writeLifecycleRecord(record, {
+				state: params.state,
+				source: "child",
+				message: params.message,
+				needsUser: params.needsUser ?? params.state === "blocked",
+				updatedAt,
+			});
+			applyLifecycleRecord(record, lifecycle);
+			record.updatedAt = updatedAt;
+			await saveTerminalRecord(record);
+			if (record.paneId && record.visibility === "visible") await reportSurfacedTerminal(pi, record, record.paneId, signal);
+			return { content: [{ type: "text", text: `Reported ${record.name} ${params.state}${record.needsUser ? " (needs user)" : ""}.${params.message ? `\n${params.message}` : ""}` }], details: { worker: record, lifecycle } };
+		},
+	});
+
 	pi.registerTool({
 		name: "orchestrator_worker_start",
 		label: "Start Worker",
 		description: "Start a unified orchestrator worker. Workers are managed terminals that may run a Pi subagent or an arbitrary shell command, hidden by default and surfaced into Herdr on demand.",
-		promptSnippet: "Use orchestrator_worker_start for subagents or command workers that can be hidden or visible.",
+		promptSnippet: "Use orchestrator_worker_start for subagents or command workers that can be hidden or visible. Model routing: keep the parent/current model for review, planning, architecture, final synthesis, and high-stakes judgement. For smaller scoped Pi workers, default to Spark high by setting command to `pi --model openai-codex/gpt-5.3-codex-spark:high`. Use Spark high for focused implementation, bugfixes, tests, repo inspection, first-pass reviews, and parallel subagent work. Escalate away from Spark high when the task needs image input, very large context beyond Spark's 128K window, deep architectural judgement, or final review.",
 		parameters: WorkerStartParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const { record, kind } = await startWorkerFromParams(pi, ctx, params, signal);
+			ensureWatcherStarted(ctx);
 			return { content: [{ type: "text", text: startedWorkerText(record, kind) }], details: { worker: record, kind } };
 		},
 	});
@@ -1205,7 +1462,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		name: "orchestrator_worker_start_many",
 		label: "Start Many Workers",
 		description: "Start multiple orchestrator workers. Each array item accepts the same fields as orchestrator_worker_start.",
-		promptSnippet: "Use orchestrator_worker_start_many when launching several independent workers with distinct tasks/instructions.",
+		promptSnippet: "Use orchestrator_worker_start_many when launching several independent workers with distinct tasks/instructions. Model routing: keep the parent/current model for review, planning, architecture, final synthesis, and high-stakes judgement. For smaller scoped Pi workers, default to Spark high by setting each Pi worker command to `pi --model openai-codex/gpt-5.3-codex-spark:high`. Use Spark high for focused implementation, bugfixes, tests, repo inspection, first-pass reviews, and parallel subagent work. Escalate away from Spark high when the task needs image input, very large context beyond Spark's 128K window, deep architectural judgement, or final review.",
 		parameters: WorkerStartManyParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const started: Array<{ record: TerminalRecord; kind: "pi" | "shell" }> = [];
@@ -1219,6 +1476,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 					if (params.continueOnError === false) break;
 				}
 			}
+			if (started.length) ensureWatcherStarted(ctx);
 			const lines = [
 				`Started ${started.length}/${params.workers.length} workers${failed.length ? `; ${failed.length} failed` : ""}.`,
 				...started.map(({ record, kind }) => `- ${record.name}: ${kind}, ${record.workspace || "current"}${record.worktreePath ? `, ${record.worktreePath}` : ""}`),
@@ -1237,7 +1495,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			const { workers } = await pollWorkersOnce(pi, ctx, TMUX_HISTORY_LIMIT, signal);
 			const sorted = workers.sort((a, b) => (a.state === "blocked" ? 0 : 1) - (b.state === "blocked" ? 0 : 1) || (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
 			const text = sorted
-				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  workspace: ${r.workspace || "current"}${r.worktreeBranch ? ` (${r.worktreeBranch})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.task ? `\n  task: ${r.task}` : ""}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${r.structuredResult ? `\n  result: ${r.structuredResult.status}` : ""}${r.structuredResultParseError ? `\n  resultParseNote: ${r.structuredResultParseError}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.worktreeCleanupError ? `\n  worktreeCleanupError: ${r.worktreeCleanupError}` : ""}${r.worktreeBranchCleanupError ? `\n  worktreeBranchCleanupError: ${r.worktreeBranchCleanupError}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
+				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  workspace: ${r.workspace || "current"}${r.worktreeBranch ? ` (${r.worktreeBranch})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.task ? `\n  task: ${r.task}` : ""}${r.lifecycleState ? `\n  lifecycle: ${r.lifecycleState}${r.lifecycleSource ? ` (${r.lifecycleSource})` : ""}` : ""}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${r.structuredResult ? `\n  result: ${r.structuredResult.status}` : ""}${r.structuredResultParseError ? `\n  resultParseNote: ${r.structuredResultParseError}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.worktreeCleanupError ? `\n  worktreeCleanupError: ${r.worktreeCleanupError}` : ""}${r.worktreeBranchCleanupError ? `\n  worktreeBranchCleanupError: ${r.worktreeBranchCleanupError}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
 				.join("\n\n") || "No orchestrator workers recorded.";
 			return { content: [{ type: "text", text }], details: { workers } };
 		},
@@ -1265,10 +1523,12 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		description: "Show a compact grouped dashboard of orchestrator workers after one poll pass.",
 		parameters: WorkerStatusParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
+			ensureWatcherStarted(ctx);
 			const { workers, events } = await pollWorkersOnce(pi, ctx, params.lines ?? TMUX_HISTORY_LIMIT, signal);
 			const text = formatWorkerDashboard(workers, params.includeClosed ?? false);
 			const eventNote = events.length ? `\n\nRecent changes: ${events.map((event) => `${event.name}:${event.beforeState}->${event.afterState}${event.surfaced ? ":surfaced" : ""}`).join(", ")}` : "";
-			return { content: [{ type: "text", text: `${text}${eventNote}` }], details: { workers, events } };
+			const watcherNote = `\n\nWatcher: ${watcherEnabled() ? (watcherTimer || watcherRunning ? "running" : "idle") : "disabled"}${watcherLastTickAt ? `, last tick ${watcherLastTickAt}` : ""}${watcherLastError ? `, last error: ${watcherLastError}` : ""}`;
+			return { content: [{ type: "text", text: `${text}${eventNote}${watcherNote}` }], details: { workers, events, watcher: { enabled: watcherEnabled(), running: Boolean(watcherTimer || watcherRunning), startedAt: watcherStartedAt, lastTickAt: watcherLastTickAt, lastStopAt: watcherLastStopAt, lastError: watcherLastError } } };
 		},
 	});
 
@@ -1288,6 +1548,14 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			record.statusMessage = params.state === "blocked" ? params.message || "Worker needs user/parent attention." : params.message;
 			record.markedAt = new Date().toISOString();
 			record.updatedAt = record.markedAt;
+			await writeLifecycleRecord(record, {
+				state: params.state === "blocked" ? "blocked" : "working",
+				source: "manual",
+				message: record.statusMessage,
+				needsUser: record.needsUser,
+				updatedAt: record.markedAt,
+			});
+			applyLifecycleRecord(record, await readLifecycleRecord(record));
 			if (params.state === "running") {
 				record.needsUser = false;
 				record.blockedSurfacedAt = undefined;

@@ -22,6 +22,13 @@ A worker can be:
 
 Herdr panes and tmux sessions are implementation details, not separate user-facing worker types.
 
+## Model routing
+
+- For review, planning, architecture, final synthesis, and high-stakes judgement, keep the parent/current model unless the user asks otherwise.
+- For smaller scoped orchestrator Pi workers, default to Spark high by setting `command: "pi --model openai-codex/gpt-5.3-codex-spark:high"`.
+- Use Spark high for focused implementation, bugfixes, tests, repo inspection, first-pass reviews, and parallel subagent work.
+- Escalate away from Spark high when the task needs image input, very large context beyond Spark's 128K window, deep architectural judgement, or final review.
+
 ## Tools
 
 ### `orchestrator_worker_start`
@@ -100,9 +107,23 @@ Example shape:
 
 Starts are attempted in order. By default later workers still start if one fails; set `continueOnError: false` to stop on the first failure.
 
+### `orchestrator_report_state`
+
+Report lifecycle state from inside an orchestrator-created worker without reading or writing terminal transcript content. Worker identity is inferred from orchestrator-injected environment variables, so a child worker cannot report state for sibling workers.
+
+Supported states:
+
+- `working`: worker is actively handling the delegated task.
+- `blocked`: worker needs parent/user attention; `needsUser` defaults to `true`.
+- `done`: worker has semantically completed, even if the Pi process remains alive at a prompt.
+- `failed`: worker failed or cannot continue.
+- `unknown`: worker cannot determine its own state.
+
+Hidden Pi task prompts ask subagents to call this tool when blocking, resuming, and finishing. The older `ORCHESTRATOR_RESULT` footer remains a manual poll/read fallback.
+
 ### `orchestrator_worker_list`
 
-List workers from the shared registry. Listing performs one full-history poll pass first, so worker states and structured result footers are refreshed before display.
+List workers from the shared registry. Listing performs one poll pass first, so worker states and structured result footers are refreshed before display.
 
 ### `orchestrator_worker_poll`
 
@@ -116,7 +137,7 @@ Refresh all workers once without dumping full pane output. Polling:
 
 By default poll scans `5000` lines per worker, matching the managed tmux history limit. This keeps token usage low because captured output is inspected internally but not returned unless there is a compact state change summary. Callers may pass a smaller `lines` value for cheaper targeted polling.
 
-Use this as the parent orchestration heartbeat until a real event loop/watch mode exists. Since there is intentionally no foreground watch loop yet, parent agents should call poll opportunistically between orchestration steps and before deciding workers are idle.
+Polling remains available as an explicit transcript-inspection fallback. It is no longer the only heartbeat: the extension also starts a lightweight background watcher for workers owned by the current Pi session.
 
 ### `orchestrator_worker_status`
 
@@ -190,9 +211,10 @@ Lifecycle states:
 
 - `starting`: registry created and tmux launch in progress.
 - `running`: worker process appears alive.
-- `blocked`: worker is known to need user/parent attention. Currently set explicitly with `orchestrator_worker_mark`; automatic detection is future work.
-- `exited`: command exited with status `0`.
-- `failed`: command exited nonzero, exited by signal, or failed to start.
+- `blocked`: worker is known to need user/parent attention. Set explicitly with `orchestrator_worker_mark`, worker-declared through `orchestrator_report_state`, or parsed from a structured footer during explicit poll/read.
+- `done`: worker reported semantic completion through `orchestrator_report_state` or a parsed structured footer, even if the process remains alive.
+- `exited`: command exited with status `0` without an explicit semantic `done` report.
+- `failed`: command exited nonzero, exited by signal, failed to start, or reported `failed`.
 - `closed`: orchestrator explicitly closed the worker.
 - `orphaned`: registry exists but the backend tmux session is missing and no exit metadata proves a normal exit.
 - `unknown`: refresh could not determine state.
@@ -204,6 +226,18 @@ Visibility states:
 - `unknown`: visibility could not be determined.
 
 `orchestrator_worker_list` refreshes worker records before displaying them. Missing tmux sessions are **not** treated as done unless exit metadata or tmux pane status proves the command exited.
+
+## Background watcher
+
+When `PI_ORCHESTRATOR_WATCH` is not `0`/`false`/`off`/`no`, the parent extension starts one in-process watcher after this Pi session creates an active worker. The watcher is extension-owned but session-scoped:
+
+- it only observes records whose `ownerSessionId` matches the current Pi session;
+- it stops once that session has no active delegated workers (`starting`, `running`, `blocked`, `unknown`, or `orphaned`);
+- it refreshes tmux liveness and the per-worker lifecycle state file;
+- it updates the registry and Herdr agent state for already-surfaced panes;
+- it does **not** capture pane output, parse transcripts, auto-surface hidden workers, or clean worktrees.
+
+The watch interval defaults to `2500ms` and can be bounded with `PI_ORCHESTRATOR_WATCH_INTERVAL_MS` (`1000ms` minimum, `30000ms` maximum). Registry writes use per-worker lock directories plus atomic renames so multiple Pi processes do not write the same worker record concurrently. Ownership filtering prevents one Pi session's watcher from mutating another session's delegated workers.
 
 ## Current cutover state
 
@@ -229,6 +263,6 @@ The old managed terminal implementation remains internally as the worker backend
 ## Limitations
 
 - `kind=pi` currently starts `pi` in the managed terminal; hidden Pi control is still raw terminal read/send until surfaced.
-- Automatic auth prompt detection and background watching are not implemented yet; blocked/resumed state is explicit/manual via `orchestrator_worker_mark` or worker-declared via final `ORCHESTRATOR_RESULT` parsed during poll/read/list.
+- Automatic auth prompt detection is not implemented yet; blocked/resumed state is explicit/manual via `orchestrator_worker_mark`, worker-declared via `orchestrator_report_state`, or worker-declared via final `ORCHESTRATOR_RESULT` parsed during explicit poll/read/list.
 - Cleanup/reconciliation is still basic, but missing sessions without exit metadata are marked `orphaned`, not `exited`.
 - Surfacing requires Herdr (`HERDR_ENV=1`) and the `herdr` CLI.
