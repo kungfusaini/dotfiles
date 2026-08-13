@@ -1,5 +1,5 @@
-import { execFile } from "node:child_process";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFile, execFileSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -38,6 +38,47 @@ function xdgStateHome(): string {
   return process.env.XDG_STATE_HOME || join(homedir(), ".local", "state");
 }
 
+type OrchestratorRegistryRecord = {
+  state?: unknown;
+  tmuxSession?: unknown;
+  tmuxServer?: unknown;
+};
+
+const ORCHESTRATOR_TMUX_PROBE_TTL_MS = 2_500;
+const ORCHESTRATOR_TMUX_SERVER_FALLBACK = "pi-orchestrator";
+const orchestratorSessionProbeCache = new Map<string, { alive: boolean; checkedAt: number }>();
+
+function orchestratorTmuxConfPath(): string {
+  return join(xdgStateHome(), "pi", "orchestrator", "terminals", "tmux.conf");
+}
+
+function isOrchestratorTmuxSessionAlive(tmuxServer: string, tmuxSession: string): boolean {
+  const cacheKey = `${tmuxServer}:${tmuxSession}`;
+  const now = Date.now();
+  const cached = orchestratorSessionProbeCache.get(cacheKey);
+  if (cached && now - cached.checkedAt < ORCHESTRATOR_TMUX_PROBE_TTL_MS) return cached.alive;
+
+  try {
+    const args = ["-L", tmuxServer, "has-session", "-t", tmuxSession];
+    if (existsSync(orchestratorTmuxConfPath())) {
+      args.splice(2, 0, "-f", orchestratorTmuxConfPath());
+    }
+    execFileSync("tmux", args, { timeout: 1_000 });
+    orchestratorSessionProbeCache.set(cacheKey, { alive: true, checkedAt: now });
+    return true;
+  } catch {
+    orchestratorSessionProbeCache.set(cacheKey, { alive: false, checkedAt: now });
+    return false;
+  }
+}
+
+function isRunningOrchestratorRecord(record: OrchestratorRegistryRecord): boolean {
+  if (record.state !== "running" && record.state !== "starting") return false;
+  if (typeof record.tmuxSession !== "string" || !record.tmuxSession) return false;
+  const tmuxServer = typeof record.tmuxServer === "string" && record.tmuxServer ? record.tmuxServer : ORCHESTRATOR_TMUX_SERVER_FALLBACK;
+  return isOrchestratorTmuxSessionAlive(tmuxServer, record.tmuxSession);
+}
+
 function runningOrchestratorAgentCount(): number {
   try {
     const registryDir = join(xdgStateHome(), "pi", "orchestrator", "terminals", "registry");
@@ -45,8 +86,8 @@ function runningOrchestratorAgentCount(): number {
     for (const file of readdirSync(registryDir)) {
       if (!file.endsWith(".json")) continue;
       try {
-        const record = JSON.parse(readFileSync(join(registryDir, file), "utf8")) as { state?: unknown };
-        if (record.state === "running" || record.state === "starting") count++;
+        const record = JSON.parse(readFileSync(join(registryDir, file), "utf8")) as OrchestratorRegistryRecord;
+        if (isRunningOrchestratorRecord(record)) count++;
       } catch {
         // Ignore malformed/stale worker records.
       }
