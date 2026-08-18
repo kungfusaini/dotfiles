@@ -1,6 +1,6 @@
 ---
 name: ui-craft
-description: Ambient product UI craft skill for building or reviewing any web/mobile/desktop interface, dashboard, app screen, form, component, empty state, motion, or frontend redesign. Use for all UI work. Enforces shippable product composition, subtractive design, useful state handling, restrained purposeful motion, screenshot review, and mechanical ux_audit gates. Consolidates anti-slop design-system discipline with Emil-style interaction craft so the user does not have to invoke multiple UI skills manually.
+description: Ambient product UI craft skill for building or reviewing any web/mobile/desktop interface, dashboard, app screen, form, component, empty state, motion, theme, or frontend redesign. Accepts visual direction from ordinary Markdown theme files, with bundled default and Gruvbox Dark themes. Use for all UI work. Enforces shippable product composition, subtractive design, useful state handling, restrained purposeful motion, screenshot review, and mechanical ux_audit gates.
 license: MIT
 metadata:
   owner: sumeet
@@ -32,7 +32,7 @@ For any UI build/redesign/review, do these in order:
 
 1. **Inventory** — one line listing components and required states.
 2. **Composition direction** — decide the screen architecture before coding.
-3. **System constraints** — reuse existing design system/tokens; otherwise define a minimal implicit system.
+3. **System constraints** — resolve any supplied Markdown theme, then map it into the existing design system/tokens; otherwise use the bundled default.
 4. **Implementation** — build inside that system.
 5. **Motion pass** — add or explicitly reject purposeful motion opportunities.
 6. **Rendered review** — inspect screenshot/browser result when possible.
@@ -139,13 +139,51 @@ Rule:
 - default-card reflex: rounded huge cards, 1px gray borders, shadow as texture
 - fake productivity copy and decorative icons
 
-## 4. Design-system floor
+## 4. Themes and the design-system floor
 
-Use the project’s existing system first. Search for `DESIGN.md`, Tailwind config,
-CSS variables, theme files, component libraries, or existing screens.
+A theme is an ordinary Markdown file describing visual direction. It is an input
+to the design process, not a framework-specific stylesheet or a substitute for
+product requirements, states, accessibility, or rendered review.
 
-If none exists, use a restrained implicit system for the task and offer to persist
-it only if useful. Do not block.
+### Theme inputs
+
+Accept any of these when the user supplies a theme:
+
+- a bundled theme name
+- a local Markdown file path
+- pasted Markdown content
+
+Bundled themes live in [`themes/`](themes/):
+
+- [`default`](themes/default.md) — quiet neutral light product baseline
+- [`gruvbox-dark`](themes/gruvbox-dark.md) — warm Gruvbox dark, cream text,
+  orange accent, and mono-forward typography
+
+Read the complete selected theme before styling. Theme Markdown has no required
+frontmatter or rigid schema. It may specify any subset of character, colors,
+type, spacing, shape, elevation, interaction, motion, or explicit avoidances.
+Missing guidance stays with the existing project system when one exists;
+otherwise it inherits from [`themes/default.md`](themes/default.md). See
+[`themes/README.md`](themes/README.md) for the lightweight authoring contract.
+
+### Resolution order
+
+1. **Explicit user theme** — use the supplied name, path, or Markdown. If a
+   project system exists, map the theme’s intent into its tokens and components
+   rather than creating a competing system.
+2. **Existing project system** — when no theme was supplied, search for
+   `DESIGN.md`, Tailwind config, CSS variables, theme files, component libraries,
+   and established screens; use the first authoritative source.
+3. **Bundled default** — when neither exists, read and use
+   [`themes/default.md`](themes/default.md). Offer to persist the resulting system
+   to the project only if useful; do not mutate project files merely to save the
+   choice.
+
+A named theme is direction, not permission to copy inaccessible values blindly.
+Translate primitive values into semantic and component tokens, preserve the
+project’s architecture, and repair contrast or state gaps before implementation.
+If the user’s theme conflicts with an existing system in a consequential way,
+state the mapping or ask for clarification.
 
 Required system constraints:
 
