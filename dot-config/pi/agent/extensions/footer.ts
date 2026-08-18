@@ -28,6 +28,8 @@ const OPENAI_CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token";
 let codexUsageText = "Codex usage loading…";
 let codexUsageTimer: NodeJS.Timeout | undefined;
 let codexUsageInFlight = false;
+let agentSpinnerTimer: NodeJS.Timeout | undefined;
+let agentSpinnerIndex = 0;
 let activeTui: { requestRender(): void } | undefined;
 
 function piAgentDir(): string {
@@ -40,13 +42,18 @@ function xdgStateHome(): string {
 
 type OrchestratorRegistryRecord = {
   state?: unknown;
+  ownerSessionId?: unknown;
   tmuxSession?: unknown;
   tmuxServer?: unknown;
 };
 
 const ORCHESTRATOR_TMUX_PROBE_TTL_MS = 2_500;
+const ORCHESTRATOR_AGENT_COUNT_TTL_MS = 1_000;
 const ORCHESTRATOR_TMUX_SERVER_FALLBACK = "pi-orchestrator";
+const AGENT_SPINNER_INTERVAL_MS = 100;
+const AGENT_SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const orchestratorSessionProbeCache = new Map<string, { alive: boolean; checkedAt: number }>();
+const orchestratorAgentCountCache = new Map<string, { count: number; checkedAt: number }>();
 
 function orchestratorTmuxConfPath(): string {
   return join(xdgStateHome(), "pi", "orchestrator", "terminals", "tmux.conf");
@@ -79,7 +86,11 @@ function isRunningOrchestratorRecord(record: OrchestratorRegistryRecord): boolea
   return isOrchestratorTmuxSessionAlive(tmuxServer, record.tmuxSession);
 }
 
-function runningOrchestratorAgentCount(): number {
+function runningOrchestratorAgentCount(ownerSessionId: string | undefined): number {
+  if (!ownerSessionId) return 0;
+  const now = Date.now();
+  const cached = orchestratorAgentCountCache.get(ownerSessionId);
+  if (cached && now - cached.checkedAt < ORCHESTRATOR_AGENT_COUNT_TTL_MS) return cached.count;
   try {
     const registryDir = join(xdgStateHome(), "pi", "orchestrator", "terminals", "registry");
     let count = 0;
@@ -87,13 +98,15 @@ function runningOrchestratorAgentCount(): number {
       if (!file.endsWith(".json")) continue;
       try {
         const record = JSON.parse(readFileSync(join(registryDir, file), "utf8")) as OrchestratorRegistryRecord;
-        if (isRunningOrchestratorRecord(record)) count++;
+        if (record.ownerSessionId === ownerSessionId && isRunningOrchestratorRecord(record)) count++;
       } catch {
         // Ignore malformed/stale worker records.
       }
     }
+    orchestratorAgentCountCache.set(ownerSessionId, { count, checkedAt: now });
     return count;
   } catch {
+    orchestratorAgentCountCache.set(ownerSessionId, { count: 0, checkedAt: now });
     return 0;
   }
 }
@@ -101,6 +114,20 @@ function runningOrchestratorAgentCount(): number {
 function formatAgentCount(count: number): string | undefined {
   if (count <= 0) return undefined;
   return `${count} ${count === 1 ? "agent" : "agents"}`;
+}
+
+function setAgentSpinnerRunning(running: boolean): void {
+  if (!running) {
+    if (agentSpinnerTimer) clearInterval(agentSpinnerTimer);
+    agentSpinnerTimer = undefined;
+    agentSpinnerIndex = 0;
+    return;
+  }
+  if (agentSpinnerTimer) return;
+  agentSpinnerTimer = setInterval(() => {
+    agentSpinnerIndex = (agentSpinnerIndex + 1) % AGENT_SPINNER_FRAMES.length;
+    activeTui?.requestRender();
+  }, AGENT_SPINNER_INTERVAL_MS);
 }
 
 function readCodexAuth(): OAuthCredential | undefined {
@@ -243,7 +270,10 @@ export default function (pi: ExtensionAPI) {
       activeTui = tui;
       const unsub = footerData.onBranchChange(() => tui.requestRender());
       return {
-        dispose: unsub,
+        dispose() {
+          unsub();
+          setAgentSpinnerRunning(false);
+        },
         invalidate() {},
         render(width: number): string[] {
           let pwd = formatCwdForFooter(ctx.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
@@ -287,8 +317,12 @@ export default function (pi: ExtensionAPI) {
             .filter(([key]) => key !== "vim-mode" && key !== "workspace")
             .sort(([a], [b]) => a.localeCompare(b))
             .map(([, text]) => sanitizeStatusText(text));
-          const agentCount = formatAgentCount(runningOrchestratorAgentCount());
-          if (agentCount) statusItems.push(theme.fg("muted", agentCount));
+          const agentCount = formatAgentCount(runningOrchestratorAgentCount(ctx.sessionManager.getSessionId()));
+          setAgentSpinnerRunning(Boolean(agentCount));
+          if (agentCount) {
+            const spinner = theme.fg("accent", AGENT_SPINNER_FRAMES[agentSpinnerIndex]);
+            statusItems.push(`${theme.fg("muted", agentCount)} ${spinner}`);
+          }
           const statusLine = statusItems.join(theme.fg("dim", " • "));
           if (statusLine) lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
           return lines;
@@ -304,6 +338,8 @@ export default function (pi: ExtensionAPI) {
   pi.on("session_shutdown", () => {
     if (codexUsageTimer) clearInterval(codexUsageTimer);
     codexUsageTimer = undefined;
+    setAgentSpinnerRunning(false);
+    orchestratorAgentCountCache.clear();
     activeTui = undefined;
   });
 }
