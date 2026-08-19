@@ -48,6 +48,8 @@
             version = "0.1.0-unstable-2026-06-09";
             pyproject = true;
 
+            patches = [ ./codex-imagegen-style-generate.patch ];
+
             src = pkgs.fetchFromGitHub {
               owner = "jdmnk";
               repo = "codex-imagegen-cli";
