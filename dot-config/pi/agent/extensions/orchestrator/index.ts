@@ -7,10 +7,12 @@ import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-wor
 import { Type } from "typebox";
 
 type WorkerState = "starting" | "running" | "blocked" | "done" | "exited" | "failed" | "closed" | "orphaned" | "unknown";
+type ParentWakeState = Extract<WorkerState, "blocked" | "done" | "exited" | "failed">;
 type AgentLifecycleState = "starting" | "working" | "blocked" | "done" | "failed" | "unknown";
 type AgentLifecycleSource = "orchestrator" | "child" | "manual";
 type WorkerVisibility = "hidden" | "visible" | "unknown";
 type WorkerWorkspace = "current" | "worktree";
+type WorkerScope = "owned" | "all";
 
 interface StructuredResult {
 	status: "done" | "blocked" | "failed";
@@ -81,6 +83,8 @@ interface TerminalRecord {
 	lifecycleUpdatedAt?: string;
 	watcherLastObservedAt?: string;
 	watcherLastError?: string;
+	parentNotificationKey?: string;
+	parentNotificationQueuedAt?: string;
 	lastError?: string;
 	surfaceCloseError?: string;
 }
@@ -97,17 +101,25 @@ const TerminalNameParams = Type.Object({
 	force: Type.Optional(Type.Boolean({ description: "Allow mutating a worker owned by another orchestrator session. Default false." })),
 });
 
+const WorkerScopeSchema = StringEnum(["owned", "all"] as const, {
+	description: "Scope for worker discovery and inspection. owned limits to the current Pi session; all is an explicit global admin view.",
+	default: "owned",
+});
+
 const TerminalReadParams = Type.Object({
 	name: Type.String({ description: "Worker name returned by orchestrator_worker_start/list." }),
 	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to read. Default 80." })),
+	scope: Type.Optional(WorkerScopeSchema),
 });
 
 const WorkerPollParams = Type.Object({
 	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to inspect per active worker. Default 5000, matching the managed tmux history limit." })),
+	scope: Type.Optional(WorkerScopeSchema),
 });
 
 const WorkerStatusParams = Type.Object({
 	lines: Type.Optional(Type.Integer({ minimum: 1, description: "Recent terminal lines to inspect per active worker. Default 5000, matching the managed tmux history limit." })),
+	scope: Type.Optional(WorkerScopeSchema),
 	includeClosed: Type.Optional(Type.Boolean({ description: "Include closed workers in the dashboard. Default false." })),
 });
 
@@ -698,8 +710,17 @@ function applyExitMetadata(record: TerminalRecord, metadata: Partial<TerminalRec
 	if (typeof metadata.exitCode === "number") record.exitCode = metadata.exitCode;
 	if (metadata.exitSignal) record.exitSignal = metadata.exitSignal;
 	if (record.endedAt || typeof record.exitCode === "number" || record.exitSignal) {
-		if (record.exitSignal || (record.exitCode ?? 0) !== 0) record.state = "failed";
-		else record.state = record.lifecycleState === "done" ? "done" : "exited";
+		if (record.exitSignal || (record.exitCode ?? 0) !== 0) {
+			record.state = "failed";
+			if (record.lifecycleState !== "failed") {
+				record.statusMessage = record.exitSignal
+					? `Worker ${record.name} exited from signal ${record.exitSignal}.`
+					: `Worker ${record.name} exited with code ${record.exitCode ?? "unknown"}.`;
+			}
+		} else {
+			record.state = record.lifecycleState === "done" ? "done" : "exited";
+			if (record.state === "exited") record.statusMessage = `Worker ${record.name} exited successfully.`;
+		}
 		return true;
 	}
 	return false;
@@ -814,8 +835,26 @@ function shouldInspectOutput(record: TerminalRecord): boolean {
 	return record.state === "running" || record.state === "blocked" || record.state === "exited" || record.state === "failed";
 }
 
-async function pollWorkersOnce(pi: ExtensionAPI, ctx: ExtensionContext, lines: number, signal?: AbortSignal): Promise<{ workers: TerminalRecord[]; events: WorkerPollEvent[] }> {
-	const terminalRecords = await loadTerminalRecords();
+function isOwnedWorker(record: TerminalRecord, ownerSessionId: string | undefined): boolean {
+	return Boolean(ownerSessionId) && record.ownerSessionId === ownerSessionId;
+}
+
+function workerScope(records: TerminalRecord[], ctx: ExtensionContext, scope: WorkerScope): TerminalRecord[] {
+	if (scope === "all") return records;
+	const currentSessionId = ctx.sessionManager.getSessionId();
+	return records.filter((record) => isOwnedWorker(record, currentSessionId));
+}
+
+function assertWorkerReadable(record: TerminalRecord, ctx: ExtensionContext, scope: WorkerScope) {
+	if (scope === "all") return;
+	const currentSessionId = ctx.sessionManager.getSessionId();
+	if (!isOwnedWorker(record, currentSessionId)) {
+		throw new Error(`Worker ${record.name} is owned by another orchestrator session (${record.ownerSessionId || "unknown"}). Use scope=all for explicit global inspection.`);
+	}
+}
+
+async function pollWorkersOnce(pi: ExtensionAPI, ctx: ExtensionContext, lines: number, signal?: AbortSignal, scope: WorkerScope = "owned"): Promise<{ workers: TerminalRecord[]; events: WorkerPollEvent[] }> {
+	const terminalRecords = workerScope(await loadTerminalRecords(), ctx, scope);
 	const refreshed: TerminalRecord[] = [];
 	const events: WorkerPollEvent[] = [];
 	for (const record of terminalRecords) {
@@ -1348,6 +1387,24 @@ function isActiveForWatcher(record: TerminalRecord): boolean {
 	return record.state === "starting" || record.state === "running" || record.state === "blocked" || record.state === "unknown" || record.state === "orphaned";
 }
 
+function isParentWakeState(state: WorkerState): state is ParentWakeState {
+	return state === "blocked" || state === "done" || state === "exited" || state === "failed";
+}
+
+function parentWakeEventKey(record: TerminalRecord): string | undefined {
+	if (!isParentWakeState(record.state)) return undefined;
+	const matchingLifecycle =
+		(record.state === "blocked" && record.lifecycleState === "blocked") ||
+		(record.state === "done" && record.lifecycleState === "done") ||
+		(record.state === "failed" && record.lifecycleState === "failed");
+	if (matchingLifecycle && record.lifecycleUpdatedAt) return `${record.state}:lifecycle:${record.lifecycleUpdatedAt}`;
+	if ((record.state === "exited" || record.state === "failed") && record.endedAt) {
+		return `${record.state}:exit:${record.endedAt}:${record.exitCode ?? ""}:${record.exitSignal ?? ""}`;
+	}
+	if (record.structuredResult) return `${record.state}:result:${JSON.stringify(record.structuredResult)}`;
+	return `${record.state}:state`;
+}
+
 function watcherEnabled(): boolean {
 	return !/^(0|false|off|no)$/i.test(process.env.PI_ORCHESTRATOR_WATCH || "");
 }
@@ -1360,10 +1417,53 @@ function watcherIntervalMs(): number {
 export default function orchestratorExtension(pi: ExtensionAPI) {
 	let watcherTimer: ReturnType<typeof setTimeout> | undefined;
 	let watcherRunning = false;
+	let watcherShuttingDown = false;
 	let watcherStartedAt: string | undefined;
 	let watcherLastTickAt: string | undefined;
 	let watcherLastStopAt: string | undefined;
 	let watcherLastError: string | undefined;
+
+	async function notifyParentOfWorkerUpdates(records: TerminalRecord[]): Promise<void> {
+		const pending: Array<{ record: TerminalRecord; eventKey: string }> = [];
+		for (const record of records) {
+			const eventKey = parentWakeEventKey(record);
+			if (eventKey && record.parentNotificationKey !== eventKey) pending.push({ record, eventKey });
+		}
+		if (!pending.length) return;
+
+		pi.sendMessage(
+			{
+				customType: "orchestrator-worker-update",
+				content: [
+					"Orchestrator worker state update:",
+					...pending.map(({ record }) => formatWorkerStatusLine(record)),
+					"",
+					"Handle these updates now. Inspect worker output or status when needed. If the broader task requires more work, continue autonomously and dispatch follow-up workers when appropriate. If the task is complete, or the user needs an update or decision, send the user a concise message. Do not ask the user to poll for worker completion.",
+				].join("\n"),
+				display: false,
+				details: {
+					workers: pending.map(({ record }) => ({
+						name: record.name,
+						state: record.state,
+						message: record.statusMessage || record.structuredResult?.summary,
+						needsUser: record.needsUser,
+						branch: record.worktreeBranch,
+					})),
+				},
+			},
+			{ deliverAs: "followUp", triggerTurn: true },
+		);
+
+		const queuedAt = new Date().toISOString();
+		for (const { record: notified, eventKey } of pending) {
+			const current = (await loadTerminalRecord(notified.name)) || notified;
+			if (parentWakeEventKey(current) !== eventKey) continue;
+			current.parentNotificationKey = eventKey;
+			current.parentNotificationQueuedAt = queuedAt;
+			current.updatedAt = queuedAt;
+			await saveTerminalRecord(current);
+		}
+	}
 
 	async function refreshOwnedWorkersStateOnly(ctx: ExtensionContext, signal?: AbortSignal): Promise<TerminalRecord[]> {
 		const currentSessionId = ctx.sessionManager.getSessionId();
@@ -1392,6 +1492,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 
 	function ensureWatcherStarted(ctx: ExtensionContext) {
 		if (!watcherEnabled() || watcherTimer || watcherRunning) return;
+		watcherShuttingDown = false;
 		watcherStartedAt = new Date().toISOString();
 		const tick = async () => {
 			watcherTimer = undefined;
@@ -1399,21 +1500,30 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 			try {
 				watcherLastTickAt = new Date().toISOString();
 				const refreshed = await refreshOwnedWorkersStateOnly(ctx);
+				await notifyParentOfWorkerUpdates(refreshed);
 				watcherLastError = undefined;
-				if (refreshed.some(isActiveForWatcher)) {
+				if (!watcherShuttingDown && refreshed.some(isActiveForWatcher)) {
 					watcherTimer = setTimeout(tick, watcherIntervalMs());
 				} else {
 					watcherLastStopAt = new Date().toISOString();
 				}
 			} catch (error) {
 				watcherLastError = error instanceof Error ? error.message : String(error);
-				watcherTimer = setTimeout(tick, watcherIntervalMs());
+				if (!watcherShuttingDown) watcherTimer = setTimeout(tick, watcherIntervalMs());
 			} finally {
 				watcherRunning = false;
 			}
 		};
 		watcherTimer = setTimeout(tick, watcherIntervalMs());
 	}
+
+	pi.on("session_shutdown", async () => {
+		watcherShuttingDown = true;
+		if (watcherTimer) clearTimeout(watcherTimer);
+		watcherTimer = undefined;
+		watcherLastStopAt = new Date().toISOString();
+	});
+
 	pi.registerTool({
 		name: "orchestrator_report_state",
 		label: "Report Orchestrator Worker State",
@@ -1490,9 +1600,11 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		name: "orchestrator_worker_list",
 		label: "List Workers",
 		description: "List unified orchestrator workers.",
-		parameters: Type.Object({}),
-		async execute(_id, _params, signal, _onUpdate, ctx) {
-			const { workers } = await pollWorkersOnce(pi, ctx, TMUX_HISTORY_LIMIT, signal);
+		parameters: Type.Object({
+			scope: Type.Optional(WorkerScopeSchema),
+		}),
+		async execute(_id, params, signal, _onUpdate, ctx) {
+			const { workers } = await pollWorkersOnce(pi, ctx, TMUX_HISTORY_LIMIT, signal, params.scope ?? "owned");
 			const sorted = workers.sort((a, b) => (a.state === "blocked" ? 0 : 1) - (b.state === "blocked" ? 0 : 1) || (b.updatedAt || b.createdAt).localeCompare(a.updatedAt || a.createdAt));
 			const text = sorted
 				.map((r) => `worker:${r.name}\n  state: ${r.state}${r.needsUser ? " (needs user)" : ""}\n  visibility: ${r.visibility}${r.paneId ? ` (${r.paneId})` : ""}\n  workspace: ${r.workspace || "current"}${r.worktreeBranch ? ` (${r.worktreeBranch})` : ""}\n  tmux: ${r.tmuxServer}/${r.tmuxSession}\n  cwd: ${r.cwd}\n  command: ${r.command}${r.task ? `\n  task: ${r.task}` : ""}${r.lifecycleState ? `\n  lifecycle: ${r.lifecycleState}${r.lifecycleSource ? ` (${r.lifecycleSource})` : ""}` : ""}${r.statusMessage ? `\n  message: ${r.statusMessage}` : ""}${r.structuredResult ? `\n  result: ${r.structuredResult.status}` : ""}${r.structuredResultParseError ? `\n  resultParseNote: ${r.structuredResultParseError}` : ""}${typeof r.exitCode === "number" ? `\n  exitCode: ${r.exitCode}` : ""}${r.worktreeCleanupError ? `\n  worktreeCleanupError: ${r.worktreeCleanupError}` : ""}${r.worktreeBranchCleanupError ? `\n  worktreeBranchCleanupError: ${r.worktreeBranchCleanupError}` : ""}${r.lastError ? `\n  lastError: ${r.lastError}` : ""}`)
@@ -1507,7 +1619,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		description: "Refresh all workers once, parse structured results, and auto-surface hidden blocked workers without dumping full output.",
 		parameters: WorkerPollParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
-			const { workers, events } = await pollWorkersOnce(pi, ctx, params.lines ?? TMUX_HISTORY_LIMIT, signal);
+			const { workers, events } = await pollWorkersOnce(pi, ctx, params.lines ?? TMUX_HISTORY_LIMIT, signal, params.scope ?? "owned");
 			const active = workers.filter((worker) => worker.state !== "closed").length;
 			const blocked = workers.filter((worker) => worker.state === "blocked").length;
 			const text = events.length
@@ -1524,7 +1636,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		parameters: WorkerStatusParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			ensureWatcherStarted(ctx);
-			const { workers, events } = await pollWorkersOnce(pi, ctx, params.lines ?? TMUX_HISTORY_LIMIT, signal);
+			const { workers, events } = await pollWorkersOnce(pi, ctx, params.lines ?? TMUX_HISTORY_LIMIT, signal, params.scope ?? "owned");
 			const text = formatWorkerDashboard(workers, params.includeClosed ?? false);
 			const eventNote = events.length ? `\n\nRecent changes: ${events.map((event) => `${event.name}:${event.beforeState}->${event.afterState}${event.surfaced ? ":surfaced" : ""}`).join(", ")}` : "";
 			const watcherNote = `\n\nWatcher: ${watcherEnabled() ? (watcherTimer || watcherRunning ? "running" : "idle") : "disabled"}${watcherLastTickAt ? `, last tick ${watcherLastTickAt}` : ""}${watcherLastError ? `, last error: ${watcherLastError}` : ""}`;
@@ -1585,8 +1697,9 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		parameters: TerminalReadParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const record = await getTerminal(pi, params.name, signal);
+			assertWorkerReadable(record, ctx, params.scope ?? "owned");
 			const output = await captureWorkerOutput(pi, record, params.lines ?? 80, signal);
-			const surfaced = await autoSurfaceBlockedWorker(pi, ctx, record, signal);
+			const surfaced = params.scope === "all" ? false : await autoSurfaceBlockedWorker(pi, ctx, record, signal);
 			const resultNote = record.structuredResult ? `\n\nParsed ORCHESTRATOR_RESULT:\n${JSON.stringify(record.structuredResult, null, 2)}` : record.structuredResultParseError ? `\n\nResult footer parse note: ${record.structuredResultParseError}` : "";
 			const surfaceNote = surfaced ? `\n\nBlocked worker surfaced in Herdr pane ${record.paneId}.` : "";
 			return { content: [{ type: "text", text: `${output || "(no output)"}${resultNote}${surfaceNote}` }], details: { worker: record } };

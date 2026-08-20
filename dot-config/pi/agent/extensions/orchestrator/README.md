@@ -124,11 +124,11 @@ Hidden Pi task prompts ask subagents to call this tool when blocking, resuming, 
 
 ### `orchestrator_worker_list`
 
-List workers from the shared registry. Listing performs one poll pass first, so worker states and structured result footers are refreshed before display.
+List workers from the shared registry. By default this is session-scoped and only shows workers owned by the current Pi session. Pass `scope=all` for an explicit global admin view. Listing performs one poll pass first, so worker states and structured result footers are refreshed before display.
 
 ### `orchestrator_worker_poll`
 
-Refresh all workers once without dumping full pane output. Polling:
+Refresh workers once without dumping full pane output. Polling:
 
 - refreshes lifecycle/visibility from tmux and registry state;
 - captures recent output from active/readable workers;
@@ -142,7 +142,7 @@ Polling remains available as an explicit transcript-inspection fallback. It is n
 
 ### `orchestrator_worker_status`
 
-Show a compact parent dashboard after one poll pass. Workers are grouped as:
+Show a compact parent dashboard after one poll pass. By default this is session-scoped; pass `scope=all` for global inspection. Workers are grouped as:
 
 - needs attention;
 - running;
@@ -169,7 +169,7 @@ Blocked workers are shown first in `orchestrator_worker_list`. Marking a worker 
 
 ### `orchestrator_worker_read`
 
-Read recent output from a hidden or surfaced worker.
+Read recent output from a hidden or surfaced worker. By default this only allows workers owned by the current Pi session; pass `scope=all` for explicit global inspection.
 
 ### `orchestrator_worker_send`
 
@@ -202,7 +202,7 @@ ${XDG_STATE_HOME:-~/.local/state}/pi/orchestrator/terminals/registry/<name>.json
 ${XDG_STATE_HOME:-~/.local/state}/pi/orchestrator/terminals/exit/<name>.json
 ```
 
-The shared tmux server is global, but worker mutation is owner-scoped: each worker record stores the owning Pi session id. Other orchestrators can list/read the registry, but mutating actions require the owner session unless `force=true` is supplied intentionally.
+The shared tmux server is global, but worker mutation is owner-scoped: each worker record stores the owning Pi session id. Default list/read/status/poll behavior is also owner-scoped; pass `scope=all` for explicit global inspection. Mutating actions still require the owner session unless `force=true` is supplied intentionally.
 
 ## State model
 
@@ -226,17 +226,23 @@ Visibility states:
 - `visible`: surfaced into a Herdr pane.
 - `unknown`: visibility could not be determined.
 
-`orchestrator_worker_list` refreshes worker records before displaying them. Missing tmux sessions are **not** treated as done unless exit metadata or tmux pane status proves the command exited.
+`orchestrator_worker_list` refreshes worker records before displaying them. Missing tmux sessions are **not** treated as done unless exit metadata or tmux pane status proves the command exited. Default worker discovery only includes workers owned by the current Pi session.
 
 ## Background watcher
 
 When `PI_ORCHESTRATOR_WATCH` is not `0`/`false`/`off`/`no`, the parent extension starts one in-process watcher after this Pi session creates an active worker. The watcher is extension-owned but session-scoped:
 
 - it only observes records whose `ownerSessionId` matches the current Pi session;
+- default list/read/status/poll calls only observe records whose `ownerSessionId` matches the current Pi session, unless `scope=all` is used explicitly;
 - it stops once that session has no active delegated workers (`starting`, `running`, `blocked`, `unknown`, or `orphaned`);
 - it refreshes tmux liveness and the per-worker lifecycle state file;
 - it updates the registry and Herdr agent state for already-surfaced panes;
+- when an owned worker first enters `blocked`, `done`, `exited`, or `failed`, it queues a hidden `followUp` message with `triggerTurn: true` so the parent agent handles the result immediately;
+- the parent agent decides whether to inspect more output, continue the workflow or dispatch follow-up workers, or send the user a final/update message;
+- each actionable lifecycle event is persisted as handled so watcher ticks do not trigger duplicate parent turns, while a later transition back into `blocked` can wake the parent again;
 - it does **not** capture pane output, parse transcripts, auto-surface hidden workers, or clean worktrees.
+
+The parent Pi process must remain running for automatic follow-up turns. Managed workers may continue in tmux after Pi exits, but no live parent chat exists to notify until a later session explicitly inspects them.
 
 The watch interval defaults to `2500ms` and can be bounded with `PI_ORCHESTRATOR_WATCH_INTERVAL_MS` (`1000ms` minimum, `30000ms` maximum). Registry writes use per-worker lock directories plus atomic renames so multiple Pi processes do not write the same worker record concurrently. Ownership filtering prevents one Pi session's watcher from mutating another session's delegated workers.
 

@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orchestrator Ownership Architecture</title>
+  <style>
+    :root {
+      --bg: #f6f1e8;
+      --panel: #fffaf2;
+      --ink: #1f1b16;
+      --muted: #6d6257;
+      --accent: #7b4f2a;
+      --line: #d8cbb8;
+      --soft: #efe5d6;
+      --shadow: 0 16px 40px rgba(44, 28, 16, 0.08);
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font: 16px/1.55 Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(123,79,42,0.06), transparent 32%),
+        linear-gradient(180deg, #fbf7f1 0%, var(--bg) 100%);
+    }
+    .deck {
+      min-height: 100%;
+      display: grid;
+      place-items: center;
+      padding: 32px;
+    }
+    .slides {
+      width: min(1100px, 100%);
+      display: grid;
+      gap: 24px;
+    }
+    .slide {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      padding: 40px 44px;
+      min-height: 560px;
+      display: grid;
+      align-content: start;
+      gap: 20px;
+      break-inside: avoid;
+    }
+    .eyebrow {
+      text-transform: uppercase;
+      letter-spacing: .16em;
+      font-size: 12px;
+      color: var(--accent);
+      font-weight: 700;
+    }
+    h1, h2 {
+      margin: 0;
+      line-height: 1.05;
+    }
+    h1 { font-size: clamp(40px, 6vw, 72px); max-width: 12ch; }
+    h2 { font-size: clamp(30px, 4vw, 44px); max-width: 16ch; }
+    p { margin: 0; max-width: 72ch; color: var(--muted); font-size: 18px; }
+    .grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .card {
+      background: #fff;
+      border: 1px solid var(--soft);
+      border-radius: 18px;
+      padding: 18px 20px;
+    }
+    .card h3 {
+      margin: 0 0 8px;
+      font-size: 18px;
+    }
+    .card p, .card li { font-size: 15px; }
+    ul { margin: 0; padding-left: 20px; color: var(--muted); }
+    li + li { margin-top: 8px; }
+    .flow {
+      display: grid;
+      gap: 14px;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      align-items: stretch;
+    }
+    .pill {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 12px 16px;
+      text-align: center;
+      font-weight: 600;
+    }
+    .arrow {
+      display: grid;
+      place-items: center;
+      color: var(--accent);
+      font-size: 28px;
+      font-weight: 700;
+    }
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: #f4eadf;
+      color: var(--accent);
+      font-weight: 700;
+      width: fit-content;
+    }
+    .footer {
+      margin-top: auto;
+      padding-top: 24px;
+      color: var(--muted);
+      font-size: 14px;
+      border-top: 1px solid var(--soft);
+    }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+    .big-note {
+      font-size: 22px;
+      color: var(--ink);
+      max-width: 40ch;
+    }
+    @media (max-width: 800px) {
+      .deck { padding: 16px; }
+      .slide { padding: 28px 24px; min-height: auto; }
+      .grid, .flow { grid-template-columns: 1fr; }
+      .arrow { transform: rotate(90deg); }
+    }
+    @media print {
+      body { background: #fff; }
+      .deck { padding: 0; }
+      .slides { width: 100%; gap: 0; }
+      .slide { page-break-after: always; box-shadow: none; border-radius: 0; min-height: 100vh; }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck">
+    <section class="slides" aria-label="Orchestrator ownership architecture presentation">
+      <article class="slide">
+        <div class="eyebrow">Pi orchestrator</div>
+        <h1>Proper worker ownership</h1>
+        <p class="big-note">A session should only see and control its own workers by default.</p>
+        <div class="grid">
+          <div class="card">
+            <h3>Today</h3>
+            <p>Registry is shared. Read/list/status can see everyone.</p>
+          </div>
+          <div class="card">
+            <h3>Target</h3>
+            <p>Shared storage, but session-scoped access and side effects.</p>
+          </div>
+        </div>
+        <div class="footer">Key idea: shared storage is fine; shared permissions are not.</div>
+      </article>
+
+      <article class="slide">
+        <div class="eyebrow">Current model</div>
+        <h2>What exists now</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Pi session</h3>
+            <p>The parent session that starts workers.</p>
+          </div>
+          <div class="card">
+            <h3>Worker record</h3>
+            <p>JSON file with state, tmux info, and <span class="mono">ownerSessionId</span>.</p>
+          </div>
+          <div class="card">
+            <h3>tmux session</h3>
+            <p>The real terminal process that runs the worker.</p>
+          </div>
+          <div class="card">
+            <h3>Herdr pane</h3>
+            <p>Visible UI surface when a worker is surfaced.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="eyebrow">Problem</div>
+        <h2>Why it feels wrong</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Global visibility</h3>
+            <ul>
+              <li>List reads the whole registry.</li>
+              <li>Status also polls the whole registry.</li>
+              <li>Read can inspect other sessions’ workers.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Read paths have side effects</h3>
+            <ul>
+              <li>Refresh worker state.</li>
+              <li>Capture output.</li>
+              <li>Auto-surface blocked workers.</li>
+            </ul>
+          </div>
+        </div>
+        <p>So “just looking” is not actually read-only.</p>
+      </article>
+
+      <article class="slide">
+        <div class="eyebrow">Target flow</div>
+        <h2>What should happen</h2>
+        <div class="flow" aria-label="ownership flow">
+          <div class="pill">Pi session</div>
+          <div class="arrow">→</div>
+          <div class="pill">Owned worker records only</div>
+          <div class="arrow">→</div>
+          <div class="pill">tmux / Herdr / lifecycle</div>
+        </div>
+        <div class="grid">
+          <div class="card">
+            <h3>Default scope</h3>
+            <p>Only records whose <span class="mono">ownerSessionId</span> matches the current Pi session.</p>
+          </div>
+          <div class="card">
+            <h3>Admin scope</h3>
+            <p>Optional explicit global inspection for rescue/debug only.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="eyebrow">Roles</div>
+        <h2>What each thing does</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>Pi session</h3>
+            <p>Owns the workers it creates and sees only its own by default.</p>
+          </div>
+          <div class="card">
+            <h3>Registry</h3>
+            <p>Global storage, not a global permission boundary.</p>
+          </div>
+          <div class="card">
+            <h3>Watcher</h3>
+            <p>Refreshes only owned workers.</p>
+          </div>
+          <div class="card">
+            <h3>Herdr</h3>
+            <p>Surfaces only owned workers unless forced explicitly.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="eyebrow">What changes</div>
+        <h2>Behavior after the fix</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>list / status / poll / read</h3>
+            <ul>
+              <li>Owned workers only.</li>
+              <li>No cross-session auto-surface.</li>
+              <li>No accidental output capture from others.</li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Mutating tools</h3>
+            <ul>
+              <li>send / surface / hide / close stay owner-guarded.</li>
+              <li>force=true remains the explicit escape hatch.</li>
+            </ul>
+          </div>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="eyebrow">Implementation plan</div>
+        <h2>Minimal rollout</h2>
+        <div class="grid">
+          <div class="card">
+            <h3>1. Filter at source</h3>
+            <p>Add owner-scoped record loading for read/list/status/poll/watch.</p>
+          </div>
+          <div class="card">
+            <h3>2. Make reads pure</h3>
+            <p>Stop side effects in default read/list/status paths.</p>
+          </div>
+          <div class="card">
+            <h3>3. Keep admin escape hatch</h3>
+            <p>Use an explicit flag for global debugging.</p>
+          </div>
+          <div class="card">
+            <h3>4. Update docs</h3>
+            <p>Explain that storage is shared but access is session-scoped.</p>
+          </div>
+        </div>
+      </article>
+
+      <article class="slide">
+        <div class="eyebrow">Outcome</div>
+        <h2>What good looks like</h2>
+        <p class="big-note">Each Pi session only sees its own workers unless it explicitly asks for global admin visibility.</p>
+        <div class="grid">
+          <div class="card">
+            <h3>Safe</h3>
+            <p>No accidental cross-session reads or surfaces.</p>
+          </div>
+          <div class="card">
+            <h3>Predictable</h3>
+            <p>List/read/status do what users expect.</p>
+          </div>
+        </div>
+        <div class="footer">Ownership becomes a real boundary, not just a field in JSON.</div>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
