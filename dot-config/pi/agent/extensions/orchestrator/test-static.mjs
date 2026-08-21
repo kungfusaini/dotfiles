@@ -6,6 +6,8 @@ import { dirname, join } from 'node:path';
 
 const dir = dirname(fileURLToPath(import.meta.url));
 const source = readFileSync(join(dir, 'index.ts'), 'utf8');
+const readme = readFileSync(join(dir, 'README.md'), 'utf8');
+const guidance = `${source}\n${readme}`;
 
 function between(startNeedle, endNeedle) {
   const start = source.indexOf(startNeedle);
@@ -48,5 +50,24 @@ assert.match(parentNotification, /dispatch follow-up workers when appropriate/, 
 assert.match(source, /await notifyParentOfWorkerUpdates\(refreshed\)/, 'the background watcher must queue parent updates after refresh');
 assert.match(source, /pollWorkersOnce\(pi, ctx, [^\n]+, params\.scope \?\? "owned"\)/, 'default list/status/poll calls must use owned scope');
 assert.match(source, /pi\.on\("session_shutdown"/, 'the watcher must stop with its owning Pi session');
+assert.match(source, /one worker per review unit/, 'tool guidance must enforce review-unit worker scoping');
+assert.match(source, /one branch\/PR per review unit/, 'tool guidance must map review units to branch/PR layers');
+assert.match(source, /do not bundle unrelated units/i, 'child task prompt must warn workers not to expand review scope');
+assert.match(source, /Do not make duplicate workers for the same task/, 'tool guidance must warn against duplicate workers');
+assert.match(source, /do not use scope=all for normal task management/, 'worker inspection guidance must forbid scope=all for normal orchestration');
+assert.match(source, /explicitly asks to inspect global\/orphaned\/other-session workers/, 'scope=all guidance must require explicit global-debug intent');
+assert.match(source, /read-only stream scout/, 'tool guidance must introduce read-only stream scouts');
+assert.match(source, /compact STREAM_BRIEF/, 'stream scouts must produce compact handoff briefs');
+assert.match(source, /research\/stream-briefs\/<stream-slug>\.md/, 'stream scout briefs must be stored under stream research/stream-briefs');
+assert.match(source, /must not implement, create branches\/PRs, or launch workers/, 'stream scouts must not implement or spawn nested workers');
+assert.match(source, /local PR-layer invariant check/, 'orchestrator guidance must require local PR-layer invariant checks');
+assert.match(source, /Avoid full-stack audits unless topology changed or the user requested them/, 'PR invariant guidance must avoid unnecessary full-stack audits');
+assert.match(guidance, /Parent orchestrator owns review units, stream\/stack topology, worker launch, PR-layer checks, and user-facing synthesis/, 'guidance must define parent responsibility boundaries');
+assert.match(guidance, /Review-unit implementers own exactly one review unit by default/, 'guidance must define review-unit implementer responsibility boundaries');
+assert.match(guidance, /Shell\/test workers run deterministic commands only and do not edit code/, 'guidance must define shell/test worker responsibility boundaries');
+assert.match(guidance, /Prefer structured worker state\/results over raw transcript reads/, 'guidance must prefer structured worker results over transcript reads');
+assert.match(guidance, /write detailed handoff artifacts to files and report paths/, 'worker prompt must require file artifacts instead of long transcript output');
+assert.match(guidance, /Stop when the assigned output or decision is clear enough/, 'worker prompt must include bounded reading stop condition');
+assert.match(guidance, /do not keep reading or auditing for completeness beyond the task/, 'worker guidance must forbid exhaustive reading beyond task needs');
 
 console.log('orchestrator static tests passed');

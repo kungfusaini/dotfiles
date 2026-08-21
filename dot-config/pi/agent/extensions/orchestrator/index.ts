@@ -1150,9 +1150,15 @@ function buildPiTaskPrompt(record: TerminalRecord, task: string, handoffContext?
 		"Expectations:",
 		"- Work independently in this terminal.",
 		"- Keep changes and tool usage focused on the task.",
+		"- Stop when the assigned output or decision is clear enough; do not keep reading or auditing for completeness beyond the task.",
+		"- Do not create or continue duplicate worker work; if you realize another worker is already handling the same task, block and report the duplication.",
+		"- If assigned as a stream scout, stay read-only and write a compact STREAM_BRIEF under the current Pi stream storage at research/stream-briefs/<stream-slug>.md; include shared context, review-unit boundaries, dependencies/stack order, likely files/tests, implementer prompts, and risks. Report the path and concise summary. Do not implement, create branches/PRs, or launch workers.",
+		"- If this is implementation work for a review unit (ticket, issue, TODO, or explicit slice), stay within that single review unit and do not bundle unrelated units unless the parent task explicitly permits it.",
+		"- If you discover the assigned review unit depends on another unplanned unit, call orchestrator_report_state with state=blocked instead of expanding scope.",
 		"- If you need user/parent input, call orchestrator_report_state with state=blocked, explain exactly what is needed, then wait.",
 		"- When actively working again after a block, call orchestrator_report_state with state=working.",
 		"- When done, call orchestrator_report_state with state=done and a concise summary with files changed, verification run, and follow-up needed.",
+		"- Keep lifecycle messages and final results compact; write detailed handoff artifacts to files and report paths instead of printing long transcripts.",
 		"- End with a final structured footer as the last non-whitespace output:",
 		"  ORCHESTRATOR_RESULT:",
 		"  {",
@@ -1559,7 +1565,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		name: "orchestrator_worker_start",
 		label: "Start Worker",
 		description: "Start a unified orchestrator worker. Workers are managed terminals that may run a Pi subagent or an arbitrary shell command, hidden by default and surfaced into Herdr on demand.",
-		promptSnippet: "Use orchestrator_worker_start for subagents or command workers that can be hidden or visible. Model routing is the parent orchestrator's decision per worker: keep the parent/current model for review, planning, architecture, final synthesis, and high-stakes judgement; choose Spark high for smaller scoped Pi workers by setting command to `pi --model openai-codex/gpt-5.3-codex-spark:high`. Spark high is a good fit for focused implementation, bugfixes, tests, repo inspection, first-pass reviews, and parallel subagent work. Do not choose Spark high when the task needs image input, very large context beyond Spark's 128K window, deep architectural judgement, or final review.",
+		promptSnippet: "Use orchestrator_worker_start for subagents or command workers that can be hidden or visible. Parent orchestrator owns review units, stream/stack topology, worker launch, PR-layer checks, and user-facing synthesis; workers should not take over parent orchestration responsibilities. Do not make duplicate workers for the same task; inspect, reuse, close, or replace the existing worker instead. For multi-unit implementation work, plan review units before delegation: a review unit may be a tracker ticket, GitHub issue, TODO, or explicit user-requested slice. Use a read-only stream scout when the parent lacks enough compact context to define review units, dependencies, likely files, and tests; the scout must write a compact STREAM_BRIEF under the current Pi stream storage at research/stream-briefs/<stream-slug>.md and must not implement, create branches/PRs, or launch workers. Default to one worker per review unit and one branch/PR per review unit; stack related review units by real dependency/order inside a stream. Before publishing each new or changed PR, run a local PR-layer invariant check scoped only to that layer: review unit, title/body, intended base, branch name, diff scope, and test evidence. Avoid full-stack audits unless topology changed or the user requested them. Do not assign multiple review units to one worker unless the user explicitly approves grouping. Model routing is the parent orchestrator's decision per worker: keep the parent/current model for review, planning, architecture, final synthesis, and high-stakes judgement; choose Spark high for smaller scoped Pi workers by setting command to `pi --model openai-codex/gpt-5.3-codex-spark:high`. Spark high is a good fit for focused implementation, bugfixes, tests, repo inspection, first-pass reviews, and parallel subagent work. Do not choose Spark high when the task needs image input, very large context beyond Spark's 128K window, deep architectural judgement, or final review.",
 		parameters: WorkerStartParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const { record, kind } = await startWorkerFromParams(pi, ctx, params, signal);
@@ -1572,7 +1578,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		name: "orchestrator_worker_start_many",
 		label: "Start Many Workers",
 		description: "Start multiple orchestrator workers. Each array item accepts the same fields as orchestrator_worker_start.",
-		promptSnippet: "Use orchestrator_worker_start_many when launching several independent workers with distinct tasks/instructions. Model routing is the parent orchestrator's decision per worker: keep the parent/current model for review, planning, architecture, final synthesis, and high-stakes judgement; choose Spark high for smaller scoped Pi workers by setting each Pi worker command to `pi --model openai-codex/gpt-5.3-codex-spark:high`. Spark high is a good fit for focused implementation, bugfixes, tests, repo inspection, first-pass reviews, and parallel subagent work. Do not choose Spark high when the task needs image input, very large context beyond Spark's 128K window, deep architectural judgement, or final review.",
+		promptSnippet: "Use orchestrator_worker_start_many when launching several independent workers with distinct tasks/instructions. Parent orchestrator owns review units, stream/stack topology, worker launch, PR-layer checks, and user-facing synthesis; workers should not take over parent orchestration responsibilities. Do not make duplicate workers for the same task; inspect, reuse, close, or replace existing workers instead. For multi-unit implementation work, first define the review units and stream/stack order; each worker should own exactly one review unit by default, and each review unit should map to one branch/PR layer. A review unit may be a tracker ticket, GitHub issue, TODO, or explicit user-requested slice, so this rule applies even when no ticket system exists. If review units/dependencies/files/tests are unclear, launch one read-only stream scout for that stream before implementation workers; the scout writes a compact STREAM_BRIEF under the current Pi stream storage at research/stream-briefs/<stream-slug>.md and must not implement or spawn workers. Before publishing each new or changed PR, run a local PR-layer invariant check scoped only to that layer; avoid full-stack audits unless topology changed or the user requested them. Do not launch broad stream-level implementation workers that bundle multiple review units unless the user explicitly approves grouping. Model routing is the parent orchestrator's decision per worker: keep the parent/current model for review, planning, architecture, final synthesis, and high-stakes judgement; choose Spark high for smaller scoped Pi workers by setting each Pi worker command to `pi --model openai-codex/gpt-5.3-codex-spark:high`. Spark high is a good fit for focused implementation, bugfixes, tests, repo inspection, first-pass reviews, and parallel subagent work. Do not choose Spark high when the task needs image input, very large context beyond Spark's 128K window, deep architectural judgement, or final review.",
 		parameters: WorkerStartManyParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const started: Array<{ record: TerminalRecord; kind: "pi" | "shell" }> = [];
@@ -1600,6 +1606,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		name: "orchestrator_worker_list",
 		label: "List Workers",
 		description: "List unified orchestrator workers.",
+		promptSnippet: "List orchestrator workers. Default scope is owned/current-session; do not use scope=all for normal task management. Use scope=all only when the user explicitly asks to inspect global/orphaned/other-session workers or when debugging orchestrator infrastructure.",
 		parameters: Type.Object({
 			scope: Type.Optional(WorkerScopeSchema),
 		}),
@@ -1617,6 +1624,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		name: "orchestrator_worker_poll",
 		label: "Poll Workers",
 		description: "Refresh all workers once, parse structured results, and auto-surface hidden blocked workers without dumping full output.",
+		promptSnippet: "Poll orchestrator workers. Prefer structured worker state/results over raw transcript reads; poll/status should normally be enough unless a worker is blocked, failed, or unclear. Default scope is owned/current-session; do not use scope=all for normal task management. Use scope=all only when the user explicitly asks to inspect global/orphaned/other-session workers or when debugging orchestrator infrastructure.",
 		parameters: WorkerPollParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const { workers, events } = await pollWorkersOnce(pi, ctx, params.lines ?? TMUX_HISTORY_LIMIT, signal, params.scope ?? "owned");
@@ -1633,6 +1641,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		name: "orchestrator_worker_status",
 		label: "Worker Status",
 		description: "Show a compact grouped dashboard of orchestrator workers after one poll pass.",
+		promptSnippet: "Show a compact orchestrator worker dashboard. Prefer structured worker state/results over raw transcript reads; status should normally be enough unless a worker is blocked, failed, or unclear. Default scope is owned/current-session; do not use scope=all for normal task management. Use scope=all only when the user explicitly asks to inspect global/orphaned/other-session workers or when debugging orchestrator infrastructure.",
 		parameters: WorkerStatusParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			ensureWatcherStarted(ctx);
@@ -1694,6 +1703,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		name: "orchestrator_worker_read",
 		label: "Read Worker",
 		description: "Read recent output from a unified managed worker.",
+		promptSnippet: "Read an orchestrator worker. Prefer structured worker state/results over raw transcript reads. Read raw output only when a worker is blocked, failed, produced an unclear result, or the next decision requires details not present in the structured result. Default scope is owned/current-session; do not use scope=all for normal task management. Use scope=all only when the user explicitly asks to inspect global/orphaned/other-session workers or when debugging orchestrator infrastructure.",
 		parameters: TerminalReadParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const record = await getTerminal(pi, params.name, signal);

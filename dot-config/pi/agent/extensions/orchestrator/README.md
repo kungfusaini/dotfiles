@@ -22,6 +22,91 @@ A worker can be:
 
 Herdr panes and tmux sessions are implementation details, not separate user-facing worker types.
 
+## Review-unit orchestration rule
+
+For multi-unit implementation work, the orchestrator should plan **review units** before launching implementation workers.
+
+A review unit is the smallest thing that should be reviewed and merged independently. It can be:
+
+- an Azure ticket or other tracker ticket;
+- a GitHub issue;
+- a TODO item;
+- an explicit user-requested slice;
+- an inferred implementation step when the project has no tracker.
+
+Default rule:
+
+- one review unit → one worker scope;
+- one review unit → one branch / PR layer when PRs are being produced;
+- related review units form a stream/stack based on real dependency or merge order.
+
+Do not assign a broad stream-level implementation task that bundles multiple review units into one worker unless the user explicitly approves grouping. If a worker discovers that its assigned review unit depends on another unplanned unit, it should block and report that dependency instead of expanding scope.
+
+Do not make duplicate workers for the same task. Inspect, reuse, close, or replace the existing worker instead of launching another worker with the same responsibility.
+
+## Stream scouts
+
+Use a **stream scout** when the parent does not yet have enough compact context to safely define review units, dependencies, likely files, and tests for a related stream of work.
+
+A stream scout is a read-only context condenser for one stream. It turns repo/ticket ambiguity into a compact implementation brief and review-unit plan. It does not implement, create branches, open PRs, or launch workers.
+
+Use a stream scout when:
+
+- there are multiple review units in one area/stream;
+- the repo area is unfamiliar or large;
+- several review units likely share files or architecture;
+- dependencies/stack order are unclear;
+- existing branches/worktrees/diffs need inspection before assigning implementation.
+
+Skip a stream scout when the parent already has a recent, reliable brief, when there is only one review unit, or when the change is small/local and the files/tests are obvious.
+
+Required scout output is a compact `STREAM_BRIEF` file written under the current Pi stream storage:
+
+```text
+<stream-dir>/research/stream-briefs/<stream-slug>.md
+```
+
+Do not rely on long terminal output as the brief. The scout should report the brief path and a concise summary when done. The parent should reference the brief file in worklog entries and pass only relevant excerpts to implementers.
+
+The `STREAM_BRIEF` file must include:
+
+- shared context and key files;
+- existing relevant behavior;
+- review-unit boundaries;
+- dependency/stack recommendation;
+- likely files and tests per review unit;
+- suggested implementer prompt per review unit;
+- risks/unknowns.
+
+Scout stop condition: stop once review units, dependencies, shared context, likely files/tests, and implementer prompts are clear enough for the parent to delegate. Do not exhaustively audit.
+
+## Structured worker results
+
+Prefer structured worker state/results over raw transcript reads. Workers should report concise lifecycle messages and final `ORCHESTRATOR_RESULT` summaries. Parent orchestrators should read raw worker output only when a worker is blocked, failed, produced an unclear result, or the next decision requires details not present in the structured result.
+
+Avoid repeatedly reading large worker transcripts. If detailed handoff content is needed, the worker should write a compact artifact file, report the path, and summarize it.
+
+## PR-layer invariant check
+
+Run a local PR-layer invariant check before publishing each new or changed PR. Scope the check to the PR layer being created or modified. Avoid full-stack audits unless topology changed or the user requested them.
+
+For the local layer, verify:
+
+- assigned review unit matches the branch/PR title and body;
+- PR claims only that review unit unless grouping was explicitly approved;
+- intended base matches the review-unit/stream plan;
+- branch name matches the project/review unit and has no obvious wrong-project contamination;
+- diff against the intended base does not obviously include unrelated review-unit work;
+- relevant tests were run or the skip is explained.
+
+## Responsibility boundaries
+
+- Parent orchestrator owns review units, stream/stack topology, worker launch, PR-layer checks, and user-facing synthesis.
+- Stream scouts are read-only context condensers. They write `STREAM_BRIEF` files and do not implement, create branches/PRs, or launch workers.
+- Review-unit implementers own exactly one review unit by default, stay within scope, run relevant tests, and report files/tests/blockers.
+- Shell/test workers run deterministic commands only and do not edit code.
+- All workers stop when their assigned output or decision is clear enough; they do not keep reading or auditing for completeness beyond the task.
+
 ## Model routing
 
 - Model routing is the parent orchestrator's decision per worker.
@@ -67,6 +152,8 @@ Start a hidden Pi reviewer named auth-reviewer with task "Review the current dif
 
 For `kind=pi` plus `task`, the orchestrator starts `pi`, polls the hidden terminal for prompt/readiness, then sends a compact task prompt. If readiness is not detected before `taskPromptTimeoutMs`, it sends the task anyway and records `promptReadyTimedOut` on the worker.
 
+For implementation work that spans multiple review units, prepare the review-unit/stack plan before calling this tool. A single worker should normally receive one review unit only, with the branch/base/expected PR layer named in the task.
+
 Optional handoff fields let the parent pass only text context: an explicit `handoffPrompt`, plus the last `recentInteractions` user/assistant messages. Tool calls/results are omitted by default; when `includeToolCalls=true`, only compact summaries are included, bounded by `handoffMaxChars`.
 
 For `workspace=worktree`, the worker is still based on the current git repository. The orchestrator creates an adjacent checkout by default under `<repo-parent>/.worktrees/<repo>/<worker>`, starts the worker there, and records the source repo, branch, base, and path. `orchestrator_worker_close` attempts `git worktree remove`; if the worktree is dirty or removal fails, it is preserved and the cleanup error is stored on the worker record. After a clean worktree removal, close also tries safe branch cleanup with `git branch -d`; unmerged branches are preserved and reported instead of force-deleted.
@@ -94,6 +181,8 @@ Start a hidden shell worker that runs npm test and keep the output readable.
 ### `orchestrator_worker_start_many`
 
 Start multiple workers in one tool call. This is intentionally simple: `workers` is an array of normal `orchestrator_worker_start` inputs, so each worker can have distinct `task`, `command`, `workspace`, `handoffPrompt`, branch, and cleanup settings.
+
+Before launching multiple implementation workers, define the review units and stream/stack order. Each worker should own exactly one review unit by default, and each review unit should map to one branch/PR layer when PRs are expected. Use multiple workers to parallelize independent review units, not to create broad workers that each bundle a whole stream. Do not make duplicate workers for the same task.
 
 Example shape:
 
@@ -203,6 +292,8 @@ ${XDG_STATE_HOME:-~/.local/state}/pi/orchestrator/terminals/exit/<name>.json
 ```
 
 The shared tmux server is global, but worker mutation is owner-scoped: each worker record stores the owning Pi session id. Default list/read/status/poll behavior is also owner-scoped; pass `scope=all` for explicit global inspection. Mutating actions still require the owner session unless `force=true` is supplied intentionally.
+
+Do not use `scope=all` for normal task management. Use global inspection only when the user explicitly asks to inspect global, orphaned, or other-session workers, or when debugging orchestrator infrastructure. Normal orchestration should stay scoped to the current parent/session so unrelated workers do not pollute status, planning, or follow-up decisions.
 
 ## State model
 
