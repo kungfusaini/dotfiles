@@ -1155,7 +1155,7 @@ function buildPiTaskPrompt(record: TerminalRecord, task: string, handoffContext?
 		"- If assigned as a stream scout, stay read-only and write a compact STREAM_BRIEF under the current Pi stream storage at research/stream-briefs/<stream-slug>.md; include shared context, review-unit boundaries, dependencies/stack order, likely files/tests, implementer prompts, and risks. Report the path and concise summary. Do not implement, create branches/PRs, or launch workers.",
 		"- If this is implementation work for a review unit (ticket, issue, TODO, or explicit slice), stay within that single review unit and do not bundle unrelated units unless the parent task explicitly permits it.",
 		"- If you discover the assigned review unit depends on another unplanned unit, call orchestrator_report_state with state=blocked instead of expanding scope.",
-		"- If you need user/parent input, call orchestrator_report_state with state=blocked, explain exactly what is needed, then wait.",
+		"- If you need user/parent input, hit a provider/model limit, or cannot continue safely, call orchestrator_report_state with state=blocked, explain exactly what is needed, then wait so the parent can preserve your context.",
 		"- When actively working again after a block, call orchestrator_report_state with state=working.",
 		"- When done, call orchestrator_report_state with state=done and a concise summary with files changed, verification run, and follow-up needed.",
 		"- Keep lifecycle messages and final results compact; write detailed handoff artifacts to files and report paths instead of printing long transcripts.",
@@ -1760,6 +1760,7 @@ export default function orchestratorExtension(pi: ExtensionAPI) {
 		name: "orchestrator_worker_close",
 		label: "Close Worker",
 		description: "Kill a unified managed worker and mark its registry record closed. By default only the owner orchestrator session may close it.",
+		promptSnippet: "Close a worker only when its state no longer needs preservation. Do not close blocked or failed workers that contain task context unless the user explicitly approves, or unless a compact handoff summary/artifact has been captured first. Model-limit/provider-limit workers are preserved state, not disposable failures: mark blocked and ask/plan recovery before replacement.",
 		parameters: TerminalNameParams,
 		async execute(_id, params, signal, _onUpdate, ctx) {
 			const record = await getTerminal(pi, params.name, signal);

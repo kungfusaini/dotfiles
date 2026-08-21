@@ -86,6 +86,12 @@ Prefer structured worker state/results over raw transcript reads. Workers should
 
 Avoid repeatedly reading large worker transcripts. If detailed handoff content is needed, the worker should write a compact artifact file, report the path, and summarize it.
 
+## Preserve blocked workers
+
+Blocked or failed workers may contain valuable investigative context even when their worktree is clean. Do not close blocked/failed workers that contain task context unless the user explicitly approves, or unless a compact handoff summary/artifact has been captured first.
+
+Model-limit/provider-limit workers are preserved state, not disposable failures. Mark them blocked, keep them alive, and ask or plan recovery: resume, swap models, extract findings, or replace only after handoff capture.
+
 ## PR-layer invariant check
 
 Run a local PR-layer invariant check before publishing each new or changed PR. Scope the check to the PR layer being created or modified. Avoid full-stack audits unless topology changed or the user requested them.

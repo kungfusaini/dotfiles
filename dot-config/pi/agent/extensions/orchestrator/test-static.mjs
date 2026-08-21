@@ -69,5 +69,7 @@ assert.match(guidance, /Prefer structured worker state\/results over raw transcr
 assert.match(guidance, /write detailed handoff artifacts to files and report paths/, 'worker prompt must require file artifacts instead of long transcript output');
 assert.match(guidance, /Stop when the assigned output or decision is clear enough/, 'worker prompt must include bounded reading stop condition');
 assert.match(guidance, /do not keep reading or auditing for completeness beyond the task/, 'worker guidance must forbid exhaustive reading beyond task needs');
+assert.match(guidance, /Do not close blocked\/failed workers that contain task context unless the user explicitly approves/, 'guidance must preserve blocked worker context');
+assert.match(guidance, /Model-limit\/provider-limit workers are preserved state, not disposable failures/, 'guidance must preserve model-limit blocked workers');
 
 console.log('orchestrator static tests passed');
