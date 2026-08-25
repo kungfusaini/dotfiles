@@ -40,6 +40,8 @@ Default rule:
 - one review unit → one branch / PR layer when PRs are being produced;
 - related review units form a stream/stack based on real dependency or merge order.
 
+For tracker-backed review units, hydrate the child prompt with the full ticket/issue content before delegation: title, full description, acceptance criteria, blockers/dependencies, intended base, intended branch, and any explicitly forbidden adjacent scope. A parent-written summary may supplement this packet, but must not replace the source criteria. If the full ticket context cannot be fetched or is materially ambiguous, launch a read-only scout or ask/block before implementation rather than letting a child infer the criteria.
+
 Do not assign a broad stream-level implementation task that bundles multiple review units into one worker unless the user explicitly approves grouping. If a worker discovers that its assigned review unit depends on another unplanned unit, it should block and report that dependency instead of expanding scope.
 
 Do not make duplicate workers for the same task. Inspect, reuse, close, or replace the existing worker instead of launching another worker with the same responsibility.
@@ -99,11 +101,17 @@ Run a local PR-layer invariant check before publishing each new or changed PR. S
 For the local layer, verify:
 
 - assigned review unit matches the branch/PR title and body;
+- full ticket/issue description and acceptance criteria were used for the layer, not only a summary;
+- diff against the intended base satisfies the claimed criteria or explicitly blocks/defers with user approval;
 - PR claims only that review unit unless grouping was explicitly approved;
 - intended base matches the review-unit/stream plan;
 - branch name matches the project/review unit and has no obvious wrong-project contamination;
 - diff against the intended base does not obviously include unrelated review-unit work;
 - relevant tests were run or the skip is explained.
+
+## Review requests
+
+When the user asks to "review", "check", "quick review", or "look over" ticket-backed PRs/branches, default to a proper read-only review agent instead of only running mechanical checks. A proper review compares each PR diff against the full ticket criteria and reports missing acceptance criteria, wrong-ticket scope, scope spill into adjacent layers, likely bugs/regressions, inadequate tests, and base/stack issues. CI, lint, formatting, and `codequality.md` are supporting mechanical checks, not sufficient review by themselves unless the user explicitly narrows the request to those checks.
 
 ## Responsibility boundaries
 

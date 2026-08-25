@@ -62,6 +62,10 @@ assert.match(source, /research\/stream-briefs\/<stream-slug>\.md/, 'stream scout
 assert.match(source, /must not implement, create branches\/PRs, or launch workers/, 'stream scouts must not implement or spawn nested workers');
 assert.match(source, /local PR-layer invariant check/, 'orchestrator guidance must require local PR-layer invariant checks');
 assert.match(source, /Avoid full-stack audits unless topology changed or the user requested them/, 'PR invariant guidance must avoid unnecessary full-stack audits');
+assert.match(guidance, /full ticket\/issue description and acceptance criteria|full ticket or issue description and acceptance criteria/, 'tracker-backed delegation must require full ticket context, not only summaries');
+assert.match(guidance, /missing acceptance criteria, wrong-ticket scope, scope spill/i, 'proper review guidance must compare PR diffs against ticket criteria');
+assert.match(guidance, /likely bugs\/regressions/i, 'proper review guidance must include bug and regression review');
+assert.match(source, /do not treat passing CI\/lint\/codequality as sufficient/i, 'child review prompt must forbid mechanical-only review for ticket-backed PRs');
 assert.match(guidance, /Parent orchestrator owns review units, stream\/stack topology, worker launch, PR-layer checks, and user-facing synthesis/, 'guidance must define parent responsibility boundaries');
 assert.match(guidance, /Review-unit implementers own exactly one review unit by default/, 'guidance must define review-unit implementer responsibility boundaries');
 assert.match(guidance, /Shell\/test workers run deterministic commands only and do not edit code/, 'guidance must define shell/test worker responsibility boundaries');
