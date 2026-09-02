@@ -35,7 +35,7 @@ return {
             userDictPath = vim.fn.stdpath("config") .. "/spell/en.utf-8.add",
             dialect = "British",
             codeActions = {
-              ForceStable = true
+              ForceStable = false
             },
             diagnosticSeverity = "warning"
             -- colour

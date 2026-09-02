@@ -7,6 +7,7 @@ require("gitsigns").setup({
 require("config.markdown").setup()
 require("config.folds").setup()
 require("config.functions").setup()
+require("config.code_actions").setup()
 
 
 ----------- Options -----------
@@ -67,7 +68,6 @@ vim.keymap.set('n', '<leader>e', function()
   vim.diagnostic.open_float()
 end, { desc = "Show diagnostics" })
 
-vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action, { desc = "Code Actions" })
 
 -- Jump to next diagnostic (error/hint/suggestion)
 vim.keymap.set('n', ']d', vim.diagnostic.goto_next, { desc = "Next Diagnostic" })
