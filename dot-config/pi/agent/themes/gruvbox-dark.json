@@ -48,7 +48,7 @@
     "toolOutput": "fg2",
 
     "mdHeading": "yellow",
-    "mdLink": "blue",
+    "mdLink": "green",
     "mdLinkUrl": "gray",
     "mdCode": "aqua",
     "mdCodeBlock": "fg1",

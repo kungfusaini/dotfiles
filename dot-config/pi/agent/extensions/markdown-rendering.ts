@@ -1,3 +1,4 @@
+import { linkifyLocalPathsInMarkdown } from "./markdown-local-paths.ts";
 import {
   DynamicBorder,
   getMarkdownTheme,
@@ -148,6 +149,9 @@ function demoMarkdown(args: string): string {
 
 export default function (pi: ExtensionAPI) {
   installMarkdownPatch();
+  pi.registerMarkdownTransformer((markdown) =>
+    linkifyLocalPathsInMarkdown(markdown),
+  );
 
   pi.registerCommand("markdown-demo", {
     description: "Preview rich Markdown rendering (headings, lists, or all)",
