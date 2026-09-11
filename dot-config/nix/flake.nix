@@ -6,12 +6,6 @@
     nix-darwin.url = "github:nix-darwin/nix-darwin/nix-darwin-25.11";
     nix-darwin.inputs.nixpkgs.follows = "nixpkgs";
     nix-homebrew.url = "github:zhaofengli/nix-homebrew";
-    # Track Homebrew/brew itself closely enough to support current Homebrew Cask DSL.
-    # Current casks such as gimp/inkscape/libreoffice use `command_wrapper`, which
-    # is newer than the brew release currently pinned by nix-homebrew.
-    brew-src.url = "github:Homebrew/brew/master";
-    brew-src.flake = false;
-    nix-homebrew.inputs.brew-src.follows = "brew-src";
   };
 
   outputs =
@@ -20,7 +14,6 @@
       nix-darwin,
       nixpkgs,
       nix-homebrew,
-      brew-src,
     }:
 
     let
@@ -129,7 +122,6 @@
             pyenv
             raycast
             sioyek
-            slack
             sox
             spotify
             starship
@@ -164,7 +156,7 @@
             enable = true;
             onActivation.cleanup = "zap"; # Removes all packages apart from the ones below
             onActivation.autoUpdate = true;
-            onActivation.upgrade = true;
+            onActivation.upgrade = false;
 
             taps = [ ];
 
@@ -205,6 +197,7 @@
               "openmtp"
               "raspberry-pi-imager"
               "shotcut"
+              "slack"
               "stats"
               "stremio"
               "whatsapp"
