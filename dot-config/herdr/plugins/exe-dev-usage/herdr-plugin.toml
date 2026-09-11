@@ -1,0 +1,13 @@
+id = "sumeet.exe-dev-usage"
+name = "exe.dev Usage"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Show exe.dev VM CPU/RAM/disk usage in a separate Herdr plugin pane."
+platforms = ["macos", "linux"]
+
+[[panes]]
+id = "panel"
+title = "exe.dev Usage"
+description = "Live exe.dev VM resource usage panel"
+command = ["node", "usage.mjs", "panel"]
+placement = "split"
