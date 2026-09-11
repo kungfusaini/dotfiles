@@ -1,5 +1,5 @@
-PLUGIN_DIR=/Users/sumeet/.config/zsh/conf/plugins
-SCRIPT_DIR=/Users/sumeet/.config/zsh/conf/scripts
+PLUGIN_DIR="$ZDOTDIR/conf/plugins"
+SCRIPT_DIR="$ZDOTDIR/conf/scripts"
 export PATH="$SCRIPT_DIR:$PATH"
 
 eval "$(starship init zsh)"

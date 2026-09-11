@@ -30,6 +30,6 @@ done
 [ -d "$XDG_STATE_HOME/zsh" ] || mkdir -p "$XDG_STATE_HOME/zsh"
 HISTFILE="$XDG_STATE_HOME/zsh/history"
 
-source $ZDOTDIR/conf/startup.zsh
+source "$ZDOTDIR/conf/startup.zsh"
 
-. "$HOME/.local/share/../bin/env"
+[[ -r "$HOME/.local/bin/env" ]] && source "$HOME/.local/bin/env"

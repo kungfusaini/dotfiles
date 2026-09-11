@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+if command -v pbpaste >/dev/null 2>&1; then
+  exec pbpaste
+elif command -v wl-paste >/dev/null 2>&1; then
+  exec wl-paste
+elif command -v xclip >/dev/null 2>&1; then
+  exec xclip -selection clipboard -out
+elif command -v xsel >/dev/null 2>&1; then
+  exec xsel --clipboard --output
+fi
+
+echo "clipboard-paste: install wl-clipboard (Wayland) or xclip/xsel (X11)" >&2
+exit 127

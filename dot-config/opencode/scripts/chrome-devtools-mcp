@@ -1,0 +1,33 @@
+#!/bin/sh
+set -eu
+
+browser=
+case "$(uname -s)" in
+  Darwin)
+    for candidate in \
+      "/Applications/Nix Apps/Brave Browser.app/Contents/MacOS/Brave Browser" \
+      "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser" \
+      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    do
+      if [ -x "$candidate" ]; then
+        browser=$candidate
+        break
+      fi
+    done
+    ;;
+  Linux)
+    for command_name in brave-browser brave google-chrome-stable google-chrome chromium chromium-browser; do
+      if command -v "$command_name" >/dev/null 2>&1; then
+        browser=$(command -v "$command_name")
+        break
+      fi
+    done
+    ;;
+esac
+
+if [ -n "$browser" ]; then
+  exec npx -y chrome-devtools-mcp@latest --executable-path "$browser" "$@"
+fi
+
+# Let chrome-devtools-mcp attempt its own platform discovery as a final fallback.
+exec npx -y chrome-devtools-mcp@latest "$@"

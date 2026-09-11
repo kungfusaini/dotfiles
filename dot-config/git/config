@@ -6,7 +6,7 @@
 	editor = vim # TODO: Change this to nvim when that is setup
 [credential "https://github.com"]
 	helper = 
-	helper = !/usr/local/bin/gh auth git-credential
+	helper = !gh auth git-credential
 [credential "https://gist.github.com"]
 	helper = 
-	helper = !/usr/local/bin/gh auth git-credential
+	helper = !gh auth git-credential

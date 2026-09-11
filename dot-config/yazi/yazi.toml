@@ -3,13 +3,14 @@ sioyek = [
     { run = 'sioyek "$@"', desc = "Open with Sioyek", for = "unix" }
 ]
 
-iina = [
-    { run = 'open -a IINA "$@"', desc = "Open with IINA", for = "macos" }
+media = [
+    { run = 'open -a IINA "$@"', desc = "Open with IINA", for = "macos" },
+    { run = 'xdg-open "$@"', desc = "Open with default application", for = "linux" }
 ]
 
 [open]
 prepend_rules = [
-    { mime = "video/*", use = "iina" },
-    { mime = "audio/*", use = "iina" },
+    { mime = "video/*", use = "media" },
+    { mime = "audio/*", use = "media" },
     { mime = "application/pdf", use = "sioyek" },
 ]

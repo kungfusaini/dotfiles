@@ -66,6 +66,11 @@ _task-note() {
 compdef _task-note task-note
 
 function tunnel-status() {
+  if [[ "$OSTYPE" != darwin* ]]; then
+    echo "tunnel-status is only configured for the macOS LaunchAgent"
+    return 1
+  fi
+
   if launchctl list 2>/dev/null | grep -q "reverse-ssh-tunnel"; then
     local pid=$(launchctl list | grep "reverse-ssh-tunnel" | awk '{print $1}')
     echo "Reverse SSH tunnel is running (PID: $pid)"
@@ -75,6 +80,11 @@ function tunnel-status() {
 }
 
 function tunnel-restart() {
+  if [[ "$OSTYPE" != darwin* ]]; then
+    echo "tunnel-restart is only configured for the macOS LaunchAgent"
+    return 1
+  fi
+
   echo -n "Restart reverse SSH tunnel? [y/n]: "
   read selection
   if [[ $selection == y ]]; then

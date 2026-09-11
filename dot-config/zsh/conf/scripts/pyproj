@@ -42,9 +42,8 @@ check_dependencies() {
     
     # Check for nix-direnv (recommended for performance)
     if ! command -v "nix-direnv" &> /dev/null && ! [ -f "/usr/share/nix-direnv/direnvrc" ]; then
-        print_info "Warning: nix-direnv not found. Install for instant environment loading:"
-        print_info "  On macOS: brew install nix-direnv"
-        print_info "  Then add: echo 'source /usr/share/nix-direnv/direnvrc' > ~/.config/direnv/direnvrc"
+        print_info "Warning: nix-direnv not found. Add nix-direnv to your Nix system packages"
+        print_info "and source its direnvrc from your system's Nix profile."
     fi
     
     print_success "All dependencies are available"

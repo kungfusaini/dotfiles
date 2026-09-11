@@ -49,11 +49,7 @@
       "type": "local",
       "enabled": true,
       "command": [
-        "npx",
-        "-y",
-        "chrome-devtools-mcp@latest",
-        "--executable-path",
-        "/Applications/Nix Apps/Brave Browser.app/Contents/MacOS/Brave Browser"
+        "{env:XDG_CONFIG_HOME}/opencode/scripts/chrome-devtools-mcp"
       ]
     }
   },

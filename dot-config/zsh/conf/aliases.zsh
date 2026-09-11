@@ -30,19 +30,21 @@ alias herdrconf="vim ~/.config/herdr/config.toml"
 alias muxconf="vim ~/.config/herdr/config.toml"
 
 ########## NIX Aliases ##########
-alias nixedit="vim ~/.config/nix/flake.nix"
-alias nixbuild="sudo darwin-rebuild switch --flake ~/.config/nix"
-alias nixrspwn="nix flake update --flake ~/.config/nix; nixbuild; brew upgrade"
+alias nixedit="vim $XDG_CONFIG_HOME/nix/flake.nix"
+if [[ "$OSTYPE" == darwin* ]]; then
+  alias nixbuild="sudo darwin-rebuild switch --flake $XDG_CONFIG_HOME/nix"
+  alias nixrspwn="nix flake update --flake $XDG_CONFIG_HOME/nix; nixbuild; brew upgrade"
+fi
  
 ########## Tool Aliases ##########
 alias cat="bat"
 alias cd="z"
 alias vim="nvim"
-alias c="pbcopy"
-alias p="pbpaste"
+alias c="clipboard-copy"
+alias p="clipboard-paste"
 alias t="task"
 alias tn="task-note"
-alias bucket="/Users/sumeet/matrix/web/bucket/bucket.py"
+alias bucket="$HOME/matrix/web/bucket/bucket.py"
 alias oc="OPENCODE_FAST_BOOT=1 opencode"
 alias occ="OPENCODE_FAST_BOOT=1 OPENCODE_DISABLE_PROJECT_CONFIG=1 opencode"
 
@@ -50,7 +52,7 @@ alias occ="OPENCODE_FAST_BOOT=1 OPENCODE_DISABLE_PROJECT_CONFIG=1 opencode"
 # alias ssh="kitty +kitten ssh"
 
 ########## Project Aliases ##########
-alias aether-up="cd /Users/sumeet/matrix/web/aether; docker compose -f docker-compose.yml -f docker-compose-dev.yml up --build"
+alias aether-up="cd $HOME/matrix/web/aether && docker compose -f docker-compose.yml -f docker-compose-dev.yml up --build"
 
 ########## Action Aliases ##########
 alias colima-rspwn="colima delete --force && colima start"

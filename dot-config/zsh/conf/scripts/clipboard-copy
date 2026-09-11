@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+if command -v pbcopy >/dev/null 2>&1; then
+  exec pbcopy
+elif command -v wl-copy >/dev/null 2>&1; then
+  exec wl-copy
+elif command -v xclip >/dev/null 2>&1; then
+  exec xclip -selection clipboard
+elif command -v xsel >/dev/null 2>&1; then
+  exec xsel --clipboard --input
+fi
+
+echo "clipboard-copy: install wl-clipboard (Wayland) or xclip/xsel (X11)" >&2
+exit 127
