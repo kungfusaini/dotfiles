@@ -14,6 +14,10 @@ gcloud/.last_survey_prompt.yaml
 *.boto
 *.adc.json
 *.db
+gh/hosts.yml
+pingline/
+pi/nanogpt.env
+streamlit/credentials.toml
 
 # Log files
 *.log
@@ -21,8 +25,24 @@ logs/
 
 # Cache and temporary files
 .cache/
+.wrangler/
 tmp/ temp/ *.tmp
 *.temp
+configstore/update-notifier-*.json
+cups/lpoptions
+herdr/.plugins.lock
+herdr/plugins.json
+herdr/release-notes.json
+herdr/session.json
+homebrew/trust.json
+homebrew/trust.json.lock
+nix/result
+opencode/opencode-notifier-state.json
+pi/agent/settings.json.bak-*
+raycast/extensions/
+streamlit/machine_id_v4
+uv/uv-receipt.json
+vscode/
 
 # OS generated files
 .DS_Store

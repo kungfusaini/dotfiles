@@ -9,6 +9,10 @@ dot-config/tmux/tmp
 
 dot-config/colima/
 
+# Browser-managed profile data
+Library/Application Support/BraveSoftware/Brave-Browser/Default/Bookmarks
+Library/Application Support/BraveSoftware/Brave-Browser/Default/Extensions/
+
 dot-config/ipython/profile_default/history.sqlite
 
 dot-config/android/adbkey

@@ -41,7 +41,3 @@ case ":$PATH:" in
 esac
 # eval "$(pyenv virtualenv-init -)" # Include this if you use pyenv-virtualenv
 #
-
-
-## Not really sure how I feel about this but I guess it's okay for now. Gotta not back this up and be aware of it!!
-export PINGLINE_API_KEY=7EA2ZHHFNKY2VDGDAVRG6DMQ
