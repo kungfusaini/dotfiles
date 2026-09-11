@@ -25,23 +25,61 @@ function emptyRegistry() { return { version: VERSION, workspaces: {} }; }
 function readShared() { const r = readJson(registryPath(), emptyRegistry()); return { version: r.version || VERSION, updatedAt: r.updatedAt, workspaces: r.workspaces && typeof r.workspaces === "object" ? r.workspaces : {} }; }
 function writeShared(registry) { writeJson(registryPath(), { ...registry, version: VERSION, updatedAt: now() }); }
 
+function sharedKey(root, patch) {
+  if (patch.pi?.projectID) return `pi:${patch.pi.projectID}`;
+  if (patch.herdr?.workspaceID) return `herdr:${patch.herdr.workspaceID}`;
+  return `root:${root}`;
+}
+function recordKeys(root, record) {
+  return [
+    record?.pi?.projectID ? `pi:${record.pi.projectID}` : undefined,
+    record?.herdr?.workspaceID ? `herdr:${record.herdr.workspaceID}` : undefined,
+    `root:${root}`,
+    root,
+  ].filter(Boolean);
+}
+function findRecordByRootAndLabel(registry, rootInput, label) {
+  const root = canonicalRoot(rootInput);
+  return Object.values(registry.workspaces || {}).find((record) => {
+    if (!record?.root || canonicalRoot(record.root) !== root) return false;
+    return !label || labelMatchesRecord(label, record);
+  });
+}
+function findRecord(registry, root, patch) {
+  for (const key of recordKeys(root, patch)) {
+    const record = registry.workspaces[key];
+    if (record) return record;
+  }
+  return findRecordByRootAndLabel(registry, root, patch.name || patch.pi?.name || patch.herdr?.label);
+}
 function upsert(registry, rootInput, patch) {
   const root = canonicalRoot(rootInput);
-  const existing = registry.workspaces[root];
+  const existing = findRecord(registry, root, patch);
+  const mergedPatch = { ...patch, pi: patch.pi || existing?.pi, herdr: patch.herdr || existing?.herdr };
+  const key = sharedKey(root, mergedPatch);
   const time = now();
   const aliases = [...new Set([root, ...(existing?.aliases || []), ...(patch.aliases || [])].map(canonicalRoot))];
   const next = {
-    id: existing?.id || patch.id || stableID(root),
-    name: patch.pi || !existing?.pi ? (patch.name || existing?.name || path.basename(root) || root) : existing.name,
+    id: mergedPatch.pi?.projectID || patch.id || existing?.id || stableID(root),
+    name: mergedPatch.pi || !existing?.pi ? (patch.name || existing?.name || path.basename(root) || root) : existing.name,
     root,
     aliases,
     status: patch.status || existing?.status || "active",
-    pi: patch.pi || existing?.pi,
-    herdr: patch.herdr || existing?.herdr,
+    pi: mergedPatch.pi,
+    herdr: mergedPatch.herdr,
     createdAt: existing?.createdAt || time,
     updatedAt: time,
   };
-  registry.workspaces[root] = next;
+  registry.workspaces[key] = next;
+  const label = next.name || next.pi?.name || next.herdr?.label;
+  const duplicateKeys = Object.entries(registry.workspaces).filter(([candidateKey, record]) => {
+    if (candidateKey === key) return false;
+    if (!record?.root || canonicalRoot(record.root) !== root) return false;
+    return !label || labelMatchesRecord(label, record);
+  }).map(([candidateKey]) => candidateKey);
+  for (const oldKey of new Set([...recordKeys(root, patch), ...recordKeys(root, existing), ...duplicateKeys])) {
+    if (oldKey !== key) delete registry.workspaces[oldKey];
+  }
   return next;
 }
 
@@ -63,7 +101,7 @@ function syncPiProjects(registry) {
 }
 
 function labelMatchesRecord(label, record) {
-  return Boolean(label && record && (label === record.name || label === record.pi?.name));
+  return Boolean(label && record && (label === record.name || label === record.pi?.name || label === record.herdr?.label));
 }
 function recordMatchingWorkspace(registry, ws, fallbackRoot) {
   const records = Object.values(registry.workspaces || {});
@@ -87,9 +125,8 @@ function syncHerdrSession(registry) {
     const firstPane = activeTab?.panes ? Object.values(activeTab.panes)[0] : undefined;
     const root = ws.identity_cwd || firstPane?.cwd;
     if (!root) continue;
-    const key = canonicalRoot(root);
-    const record = registry.workspaces[key];
     const label = ws.custom_name || path.basename(root) || root;
+    const record = findRecordByRootAndLabel(registry, root, label);
     const activeTabLabel = activeTab?.custom_name || undefined;
     const tabLabels = (ws.tabs || []).map((tab) => tab?.custom_name).filter(Boolean);
     if (!labelMatchesRecord(label, record)) continue;

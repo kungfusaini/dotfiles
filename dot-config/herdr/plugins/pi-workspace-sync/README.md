@@ -20,6 +20,9 @@ The picker lets you:
 - press `Tab` on a project to expand/collapse its Pi streams underneath
 - press `Tab` on `Archive` to expand/collapse archived streams
 - press `a` on an active stream to archive it, or on an archived stream to restore it
+- press `i` on a project-scope or stream row to inspect recorded root sessions (read-only)
+- press `Tab` in session inspection to expand/collapse child workers and sessions inline
+- press `r` in picker or inspection mode to reload data from disk
 - select project scope or an expanded stream inline
 - create a new shared Pi project and open its Herdr space
 - create a new unlinked Herdr-only space by name for scratch work

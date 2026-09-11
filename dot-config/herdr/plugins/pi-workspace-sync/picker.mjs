@@ -6,6 +6,7 @@ import path from "node:path";
 import readline from "node:readline";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { fitViewportLines, inspectDataForTarget, sanitizeText, truncateLine } from "./inspection.mjs";
 
 const VERSION = 1;
 const PROJECT_REGISTRY_VERSION = 1;
@@ -16,12 +17,22 @@ const useColor = process.stdout.isTTY && process.env.NO_COLOR !== "1";
 const ansi = {
   reset: "\x1b[0m",
   bold: "\x1b[1m",
+  reverse: "\x1b[7m",
   dim: "\x1b[2m",
   accent: "\x1b[38;5;245m",
   muted: "\x1b[38;5;245m",
 };
 function c(style, text) { return useColor ? `${ansi[style]}${text}${ansi.reset}` : text; }
 function clip(text, width) { const s = String(text || ""); return s.length > width ? `${s.slice(0, Math.max(0, width - 1))}…` : s; }
+
+// Kitty graphics placements can survive normal text clears and then float over
+// the picker. Delete placements only (d=a) so Pi can restore images on redraw.
+function clearPickerScreen() {
+  if (process.env.KITTY_WINDOW_ID || process.env.TERM === "xterm-kitty") {
+    process.stdout.write("\x1b_Ga=d,d=a,q=2\x1b\\");
+  }
+  console.clear();
+}
 
 function dataHome() { return process.env.XDG_DATA_HOME || path.join(homedir(), ".local", "share"); }
 function registryPath() { return path.join(dataHome(), "herdr-pi", "workspaces.json"); }
@@ -391,7 +402,7 @@ function question(query) {
   });
 }
 async function createNewProject() {
-  console.clear();
+  clearPickerScreen();
   console.log("Create new shared Pi/Herdr project\n");
   const rootAnswer = await question("Project directory: ");
   if (!rootAnswer.trim()) return false;
@@ -409,7 +420,7 @@ async function createNewProject() {
   return openProjectScope({ name: project.name, root: project.root, pi: { projectID: project.id, name: project.name, root: project.root } });
 }
 async function createUnlinkedSpace() {
-  console.clear();
+  clearPickerScreen();
   console.log("Create unlinked Herdr space\n");
   const nameAnswer = await question("Space name: ");
   const label = nameAnswer.trim();
@@ -424,7 +435,7 @@ async function createUnlinkedSpace() {
   return true;
 }
 async function createNewStreamFromPicker(record) {
-  console.clear();
+  clearPickerScreen();
   console.log(`Create stream for ${record.name}\n`);
   const nameAnswer = await question("Stream name: ");
   const stream = createPiStream(record, nameAnswer);
@@ -433,11 +444,11 @@ async function createNewStreamFromPicker(record) {
 }
 async function manageVmLinkForRecord(record) {
   if (!record || record.herdrOnly) {
-    console.clear();
+    clearPickerScreen();
     await question("VMs can only be linked to shared Pi projects. Press enter...");
     return false;
   }
-  console.clear();
+  clearPickerScreen();
   const current = vmLinkForRecord(record);
   console.log(`exe.dev VM link for ${record.name}\n`);
   if (current) console.log(`Current: ${current.vmName || vmNameFromHost(current.host)} (${current.host})\n`);
@@ -502,6 +513,7 @@ function pickerItems(records, expandedKey, archiveExpandedKey) {
     }
   }
   items.push(
+    { special: "separator" },
     { special: "new", name: "Create new shared project", root: "" },
     { special: "unlinked", name: "Create unlinked Herdr space", root: "" },
   );
@@ -511,52 +523,43 @@ function commandExists(command) {
   return (spawnSync("sh", ["-lc", `command -v ${command}`], { stdio: "ignore" }).status ?? 1) === 0;
 }
 const FIELD_SEP = "\x1f";
-function plain(text) { return String(text).replace(/\x1b\[[0-9;]*m/g, ""); }
-function padAnsi(text, width) { return text + " ".repeat(Math.max(0, width - plain(text).length)); }
+function plain(text) { return sanitizeText(text); }
+function plainLength(text) { return plain(text).length; }
+function padAnsi(text, width) { return `${text}${" ".repeat(Math.max(0, width - plainLength(text)))}`; }
 function itemPayload(item) {
   if (item.special) return { special: item.special, projectKey: item.record ? recordKey(item.record) : undefined, streamID: item.stream?.id };
   return { projectKey: recordKey(item) };
 }
 function selectable(item) { return item?.special !== "separator"; }
+function safeText(value) { return sanitizeText(value); }
 function fzfLine(item, index) {
   let display;
   if (item.special === "separator") display = "";
-  else if (item.special === "new") display = `${c("accent", "+")} ${padAnsi(item.name, 32)} ${c("muted", "project + space")}`;
-  else if (item.special === "unlinked") display = `${c("accent", "+")} ${padAnsi(item.name, 32)} ${c("muted", "space only")}`;
+  else if (item.special === "new") display = "+ New project";
+  else if (item.special === "unlinked") display = "+ New scratch space";
   else if (item.special === "project-scope") {
-    const prefix = item.hasStreams ? `${c("muted", "│")}  ` : "   ";
-    const name = item.record?.openProjectScope ? item.name : c("muted", item.name);
-    display = `  ${prefix}${name}`;
+    const connector = item.hasStreams ? `${c("muted", "│")}  ` : "   ";
+    const label = item.record?.openProjectScope ? "Project scope" : c("muted", "Project scope");
+    display = `  ${connector}${label}`;
   }
   else if (item.special === "stream") {
-    const streamName = item.stream?.name || item.stream?.id || item.name;
-    const isOpen = (item.record?.openStreams || []).includes(streamName) || (item.record?.openStreams || []).includes(item.stream?.id) || item.record?.openStream === streamName || item.record?.openStream === item.stream?.id;
-    const name = isOpen ? streamName : c("muted", streamName);
-    const branch = c("muted", `${item.branch || "├"}─`);
-    display = `  ${branch} ${name}`;
+    const streamName = safeText(item.stream?.name || item.stream?.id || item.name);
+    const isOpen = (item.record?.openStreams || []).includes(streamName)
+      || (item.record?.openStreams || []).includes(item.stream?.id)
+      || item.record?.openStream === streamName
+      || item.record?.openStream === item.stream?.id;
+    display = `  ${c("muted", `${item.branch || "├"}─`)} ${isOpen ? streamName : c("muted", streamName)}`;
   }
-  else if (item.special === "new-stream") {
-    const branch = c("muted", `${item.branch || "└"}─`);
-    display = `  ${branch} ${c("muted", "+")} ${c("muted", item.name)}`;
-  }
-  else if (item.special === "archive-toggle") {
-    const branch = c("muted", `${item.branch || "└"}─`);
-    const count = Number(item.archivedCount || 0);
-    display = `  ${branch} ${c("muted", item.name)} ${c("muted", `(${count})`)}`;
-  }
-  else if (item.special === "archived-stream") {
-    const streamName = item.stream?.name || item.stream?.id || item.name;
-    const branch = c("muted", `   ${item.branch || "└"}─`);
-    display = `  ${branch} ${c("muted", streamName)}`;
-  }
+  else if (item.special === "new-stream") display = `  ${c("muted", `${item.branch || "├"}─ + New stream`)}`;
+  else if (item.special === "archive-toggle") display = `  ${c("muted", `${item.branch || "└"}─ Archived streams (${Number(item.archivedCount || 0)})`)}`;
+  else if (item.special === "archived-stream") display = `     ${c("muted", `${item.branch || "└"}─ ${safeText(item.stream?.name || item.stream?.id || item.name)}`)}`;
   else {
     const isOpen = Boolean(item.herdr?.workspaceID);
     const isClosedProject = !item.herdrOnly && !isOpen;
-    const chainIcon = item.herdrOnly ? " " : (isClosedProject ? c("muted", "") : c("accent", ""));
-    const vmIcon = !item.herdrOnly && hasLinkedVm(item) ? (isClosedProject ? c("muted", "") : c("accent", "")) : "";
-    const icons = vmIcon ? `${chainIcon} ${vmIcon}` : `${chainIcon}  `;
-    const name = isClosedProject ? c("muted", item.name) : item.name;
-    display = `${icons} ${name}`;
+    const linkIcon = item.herdrOnly ? " " : (isClosedProject ? c("muted", "") : c("accent", ""));
+    const vmIcon = !item.herdrOnly && hasLinkedVm(item) ? ` ${isClosedProject ? c("muted", "") : c("accent", "")}` : "";
+    const name = isClosedProject ? c("muted", safeText(item.name)) : safeText(item.name);
+    display = `${linkIcon}${vmIcon}  ${name}`;
   }
   return `${display}${FIELD_SEP}${encodePayload(itemPayload(item))}`;
 }
@@ -612,28 +615,184 @@ function toggleAndPrintList(records, line) {
   printList(records);
 }
 function shellQuote(value) { return `'${String(value).replace(/'/g, `'\\''`)}'`; }
+function terminalViewport() {
+  const rows = Number(process.stdout.rows);
+  const columns = Number(process.stdout.columns);
+  const height = Number.isFinite(rows) && rows > 0 ? rows : 18;
+  const rawWidth = Number.isFinite(columns) && columns > 0 ? columns : 90;
+  return {
+    height,
+    width: Math.max(1, rawWidth - 2),
+  };
+}
 function displayLine(item) { return fzfLine(item, 0).split(FIELD_SEP)[0]; }
 function renderPicker(items, selected) {
-  const height = Math.max(10, process.stdout.rows || 18);
-  const width = Math.max(50, (process.stdout.columns || 90) - 2);
-  const headerLines = 2;
-  const footerLines = 1;
-  const rows = Math.max(4, height - headerLines - footerLines - 1);
+  const { height, width } = terminalViewport();
+  const rows = Math.max(1, height - 4);
   const start = selected >= rows ? selected - rows + 1 : 0;
-  const visible = items.slice(start, start + rows);
-  const lines = [];
-  lines.push(`${c("muted", "Project space")}`);
-  lines.push("");
-  visible.forEach((item, offset) => {
-    const index = start + offset;
-    const pointer = index === selected ? c("muted", "›") : " ";
-    const raw = plain(displayLine(item));
-    const colored = displayLine(item);
-    lines.push(`${pointer} ${colored}${" ".repeat(Math.max(0, width - raw.length - 2))}`);
+  const lines = [c("bold", truncateLine("Projects & streams", width)), ""];
+  items.slice(start, start + rows).forEach((item, offset) => {
+    const active = start + offset === selected;
+    const label = active ? plain(displayLine(item)) : displayLine(item);
+    // A selected label must not contain nested resets: one reverse-video span
+    // owns the complete row, including tree connectors and trailing space.
+    const text = `${active ? ">" : " "} ${label}`;
+    const row = text.length <= width ? text : `${text.slice(0, Math.max(0, width - 1))}…`;
+    if (active && useColor) lines.push(`${ansi.reverse}${row}${" ".repeat(Math.max(0, width - row.length))}${ansi.reset}`);
+    else lines.push(!item.special ? c("bold", row) : row);
   });
-  while (lines.length < height - footerLines - 1) lines.push("");
-  lines.push(c("muted", "↑/↓ j/k move   enter open/create   tab streams/archive   v link VM   a archive/restore   x close   q cancel"));
-  process.stdout.write("\x1b[?25l\x1b[H\x1b[J" + lines.slice(0, height).join("\n"));
+  while (lines.length < height - 3) lines.push("");
+  const item = items[selected];
+  const inspect = isInspectable(item) ? "i inspect   " : "";
+  const expand = !item?.special && !item?.herdrOnly || item?.special === "archive-toggle" ? "Tab expand   " : "";
+  lines.push(c("muted", "─".repeat(width)));
+  lines.push(c("muted", truncateLine(`Enter open   ${inspect}${expand}j/k move   Esc back`, width)));
+  const scopeActions = item?.stream ? "a archive/restore   " : "";
+  const vm = recordForItem(item) && !recordForItem(item).herdrOnly ? "v link VM   " : "";
+  lines.push(c("muted", truncateLine(`${scopeActions}${vm}r refresh   x close   q cancel`, width)));
+  const clearKittyPlacements = (process.env.KITTY_WINDOW_ID || process.env.TERM === "xterm-kitty") ? "\x1b_Ga=d,d=a,q=2\x1b\\" : "";
+  process.stdout.write(clearKittyPlacements + "\x1b[?25l\x1b[H\x1b[J" + lines.slice(0, height).join("\n"));
+}
+
+function clampInspectionIndex(index, length) {
+  if (length <= 0) return 0;
+  return Math.max(0, Math.min(index, length - 1));
+}
+
+function windowStartForSelection(totalItems, selected, rows) {
+  if (rows <= 0 || totalItems <= rows) return 0;
+  const preferredStart = selected - rows + 1;
+  return Math.max(0, Math.min(preferredStart, totalItems - rows));
+}
+
+function inspectionChildrenForOwner(children, ownerSessionId) {
+  if (!ownerSessionId) return [];
+  return (children || []).filter((child) => child.ownerSessionId === ownerSessionId);
+}
+
+function buildInspectionDetailLines(detail) {
+  const { width } = terminalViewport();
+  const summary = typeof detail.structuredResult?.summary === "string" ? detail.structuredResult.summary : undefined;
+  const fields = [
+    `Worker: ${detail.name || detail.id || "unknown"}`,
+    `${detail.state || "unknown"} · ${detail.visibility || "unknown"} · persisted, not live verified`,
+    "",
+    `Task: ${detail.task || "Not recorded"}`,
+    `Status: ${detail.statusMessage || "Not recorded"}`,
+    ...(summary ? [`Result: ${summary}`] : []),
+    "",
+    `State reported: ${detail.lifecycleUpdatedAt || "Not recorded"}`,
+    ...(detail.worktreeBranch ? [`Branch: ${detail.worktreeBranch}`] : []),
+    `Parent session: ${detail.ownerSessionId || "unknown"}`,
+    ...(detail.session ? [
+      `Child session: ${detail.session.title || detail.session.id}`,
+      `Child session ID: ${detail.session.id}`,
+    ] : ["Child session: not linked"]),
+    "Child context is not available in this view.",
+    "",
+    `Registry: ${detail.file || detail.id || "unknown"}`,
+  ];
+  // Keep long assignments readable; existing detail scrolling handles overflow.
+  return fields.flatMap((field) => {
+    let text = safeText(field);
+    const rows = [];
+    while (text.length > width) {
+      const space = text.lastIndexOf(" ", width);
+      const end = space > width / 2 ? space : width;
+      rows.push(text.slice(0, end));
+      text = text.slice(end).trimStart();
+    }
+    rows.push(text);
+    return rows;
+  });
+}
+
+function inspectionTreeRows(state, expandedSessionId) {
+  const rows = [];
+  for (const session of state.owners || []) {
+    const children = inspectionChildrenForOwner(state.children, session.id);
+    rows.push({ kind: "session", id: `session:${session.id}`, session, children });
+    if (expandedSessionId !== session.id) continue;
+    children.forEach((child, index) => rows.push({
+      kind: "child",
+      id: `child:${child.id}`,
+      session,
+      child,
+      connector: index === children.length - 1 ? "└─" : "├─",
+    }));
+  }
+  return rows;
+}
+
+function renderInspectionList(state, context = {}) {
+  const { height, width } = terminalViewport();
+  const footerLines = 2;
+  const warnings = Array.isArray(state.warnings) ? state.warnings : [];
+  const shownWarnings = height > 8 ? warnings.slice(0, 2) : [];
+  const extraWarnings = Math.max(0, warnings.length - shownWarnings.length);
+  const target = state.target || {};
+  const targetLabel = target.scope === "stream" ? `stream: ${safeText(target.streamName || target.streamID || "")}` : "project scope";
+  const lines = [
+    truncateLine("Sessions", width),
+    truncateLine(`${safeText(target.record?.name || target.record?.pi?.name || "")} · ${targetLabel}`, width),
+  ];
+  if (height > 6) lines.push(truncateLine("Persisted records; not live verified", width));
+  lines.push(...shownWarnings.map((warning) => truncateLine(`! ${safeText(warning)}`, width - 2)));
+  if (extraWarnings > 0) lines.push(truncateLine(`! ${extraWarnings} more warning(s)`, width - 2));
+
+  const rows = inspectionTreeRows(state, context.expandedSessionId);
+  if (!rows.length) lines.push(truncateLine("No recorded sessions for this scope.", width));
+  const selected = clampInspectionIndex(context.selectedRow || 0, rows.length);
+  const listRows = Math.max(1, height - lines.length - footerLines);
+  const start = windowStartForSelection(rows.length, selected, listRows);
+  rows.slice(start, start + listRows).forEach((item, index) => {
+    let label;
+    if (item.kind === "session") {
+      const recorded = safeText(item.session.updatedAt || item.session.createdAt || "").replace("T", " ");
+      const date = recorded ? recorded.slice(0, 16) : "date unknown";
+      const count = item.children.length;
+      const marker = count ? (context.expandedSessionId === item.session.id ? "▾" : "▸") : " ";
+      const meta = `${count ? `${count} ${count === 1 ? "child" : "children"} · ` : ""}${date}`;
+      const id = safeText(item.session.id);
+      const fallback = id.length > 24 ? `Session ${id.slice(0, 8)}…${id.slice(-4)}` : `Session ${id}`;
+      const title = safeText(item.session.title || fallback);
+      label = `${marker} ${clip(title, Math.max(12, width - meta.length - 7))}  ${meta}`;
+    } else {
+      const name = safeText(item.child.name || item.child.id || "Unnamed worker");
+      const status = `${safeText(item.child.state || "unknown")} · ${safeText(item.child.visibility || "unknown")}`;
+      const task = safeText(item.child.task || "");
+      label = `  ${item.connector} ${name}  ${status}${task ? `  ${task}` : ""}`;
+    }
+    const isSelected = start + index === selected;
+    const rawLabel = plain(label);
+    const clippedLabel = rawLabel.length > width - 2 ? clip(rawLabel, width - 2) : (isSelected ? rawLabel : label);
+    const row = `${isSelected ? ">" : " "} ${clippedLabel}`;
+    if (isSelected) lines.push(`${ansi.bold}${ansi.reverse}${row}${" ".repeat(Math.max(0, width - plain(row).length))}${ansi.reset}`);
+    else lines.push(row);
+  });
+
+  const rendered = fitViewportLines(lines, height - footerLines);
+  while (rendered.length < height - footerLines) rendered.push("");
+  rendered.push(c("muted", "─".repeat(width)));
+  rendered.push(c("muted", truncateLine("Tab expand/collapse   Enter drill in   j/k move   Esc back   r refresh", width)));
+  const clearKittyPlacements = (process.env.KITTY_WINDOW_ID || process.env.TERM === "xterm-kitty") ? "\x1b_Ga=d,d=a,q=2\x1b\\" : "";
+  process.stdout.write(clearKittyPlacements + "\x1b[?25l\x1b[H\x1b[J" + rendered.slice(0, height).join("\n"));
+}
+
+function renderInspectionDetail(detail, scroll = 0) {
+  const { height, width } = terminalViewport();
+  const lines = buildInspectionDetailLines(detail);
+  const rows = Math.max(1, height - 2);
+  const maxScroll = Math.max(0, lines.length - rows);
+  const safeScroll = Math.max(0, Math.min(Number.isFinite(scroll) ? scroll : 0, maxScroll));
+  const visible = lines.slice(safeScroll, safeScroll + rows);
+  while (visible.length < rows) visible.push("");
+  const footer = maxScroll > 0 ? "↑/↓ scroll   Esc: back   r: refresh" : "Esc: back   r: refresh";
+  visible.push(c("muted", "─".repeat(width)));
+  visible.push(c("muted", truncateLine(footer, width)));
+  const clearKittyPlacements = (process.env.KITTY_WINDOW_ID || process.env.TERM === "xterm-kitty") ? "\x1b_Ga=d,d=a,q=2\x1b\\" : "";
+  process.stdout.write(clearKittyPlacements + "\x1b[?25l\x1b[H\x1b[J" + visible.slice(0, height).join("\n"));
+  return { maxScroll };
 }
 function readKey() {
   return new Promise((resolve) => {
@@ -645,14 +804,14 @@ function recordForItem(item) { return item?.record || (!item?.special ? item : u
 async function closeSpaceForItem(item) {
   const record = recordForItem(item);
   if (!record?.herdr?.workspaceID) {
-    console.clear();
+    clearPickerScreen();
     await question("No open Herdr space linked here. Press enter...");
     return false;
   }
   const workspaceID = record.herdr.workspaceID;
   if (item?.stream) return closeStreamForItem(record, item.stream);
   const label = record.herdr.label || record.name;
-  console.clear();
+  clearPickerScreen();
   const answer = String(await question(`Close Herdr space '${label}' for project '${record.name}'? [y/N] `)).trim().toLowerCase();
   if (answer !== "y" && answer !== "yes") return false;
   if (process.env.HERDR_PI_PICKER_DRY_CLOSE === "1") return true;
@@ -672,7 +831,7 @@ async function closeStreamForItem(record, stream) {
   if (!workspaceID || !stream || !label) return false;
   const tabs = tabList().filter((tab) => tab.workspace_id === workspaceID);
   const tab = tabs.find((candidate) => candidate.label === label);
-  console.clear();
+  clearPickerScreen();
   const onlyTab = tabs.length <= 1;
   const prompt = onlyTab
     ? `Close stream '${label}' by closing the whole '${record.name}' space? [y/N] `
@@ -714,6 +873,97 @@ function toggleStreamArchivedForItem(item) {
   return changed;
 }
 
+function isInspectable(item) {
+  return item?.special === "project-scope" || item?.special === "stream" || item?.special === "archived-stream";
+}
+
+async function runInspectSessionView(record, item) {
+  let state = inspectDataForTarget(record, item);
+  if (!state.target) return;
+
+  let selectedRow = 0;
+  let expandedSessionId = null;
+  let detailId = null;
+  let detailScroll = 0;
+
+  const rows = () => inspectionTreeRows(state, expandedSessionId);
+  const currentRow = () => rows()[selectedRow];
+  const currentDetail = () => state.children.find((child) => child.id === detailId) || null;
+  const refresh = () => {
+    const selectedId = currentRow()?.id;
+    state = inspectDataForTarget(record, item);
+    if (expandedSessionId && !state.owners.some((session) => session.id === expandedSessionId)) expandedSessionId = null;
+    const refreshedRows = rows();
+    const preserved = refreshedRows.findIndex((row) => row.id === selectedId);
+    selectedRow = clampInspectionIndex(preserved >= 0 ? preserved : selectedRow, refreshedRows.length);
+    if (detailId && !currentDetail()) detailId = null;
+    detailScroll = 0;
+  };
+  const rerender = () => {
+    if (detailId) {
+      const detail = currentDetail();
+      if (!detail) {
+        detailId = null;
+        return rerender();
+      }
+      const { maxScroll } = renderInspectionDetail(detail, detailScroll);
+      detailScroll = Math.min(detailScroll, maxScroll);
+      return;
+    }
+    renderInspectionList(state, { selectedRow, expandedSessionId });
+  };
+  const onResize = () => rerender();
+  process.stdout.on("resize", onResize);
+
+  try {
+    while (true) {
+      rerender();
+      const key = await readKey();
+      if (key === "\u0003") return;
+      if (key === "r") {
+        refresh();
+        continue;
+      }
+      if (detailId) {
+        if (key === "\u001b" || key === "q" || key === "x" || key === "\r" || key === "\n" || key.toLowerCase() === "b") {
+          detailId = null;
+          detailScroll = 0;
+          continue;
+        }
+        const maxScroll = Math.max(0, buildInspectionDetailLines(currentDetail()).length - (terminalViewport().height - 2));
+        if (key === "j" || key === "\u001b[B") detailScroll = Math.min(maxScroll, detailScroll + 1);
+        if (key === "k" || key === "\u001b[A") detailScroll = Math.max(0, detailScroll - 1);
+        continue;
+      }
+      if (key === "\u001b" || key === "q" || key === "x") return;
+      if (key === "j" || key === "\u001b[B") {
+        selectedRow = clampInspectionIndex(selectedRow + 1, rows().length);
+        continue;
+      }
+      if (key === "k" || key === "\u001b[A") {
+        selectedRow = clampInspectionIndex(selectedRow - 1, rows().length);
+        continue;
+      }
+      const selected = currentRow();
+      if (key === "\t" && selected?.kind === "session" && selected.children.length) {
+        expandedSessionId = expandedSessionId === selected.session.id ? null : selected.session.id;
+        continue;
+      }
+      if (key === "\r" || key === "\n") {
+        if (selected?.kind === "child") {
+          detailId = selected.child.id;
+          detailScroll = 0;
+        } else if (selected?.kind === "session" && selected.children.length) {
+          expandedSessionId = selected.session.id;
+          selectedRow = clampInspectionIndex(selectedRow + 1, rows().length);
+        }
+      }
+    }
+  } finally {
+    process.stdout.off("resize", onResize);
+  }
+}
+
 async function runInlinePicker(initialRecords) {
   let records = initialRecords;
   const state = readState();
@@ -724,6 +974,8 @@ async function runInlinePicker(initialRecords) {
   if (process.stdin.isTTY) process.stdin.setRawMode(true);
   process.stdin.resume();
   process.stdin.setEncoding("utf8");
+  const redrawPicker = () => renderPicker(items, selected);
+  process.stdout.on("resize", redrawPicker);
   try {
     while (true) {
       items = pickerItems(records, expandedKey, archiveExpandedKey);
@@ -737,6 +989,17 @@ async function runInlinePicker(initialRecords) {
       }
       if (key === "k" || key === "\u001b[A") {
         do { selected = Math.max(0, selected - 1); } while (!selectable(items[selected]) && selected > 0);
+        continue;
+      }
+      if (key === "i") {
+        const item = items[selected];
+        if (isInspectable(item)) {
+          await runInspectSessionView(item.record || recordForItem(item), item);
+        }
+        continue;
+      }
+      if (key === "r") {
+        records = loadRecords();
         continue;
       }
       if (key === "x") {
@@ -811,6 +1074,7 @@ async function runInlinePicker(initialRecords) {
       if ((key === "\r" || key === "\n") && selectable(items[selected])) return items[selected];
     }
   } finally {
+    process.stdout.off("resize", redrawPicker);
     if (process.stdin.isTTY) process.stdin.setRawMode(false);
     process.stdout.write("\x1b[?25h\x1b[H\x1b[J");
   }
