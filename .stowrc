@@ -1,0 +1,3 @@
+--no-folding
+--target=~/.config
+--ignore=^nix($|/)
