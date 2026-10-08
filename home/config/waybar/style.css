@@ -1,0 +1,110 @@
+* {
+  border: none;
+  border-radius: 0;
+  font-family: DejaVu Sans, sans-serif;
+  font-size: 13px;
+  min-height: 0;
+}
+
+window#waybar {
+  background: rgba(20, 22, 28, 0.88);
+  color: #eeeeee;
+}
+
+#workspaces button {
+  padding: 0 8px;
+  color: #bbbbbb;
+}
+
+#workspaces button.active {
+  color: #00ff99;
+}
+
+#window, #clock, #tray, #backlight, #pulseaudio, #custom-bluetooth, #network, #battery, #custom-battery, #custom-wshowkeys, #custom-dnd, #custom-tablet-mode, #custom-platform-profile, #custom-current-workspace, #custom-workspace-tabs {
+  padding: 0 10px;
+}
+
+#custom-current-workspace {
+  color: #00ff99;
+  font-weight: bold;
+}
+
+#custom-workspace-tabs {
+  color: #eeeeee;
+}
+
+#custom-workspace-tabs.empty {
+  color: #888888;
+}
+
+#custom-tablet-mode.laptop {
+  color: #eeeeee;
+}
+
+#custom-tablet-mode.tablet {
+  color: #00d5ff;
+}
+
+#custom-tablet-mode.unknown {
+  color: #ffcc66;
+}
+
+#custom-platform-profile.low-power {
+  color: #00ff99;
+}
+
+#custom-platform-profile.balanced {
+  color: #eeeeee;
+}
+
+#custom-platform-profile.performance {
+  color: #ff9966;
+}
+
+#custom-platform-profile.unknown {
+  color: #ffcc66;
+}
+
+#custom-wshowkeys.active {
+  color: #00ff99;
+}
+
+#custom-wshowkeys.inactive {
+  color: #888888;
+}
+
+#custom-dnd.active {
+  color: #ff9966;
+}
+
+#custom-dnd.inactive {
+  color: #eeeeee;
+}
+
+#custom-bluetooth.connected {
+  color: #00d5ff;
+}
+
+#custom-bluetooth.on {
+  color: #eeeeee;
+}
+
+#custom-bluetooth.off {
+  color: #888888;
+}
+
+#battery.plugged, #battery.full, #custom-battery.plugged {
+  color: #00ff99;
+}
+
+#battery.charging, #custom-battery.charging {
+  color: #ffcc66;
+}
+
+#custom-battery.warning {
+  color: #ffcc66;
+}
+
+#custom-battery.critical {
+  color: #ff6666;
+}

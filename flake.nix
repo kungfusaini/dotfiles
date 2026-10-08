@@ -12,9 +12,13 @@
       url = "github:aayuxh-vim/Mewtion";
       inputs.nixpkgs.follows = "nixpkgs-unstable";
     };
+    home-manager = {
+      url = "github:nix-community/home-manager/release-26.05";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
   };
 
-  outputs = { self, nixpkgs, nixpkgs-unstable, wshowkeys, mewtion }:
+  outputs = { self, nixpkgs, nixpkgs-unstable, wshowkeys, mewtion, home-manager }:
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
@@ -46,6 +50,13 @@
         };
         modules = [
           ./hosts/nixos/configuration.nix
+          home-manager.nixosModules.home-manager
+          {
+            home-manager.useGlobalPkgs = true;
+            home-manager.useUserPackages = true;
+            home-manager.backupFileExtension = "hm-backup";
+            home-manager.users.sumeet = import ./home/sumeet.nix;
+          }
         ];
       };
     };

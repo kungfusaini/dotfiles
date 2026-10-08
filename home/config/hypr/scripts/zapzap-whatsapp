@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PATCH_SITE="${XDG_CONFIG_HOME:-$HOME/.config}/hypr/zapzap-whatsapp-title"
+export PYTHONPATH="${PATCH_SITE}${PYTHONPATH:+:$PYTHONPATH}"
+exec /run/current-system/sw/bin/zapzap "$@"

@@ -1,0 +1,68 @@
+#!/usr/bin/env node
+
+const { execFile } = require("node:child_process");
+const net = require("node:net");
+const path = require("node:path");
+
+function outputWorkspace() {
+  execFile("hyprctl", ["activeworkspace", "-j"], { timeout: 1000 }, (err, stdout) => {
+    if (err) return;
+
+    try {
+      const data = JSON.parse(stdout);
+      const name = String(data.name || data.id || "?");
+      const windows = data.windows ?? 0;
+      const label = name.startsWith("special:") ? name.replace(/^special:/, "") : name;
+
+      process.stdout.write(JSON.stringify({
+        text: `󰧨 ${label}`,
+        tooltip: `Workspace: ${name} (${windows} windows)`,
+        class: "current-workspace"
+      }) + "\n");
+    } catch (_) {}
+  });
+}
+
+function connectHyprEvents() {
+  const runtimeDir = process.env.XDG_RUNTIME_DIR;
+  const signature = process.env.HYPRLAND_INSTANCE_SIGNATURE;
+
+  if (!runtimeDir || !signature) {
+    setInterval(outputWorkspace, 1000);
+    return;
+  }
+
+  const socketPath = path.join(runtimeDir, "hypr", signature, ".socket2.sock");
+  let buffer = "";
+
+  const socket = net.createConnection(socketPath);
+
+  socket.on("data", chunk => {
+    buffer += chunk.toString();
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (
+        line.startsWith("workspace>>") ||
+        line.startsWith("focusedmon>>") ||
+        line.startsWith("moveworkspace>>") ||
+        line.startsWith("createworkspace>>") ||
+        line.startsWith("destroyworkspace>>")
+      ) {
+        outputWorkspace();
+      }
+    }
+  });
+
+  socket.on("error", () => {
+    setTimeout(connectHyprEvents, 1000);
+  });
+
+  socket.on("close", () => {
+    setTimeout(connectHyprEvents, 1000);
+  });
+}
+
+outputWorkspace();
+connectHyprEvents();

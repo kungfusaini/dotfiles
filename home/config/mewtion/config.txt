@@ -1,0 +1,7 @@
+size=24
+color=#007aff
+opacity=1
+margin=0.05
+sensitivity=1
+animation=Rigid
+ip=127.0.0.1

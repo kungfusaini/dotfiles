@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+workspace="browser"
+
+# Only avoid launching when there is already a Vivaldi window on the browser workspace.
+# Vivaldi can have processes/windows elsewhere; those should not count.
+has_browser_window=$(hyprctl clients -j 2>/dev/null | node -e '
+let input = "";
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  try {
+    const clients = JSON.parse(input);
+    const found = clients.some(c =>
+      c.workspace &&
+      c.workspace.name === "browser" &&
+      /^vivaldi/i.test(String(c.class || ""))
+    );
+    process.exit(found ? 0 : 1);
+  } catch (_) {
+    process.exit(1);
+  }
+});
+' && echo yes || echo no)
+
+if [ "$has_browser_window" = "yes" ]; then
+    exit 0
+fi
+
+vivaldi >/dev/null 2>&1 &

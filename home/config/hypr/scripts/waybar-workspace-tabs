@@ -1,0 +1,193 @@
+#!/usr/bin/env node
+
+const { execFile } = require("node:child_process");
+const net = require("node:net");
+const path = require("node:path");
+
+process.stdout.on("error", err => {
+  if (err.code === "EPIPE") process.exit(0);
+  throw err;
+});
+
+function hyprJson(args) {
+  return new Promise(resolve => {
+    execFile("hyprctl", [...args, "-j"], { timeout: 1000 }, (err, stdout) => {
+      if (err) return resolve(null);
+      try { resolve(JSON.parse(stdout)); } catch (_) { resolve(null); }
+    });
+  });
+}
+
+function hasUnread(client) {
+  const title = String(client.title || "");
+
+  // App titles commonly expose unread state as "(*)", "(3)", "[3]",
+  // leading bullets/dots, or the word "unread". We show a simple asterisk
+  // in Waybar and intentionally ignore the exact count.
+  return /\(\s*[0-9*]+\s*\)|\[\s*[0-9]+\s*\]|(^|\s)[•●*](\s|$)|unread/i.test(title);
+}
+
+function withUnread(name, client) {
+  return hasUnread(client) ? `${name}*` : name;
+}
+
+function friendlyName(client) {
+  const klass = String(client.class || client.initialClass || "");
+  const title = String(client.title || "");
+
+  if (/^(slack|Slack)$/.test(klass)) return withUnread("Slack", client);
+  if (/^com\.rtosta\.zapzap$/.test(klass)) return withUnread("WhatsApp", client);
+  if (/^teams-for-linux$/i.test(klass)) return withUnread("Teams", client);
+  if (/^thunderbird$/i.test(klass)) return withUnread("Mail", client);
+  if (/^vivaldi/i.test(klass)) return "Vivaldi";
+  if (/^kitty$/i.test(klass)) return "Kitty";
+  if (/^dolphin$/i.test(klass)) return "Files";
+
+  return klass || title || "Window";
+}
+
+function truncate(s, max) {
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
+
+async function outputTabs() {
+  const [workspace, clients, active] = await Promise.all([
+    hyprJson(["activeworkspace"]),
+    hyprJson(["clients"]),
+    hyprJson(["activewindow"]),
+  ]);
+
+  if (!workspace || !Array.isArray(clients)) return;
+
+  const workspaceName = String(workspace.name || workspace.id || "");
+  const activeAddress = active && active.address ? String(active.address) : "";
+
+  const visible = clients.filter(c => c.workspace && String(c.workspace.name) === workspaceName);
+
+  if (workspaceName === "comms") {
+    const order = [
+      /^com\.rtosta\.zapzap$/,
+      /^(slack|Slack)$/,
+      /^thunderbird$/i,
+      /^teams-for-linux$/i,
+    ];
+    const ordered = order
+      .map(re => visible.find(c => re.test(String(c.class || c.initialClass || ""))))
+      .filter(Boolean);
+
+    const names = ordered.map(c => {
+      const addr = String(c.address || "");
+      const name = friendlyName(c);
+      return addr === activeAddress ? `● ${name}` : name;
+    });
+
+    const tip = ordered.map(c => {
+      const addr = String(c.address || "");
+      const name = friendlyName(c);
+      const title = String(c.title || "");
+      return `${addr === activeAddress ? "● " : "  "}${name}${title ? ` — ${title}` : ""}`;
+    });
+
+    process.stdout.write(JSON.stringify({
+      text: names.length ? truncate(names.join(" | "), 100) : "empty",
+      tooltip: `Workspace: ${workspaceName}\n${tip.join("\n")}`,
+      class: names.length ? "workspace-tabs" : "empty",
+    }) + "\n");
+    return;
+  }
+
+  const byAddress = new Map(visible.map(c => [String(c.address), c]));
+  const seen = new Set();
+  const chunks = [];
+  const tooltip = [];
+
+  for (const client of visible) {
+    const addr = String(client.address || "");
+    if (!addr || seen.has(addr)) continue;
+
+    const grouped = Array.isArray(client.grouped) ? client.grouped.map(String).filter(a => byAddress.has(a)) : [];
+
+    if (grouped.length > 1) {
+      for (const a of grouped) seen.add(a);
+
+      const names = grouped.map(a => {
+        const c = byAddress.get(a);
+        const name = friendlyName(c);
+        return a === activeAddress ? `● ${name}` : name;
+      });
+
+      chunks.push(names.join(" | "));
+      tooltip.push(...grouped.map(a => {
+        const c = byAddress.get(a);
+        const name = friendlyName(c);
+        const title = String(c.title || "");
+        return `${a === activeAddress ? "● " : "  "}${name}${title ? ` — ${title}` : ""}`;
+      }));
+    } else {
+      seen.add(addr);
+      const name = friendlyName(client);
+      chunks.push(addr === activeAddress ? `● ${name}` : name);
+      tooltip.push(`${addr === activeAddress ? "● " : "  "}${name}${client.title ? ` — ${client.title}` : ""}`);
+    }
+  }
+
+  const text = chunks.length ? truncate(chunks.join("   "), 100) : "empty";
+
+  process.stdout.write(JSON.stringify({
+    text,
+    tooltip: `Workspace: ${workspaceName}\n${tooltip.join("\n")}`,
+    class: chunks.length ? "workspace-tabs" : "empty",
+  }) + "\n");
+}
+
+let pending = false;
+function scheduleOutput() {
+  if (pending) return;
+  pending = true;
+  setTimeout(() => {
+    pending = false;
+    outputTabs();
+  }, 50);
+}
+
+function connectHyprEvents() {
+  const runtimeDir = process.env.XDG_RUNTIME_DIR;
+  const signature = process.env.HYPRLAND_INSTANCE_SIGNATURE;
+
+  if (!runtimeDir || !signature) {
+    setInterval(outputTabs, 1000);
+    return;
+  }
+
+  const socketPath = path.join(runtimeDir, "hypr", signature, ".socket2.sock");
+  let buffer = "";
+  const socket = net.createConnection(socketPath);
+
+  socket.on("data", chunk => {
+    buffer += chunk.toString();
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+
+    for (const line of lines) {
+      if (
+        line.startsWith("workspace>>") ||
+        line.startsWith("focusedmon>>") ||
+        line.startsWith("activewindow>>") ||
+        line.startsWith("activewindowv2>>") ||
+        line.startsWith("openwindow>>") ||
+        line.startsWith("closewindow>>") ||
+        line.startsWith("movewindow>>") ||
+        line.startsWith("movewindowv2>>") ||
+        line.toLowerCase().includes("group")
+      ) {
+        scheduleOutput();
+      }
+    }
+  });
+
+  socket.on("error", () => setTimeout(connectHyprEvents, 1000));
+  socket.on("close", () => setTimeout(connectHyprEvents, 1000));
+}
+
+outputTabs();
+connectHyprEvents();

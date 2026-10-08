@@ -1,0 +1,95 @@
+{
+  "layer": "top",
+  "position": "top",
+  "height": 30,
+  "spacing": 8,
+
+  "modules-left": ["custom/current-workspace", "custom/workspace-tabs"],
+  "modules-center": ["clock"],
+  "modules-right": ["custom/tablet-mode", "custom/platform-profile", "custom/wshowkeys", "custom/dnd", "tray", "backlight", "pulseaudio", "network", "custom/battery"],
+
+  "custom/current-workspace": {
+    "exec": "/home/sumeet/.config/hypr/scripts/waybar-current-workspace",
+    "return-type": "json",
+    "restart-interval": 1
+  },
+
+  "custom/workspace-tabs": {
+    "exec": "/home/sumeet/.config/hypr/scripts/waybar-workspace-tabs",
+    "return-type": "json",
+    "restart-interval": 1
+  },
+
+  "custom/tablet-mode": {
+    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/thinkpad-tablet-mode-waybar",
+    "return-type": "json",
+    "interval": 1
+  },
+
+  "custom/platform-profile": {
+    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/platform-profile-waybar",
+    "return-type": "json",
+    "signal": 8,
+    "interval": 60
+  },
+
+  "custom/wshowkeys": {
+    "exec-if": "pgrep -x wshowkeys >/dev/null",
+    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/wshowkeys-waybar",
+    "return-type": "json",
+    "interval": 1,
+    "on-click": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/wshowkeys-waybar toggle"
+  },
+
+  "custom/dnd": {
+    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/dnd-waybar",
+    "return-type": "json",
+    "signal": 9,
+    "interval": 30,
+    "on-click": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/dnd-waybar toggle",
+    "tooltip": true
+  },
+
+  "tray": {
+    "icon-size": 18,
+    "spacing": 8
+  },
+
+  "clock": {
+    "format": "{:%a %d %b  %H:%M}"
+  },
+
+  "backlight": {
+    "device": "intel_backlight",
+    "format": "{icon} {percent}%",
+    "format-icons": ["󰃞", "󰃟", "󰃠"]
+  },
+
+  "pulseaudio": {
+    "format": "{icon} {volume}%",
+    "format-muted": "󰝟 muted",
+    "format-icons": ["", "", ""]
+  },
+
+  "custom/bluetooth": {
+    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/waybar-bluetooth",
+    "return-type": "json",
+    "interval": 5,
+    "on-click": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/waybar-bluetooth --menu",
+    "tooltip": true
+  },
+
+  "network": {
+    "format-wifi": " {essid}",
+    "format-ethernet": "󰈀 wired",
+    "format-disconnected": "󰖪 offline",
+    "on-click": "kitty -e nmtui"
+  },
+
+  "custom/battery": {
+    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/ac-battery-waybar",
+    "return-type": "json",
+    "interval": 2,
+    "tooltip": true
+  }
+}

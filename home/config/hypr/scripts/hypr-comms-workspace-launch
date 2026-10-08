@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+workspace="comms"
+hyprctl dispatch "hl.dsp.focus({ workspace = \"name:${workspace}\" })" >/dev/null 2>&1 || true
+
+node <<'NODE'
+const { execFileSync, spawn } = require("node:child_process");
+
+const workspace = "comms";
+const apps = [
+  { name: "WhatsApp", re: /^com\.rtosta\.zapzap$/,       cmd: `${process.env.HOME}/.config/hypr/scripts/zapzap-whatsapp` },
+  { name: "Slack",    re: /^(slack|Slack)$/,             cmd: "slack" },
+  { name: "Mail",     re: /^(thunderbird|Thunderbird)$/, cmd: "thunderbird" },
+  { name: "Teams",    re: /^teams-for-linux$/i,          cmd: "teams-for-linux" },
+];
+
+function hypr(args) {
+  try {
+    return execFileSync("hyprctl", args, {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  } catch (_) {
+    return "";
+  }
+}
+
+function dispatch(lua) {
+  hypr(["dispatch", lua]);
+}
+
+function sleep(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function clients() {
+  try { return JSON.parse(hypr(["clients", "-j"]) || "[]"); }
+  catch (_) { return []; }
+}
+
+function findApps() {
+  const all = clients();
+  return apps.map(app => ({
+    app,
+    client: all.find(c => app.re.test(String(c.class || ""))) || null,
+  }));
+}
+
+function launch(command) {
+  const child = spawn("sh", ["-c", `${command} >/dev/null 2>&1`], {
+    detached: true,
+    stdio: "ignore",
+  });
+  child.unref();
+}
+
+function sameGroup(items) {
+  if (items.some(item => !item.client)) return false;
+  const addresses = items.map(item => item.client.address);
+  return items.every(({ client }) =>
+    Array.isArray(client.grouped) &&
+    addresses.every(address => client.grouped.includes(address))
+  );
+}
+
+function groupContains(address, memberAddress) {
+  const client = clients().find(c => c.address === address);
+  return !!client?.grouped?.includes(memberAddress);
+}
+
+// Open only missing applications. Existing applications are never reopened.
+for (const { app, client } of findApps()) {
+  if (!client) launch(app.cmd);
+}
+
+// Wait for missing applications to create their windows.
+for (let attempt = 0; attempt < 32; attempt++) {
+  if (findApps().every(item => item.client)) break;
+  sleep(250);
+}
+
+// Collect existing comms windows if one somehow ended up on another workspace.
+for (const { client } of findApps()) {
+  if (client?.address && client.workspace?.name !== workspace) {
+    dispatch(`hl.dsp.focus({ window = "address:${client.address}" })`);
+    dispatch(`hl.dsp.window.move({ workspace = "name:${workspace}" })`);
+  }
+}
+
+dispatch(`hl.dsp.focus({ workspace = "name:${workspace}" })`);
+sleep(100);
+
+let found = findApps().filter(item => item.client);
+if (found.length === 0) process.exit(0);
+
+// Normal Super+C path: the complete group already exists, so leave it alone.
+// Focusing the workspace is enough; explicitly focusing found[0] would switch
+// the active group tab back to the first comms app every time Super+C is used.
+if (sameGroup(found) && found.length === apps.length) {
+  process.exit(0);
+}
+
+// Reuse the largest existing comms group. Never dismantle or rebuild it.
+let anchor = found
+  .filter(({ client }) => Array.isArray(client.grouped) && client.grouped.length > 0)
+  .sort((a, b) => b.client.grouped.length - a.client.grouped.length)[0];
+
+// If no group exists yet, create one from the first available comms window.
+if (!anchor) {
+  anchor = found[0];
+  dispatch(`hl.dsp.focus({ window = "address:${anchor.client.address}" })`);
+  dispatch("hl.dsp.group.toggle()");
+  sleep(100);
+}
+
+const anchorAddress = anchor.client.address;
+
+// Unlock deterministically. "disable" means disable the active-group lock.
+dispatch(`hl.dsp.focus({ window = "address:${anchorAddress}" })`);
+dispatch('hl.dsp.group.lock_active({ action = "disable" })');
+
+// Add only windows which are not already members of the existing group.
+found = findApps().filter(item => item.client);
+for (let index = 0; index < found.length; index++) {
+  const item = found[index];
+  const address = item.client.address;
+  if (groupContains(address, anchorAddress)) continue;
+
+  // Focus the desired predecessor so insertion follows the Waybar tab order.
+  for (let offset = 1; offset <= found.length; offset++) {
+    const predecessor = found[(index - offset + found.length) % found.length].client;
+    if (groupContains(predecessor.address, anchorAddress)) {
+      dispatch(`hl.dsp.focus({ window = "address:${predecessor.address}" })`);
+      dispatch('hl.dsp.group.lock_active({ action = "disable" })');
+      break;
+    }
+  }
+
+  dispatch(`hl.dsp.focus({ window = "address:${address}" })`);
+  for (const direction of ["left", "right", "up", "down"]) {
+    dispatch(`hl.dsp.window.move({ into_group = "${direction}" })`);
+    sleep(100);
+    if (groupContains(address, anchorAddress)) break;
+  }
+}
+
+// Lock the completed group and show WhatsApp first.
+dispatch(`hl.dsp.focus({ window = "address:${anchorAddress}" })`);
+dispatch('hl.dsp.group.lock_active({ action = "enable" })');
+const whatsapp = findApps()[0]?.client;
+if (whatsapp?.address) {
+  dispatch(`hl.dsp.focus({ window = "address:${whatsapp.address}" })`);
+}
+NODE
