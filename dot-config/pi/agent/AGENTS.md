@@ -1,8 +1,16 @@
 # Global Agent Instructions
 
+- Use the YAGNI principle. Do not implement extra things without checking first. Try to do the minimum but best practice way.
 - Follow the XDG Base Directory Specification for system layout.
 - Install software and system-level dependencies through my Nix flake at `~/.config/nix/flake.nix` whenever practical.
 - Do not start coding or making edits unless explicitly told to start, except when already in an ongoing chain of edits.
+
+## Unified Kanban
+
+- Default to Sumeet's unified kanban for cross-project task tracking unless the local project instructions, repo docs, or user explicitly specify a different tracker/workflow.
+- Kanban URL: `https://kanban-api-0809-1535.exe.xyz`
+- For private API access from this Mac/Pi session, retrieve the VM-scoped exe.dev token from macOS Keychain service `exe.dev-kanban-api-0809-1535-token`, account `kanban-mbp`, and send it as `X-Exedev-Authorization: Bearer <token>`.
+- Do not print or commit the token. If another machine/server needs access, create its own labeled VM-scoped exe.dev token rather than reusing `kanban-mbp`.
 
 ## GitHub Stacked PRs
 

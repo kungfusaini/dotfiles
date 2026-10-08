@@ -50,6 +50,9 @@ assert.match(parentNotification, /dispatch follow-up workers when appropriate/, 
 assert.match(source, /await notifyParentOfWorkerUpdates\(refreshed\)/, 'the background watcher must queue parent updates after refresh');
 assert.match(source, /pollWorkersOnce\(pi, ctx, [^\n]+, params\.scope \?\? "owned"\)/, 'default list/status/poll calls must use owned scope');
 assert.match(source, /pi\.on\("session_shutdown"/, 'the watcher must stop with its owning Pi session');
+assert.match(guidance, /Do not begin implementation until the complete feature has been decomposed, uncertain assumptions have been investigated, and every review unit has explicit acceptance criteria and exclusions/, 'orchestrator guidance must require complete scoping before implementation');
+assert.match(guidance, /Newly discovered architectural work must trigger replanning, not automatic expansion/, 'orchestrator guidance must replan instead of automatically expanding architectural scope');
+assert.match(source, /block and report the discovery before making those changes/, 'child worker prompt must block before expanding into newly discovered architecture');
 assert.match(source, /one worker per review unit/, 'tool guidance must enforce review-unit worker scoping');
 assert.match(source, /one branch\/PR per review unit/, 'tool guidance must map review units to branch/PR layers');
 assert.match(source, /do not bundle unrelated units/i, 'child task prompt must warn workers not to expand review scope');

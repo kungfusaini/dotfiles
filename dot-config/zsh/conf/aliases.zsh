@@ -33,7 +33,7 @@ alias muxconf="vim ~/.config/herdr/config.toml"
 alias nixedit="vim $XDG_CONFIG_HOME/nix/flake.nix"
 if [[ "$OSTYPE" == darwin* ]]; then
   alias nixbuild="sudo darwin-rebuild switch --flake $XDG_CONFIG_HOME/nix"
-  alias nixrspwn="nix flake update --flake $XDG_CONFIG_HOME/nix; nixbuild; brew upgrade"
+  alias nixrspwn="nix flake update --flake $XDG_CONFIG_HOME/nix && nixbuild"
 fi
  
 ########## Tool Aliases ##########
