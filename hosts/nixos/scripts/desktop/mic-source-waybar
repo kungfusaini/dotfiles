@@ -65,33 +65,33 @@ status() {
 
   if [[ $volume_state == *MUTED* ]]; then
     muted=true
-    mic_icon=""
+    mic_icon="MUTE"
     mute_label="muted"
   else
     muted=false
-    mic_icon=""
+    mic_icon="MIC"
     mute_label="live"
   fi
 
   case "$cur" in
     bluez_input.*)
       class="headset"
-      text=" $mic_icon"
+      text="BT $mic_icon"
       label="headset"
       ;;
     alsa_input.*)
       class="laptop"
-      text=" $mic_icon"
+      text="LAP $mic_icon"
       label="laptop"
       ;;
     "")
       class="unknown"
-      text="$mic_icon ?"
+      text="? $mic_icon"
       label="unknown"
       ;;
     *)
       class="unknown"
-      text="$mic_icon ?"
+      text="? $mic_icon"
       label="$cur"
       ;;
   esac

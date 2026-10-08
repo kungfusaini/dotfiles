@@ -167,6 +167,8 @@ in
         "$mod, SPACE, exec, $menu"
 
         ", F23, exec, voxtype record start"
+        # Short press toggles mic mute; hold toggles laptop/headset mic source.
+        ", XF86AudioMicMute, exec, ${micMuteKey} press"
         "$mod, F23, exec, $terminal -e pi"
 
         "$mod, P, pseudo"
@@ -207,6 +209,7 @@ in
 
       bindr = [
         ", F23, exec, voxtype record stop"
+        ", XF86AudioMicMute, exec, ${micMuteKey} release"
       ];
 
       bindm = [
@@ -223,16 +226,10 @@ in
       ];
 
       bindl = [
-        # Short press toggles mic mute; hold toggles laptop/headset mic source.
-        ", XF86AudioMicMute, exec, ${micMuteKey} press"
         ", XF86AudioNext, exec, playerctl next"
         ", XF86AudioPause, exec, playerctl play-pause"
         ", XF86AudioPlay, exec, playerctl play-pause"
         ", XF86AudioPrev, exec, playerctl previous"
-      ];
-
-      bindrl = [
-        ", XF86AudioMicMute, exec, ${micMuteKey} release"
       ];
 
       windowrulev2 = [

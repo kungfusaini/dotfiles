@@ -17,13 +17,18 @@ press() {
   token=$(new_token)
   printf '%s' "$token" > "$token_file"
 
-  (
-    sleep "$hold_secs"
-    if [[ -f "$token_file" ]] && [[ "$(cat "$token_file" 2>/dev/null || true)" == "$token" ]]; then
-      rm -f "$token_file"
-      "$mic_source_script" toggle
-    fi
-  ) >/dev/null 2>&1 &
+  # Hyprland's exec shell exits immediately; use nohup so the hold timer
+  # survives that shell and can still fire if the key stays held.
+  nohup "$0" hold "$token" >/dev/null 2>&1 &
+}
+
+hold() {
+  local token=${1:?}
+  sleep "$hold_secs"
+  if [[ -f "$token_file" ]] && [[ "$(cat "$token_file" 2>/dev/null || true)" == "$token" ]]; then
+    rm -f "$token_file"
+    "$mic_source_script" toggle
+  fi
 }
 
 release() {
@@ -35,9 +40,10 @@ release() {
 
 case "${1:-}" in
   press) press ;;
+  hold) hold "${2:-}" ;;
   release) release ;;
   *)
-    printf 'Usage: %s {press|release}\n' "${0##*/}" >&2
+    printf 'Usage: %s {press|hold TOKEN|release}\n' "${0##*/}" >&2
     exit 2
     ;;
 esac
