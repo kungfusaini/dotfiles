@@ -93,6 +93,12 @@ window#waybar {
   color: #ffcc66;
 }
 
+#custom-mic-source.laptop-muted,
+#custom-mic-source.headset-muted,
+#custom-mic-source.unknown-muted {
+  color: #ff6666;
+}
+
 #custom-bluetooth.connected {
   color: #00d5ff;
 }

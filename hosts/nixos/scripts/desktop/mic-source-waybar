@@ -57,39 +57,55 @@ set_source() {
 }
 
 status() {
-  local cur class text label tooltip laptop_id headset_id
+  local cur class text label tooltip laptop_id headset_id volume_state muted mic_icon mute_label
   cur=$(current_name || true)
+  volume_state=$(wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null || true)
   laptop_id=$(find_node_id laptop || true)
   headset_id=$(find_node_id headset || true)
+
+  if [[ $volume_state == *MUTED* ]]; then
+    muted=true
+    mic_icon=""
+    mute_label="muted"
+  else
+    muted=false
+    mic_icon=""
+    mute_label="live"
+  fi
 
   case "$cur" in
     bluez_input.*)
       class="headset"
-      text=" "
+      text=" $mic_icon"
       label="headset"
       ;;
     alsa_input.*)
       class="laptop"
-      text=" "
+      text=" $mic_icon"
       label="laptop"
       ;;
     "")
       class="unknown"
-      text=" ?"
+      text="$mic_icon ?"
       label="unknown"
       ;;
     *)
       class="unknown"
-      text=" ?"
+      text="$mic_icon ?"
       label="$cur"
       ;;
   esac
 
-  tooltip="Mic: $label"
+  if [[ $muted == true ]]; then
+    class="$class-muted"
+  fi
+
+  tooltip="Mic: $label ($mute_label)"
+  [[ -n "$volume_state" ]] && tooltip="$tooltip\n$volume_state"
   [[ -n "$cur" ]] && tooltip="$tooltip\nCurrent: $cur"
   [[ -n "$laptop_id" ]] && tooltip="$tooltip\nLaptop mic id: $laptop_id"
   [[ -n "$headset_id" ]] && tooltip="$tooltip\nHeadset mic id: $headset_id"
-  tooltip="$tooltip\nClick to toggle"
+  tooltip="$tooltip\nLeft click: toggle source\nRight click: mute/unmute"
 
   printf '{"text":"%s","class":"%s","tooltip":"%s"}\n' \
     "$text" "$class" "$(printf '%s' "$tooltip" | json_escape)"
@@ -102,13 +118,19 @@ toggle() {
   esac
 }
 
+mute_toggle() {
+  wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle
+  signal_waybar
+}
+
 case "${1:-status}" in
   status|--status) status ;;
   toggle|--toggle) toggle ;;
+  mute-toggle|--mute-toggle) mute_toggle ;;
   laptop|--laptop) set_source laptop ;;
   headset|--headset) set_source headset ;;
   *)
-    printf 'Usage: %s [status|toggle|laptop|headset]\n' "${0##*/}" >&2
+    printf 'Usage: %s [status|toggle|mute-toggle|laptop|headset]\n' "${0##*/}" >&2
     exit 2
     ;;
 esac
