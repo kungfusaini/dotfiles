@@ -1,6 +1,16 @@
-{ config, pkgs, ... }:
+{ ... }:
 
 {
+  imports = [
+    ./modules/hypr.nix
+    ./modules/kitty.nix
+    ./modules/mako.nix
+    ./modules/mewtion.nix
+    ./modules/voxtype.nix
+    ./modules/waybar.nix
+    ./modules/yazi.nix
+  ];
+
   home.username = "sumeet";
   home.homeDirectory = "/home/sumeet";
 
@@ -8,19 +18,6 @@
   home.stateVersion = "26.05";
 
   xdg.enable = true;
-
-  # Start Home Manager in conservative "file manager" mode: keep the current
-  # working configs byte-for-byte, then later replace individual files with
-  # typed HM modules when that buys us something.
-  xdg.configFile = {
-    "hypr".source = ./config/hypr;
-    "waybar".source = ./config/waybar;
-    "kitty".source = ./config/kitty;
-    "mako".source = ./config/mako;
-    "yazi".source = ./config/yazi;
-    "voxtype".source = ./config/voxtype;
-    "mewtion".source = ./config/mewtion;
-  };
 
   programs.home-manager.enable = true;
 }
