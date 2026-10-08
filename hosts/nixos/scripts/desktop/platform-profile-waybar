@@ -18,13 +18,13 @@ fi
 
 case "$profile" in
   low-power)
-    printf '{"text":"󰌪 Eco","tooltip":"%s","class":"low-power"}\n' "$tooltip"
+    printf '{"text":"󰌪","tooltip":"%s","class":"low-power"}\n' "$tooltip"
     ;;
   balanced)
-    printf '{"text":"󰾅 Balanced","tooltip":"%s","class":"balanced"}\n' "$tooltip"
+    printf '{"text":"󰾅","tooltip":"%s","class":"balanced"}\n' "$tooltip"
     ;;
   performance)
-    printf '{"text":"󰓅 Performance","tooltip":"%s","class":"performance"}\n' "$tooltip"
+    printf '{"text":"󰓅","tooltip":"%s","class":"performance"}\n' "$tooltip"
     ;;
   *)
     printf '{"text":"Profile %s","tooltip":"%s","class":"unknown"}\n' "$profile" "$tooltip"

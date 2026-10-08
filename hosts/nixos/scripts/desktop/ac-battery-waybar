@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+bat_dir=""
+for d in /sys/class/power_supply/BAT*; do
+  if [ -d "$d" ]; then
+    bat_dir="$d"
+    break
+  fi
+done
+
+ac_online=0
+for f in /sys/class/power_supply/AC*/online /sys/class/power_supply/ADP*/online /sys/class/power_supply/ACAD*/online; do
+  if [ -e "$f" ] && [ "$(cat "$f")" = "1" ]; then
+    ac_online=1
+    break
+  fi
+done
+
+if [ -z "$bat_dir" ]; then
+  if [ "$ac_online" = "1" ]; then
+    printf '{"text":"AC ","class":"ac","tooltip":"Running on AC power"}\n'
+  else
+    printf '{"text":"no battery","class":"unknown","tooltip":"No battery detected"}\n'
+  fi
+  exit 0
+fi
+
+capacity=$(cat "$bat_dir/capacity" 2>/dev/null || echo 0)
+status=$(cat "$bat_dir/status" 2>/dev/null || echo Unknown)
+
+if [ "$ac_online" = "1" ]; then
+  if [ "$status" = "Charging" ]; then
+    text="${capacity}% 󰂄"
+    class="charging"
+    tooltip="Charging on AC power (${capacity}%)"
+  else
+    text="${capacity}% "
+    class="plugged"
+    tooltip="Running on AC power (${status}, ${capacity}%)"
+  fi
+else
+  if [ "$capacity" -lt 15 ]; then icon=""; class="critical";
+  elif [ "$capacity" -lt 35 ]; then icon=""; class="warning";
+  elif [ "$capacity" -lt 60 ]; then icon=""; class="battery";
+  elif [ "$capacity" -lt 85 ]; then icon=""; class="battery";
+  else icon=""; class="battery"; fi
+  text="${capacity}% ${icon}"
+  tooltip="Running on battery (${status}, ${capacity}%)"
+fi
+
+printf '{"text":"%s","class":"%s","tooltip":"%s"}\n' "$text" "$class" "$tooltip"

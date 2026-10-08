@@ -6,7 +6,7 @@
 
   "modules-left": ["custom/current-workspace", "custom/workspace-tabs"],
   "modules-center": ["clock"],
-  "modules-right": ["custom/tablet-mode", "custom/platform-profile", "custom/wshowkeys", "custom/dnd", "tray", "backlight", "pulseaudio", "network", "custom/battery"],
+  "modules-right": ["custom/tablet-mode", "custom/platform-profile", "custom/wshowkeys", "custom/dnd", "custom/mic-source", "tray", "backlight", "pulseaudio", "network", "custom/battery"],
 
   "custom/current-workspace": {
     "exec": "/home/sumeet/.config/hypr/scripts/waybar-current-workspace",
@@ -47,6 +47,15 @@
     "signal": 9,
     "interval": 30,
     "on-click": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/dnd-waybar toggle",
+    "tooltip": true
+  },
+
+  "custom/mic-source": {
+    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/mic-source-waybar",
+    "return-type": "json",
+    "signal": 10,
+    "interval": 5,
+    "on-click": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/mic-source-waybar toggle",
     "tooltip": true
   },
 

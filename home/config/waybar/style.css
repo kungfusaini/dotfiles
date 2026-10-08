@@ -20,7 +20,7 @@ window#waybar {
   color: #00ff99;
 }
 
-#window, #clock, #tray, #backlight, #pulseaudio, #custom-bluetooth, #network, #battery, #custom-battery, #custom-wshowkeys, #custom-dnd, #custom-tablet-mode, #custom-platform-profile, #custom-current-workspace, #custom-workspace-tabs {
+#window, #clock, #tray, #backlight, #pulseaudio, #custom-bluetooth, #network, #battery, #custom-battery, #custom-wshowkeys, #custom-dnd, #custom-mic-source, #custom-tablet-mode, #custom-platform-profile, #custom-current-workspace, #custom-workspace-tabs {
   padding: 0 10px;
 }
 
@@ -79,6 +79,18 @@ window#waybar {
 
 #custom-dnd.inactive {
   color: #eeeeee;
+}
+
+#custom-mic-source.laptop {
+  color: #00ff99;
+}
+
+#custom-mic-source.headset {
+  color: #00d5ff;
+}
+
+#custom-mic-source.unknown {
+  color: #ffcc66;
 }
 
 #custom-bluetooth.connected {
