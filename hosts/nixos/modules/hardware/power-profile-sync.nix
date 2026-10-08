@@ -166,6 +166,68 @@ let
       $CC -O2 -Wall -Wextra -o $out/bin/sync-lenovo-platform-profile-epp $src
     '';
   };
+
+  acProfileProgram = pkgs.writeShellApplication {
+    name = "lenovo-ac-platform-profile";
+    runtimeInputs = [ pkgs.coreutils pkgs.gnugrep ];
+    text = ''
+      set -euo pipefail
+
+      profile_file=/sys/firmware/acpi/platform_profile
+      choices_file=/sys/firmware/acpi/platform_profile_choices
+      state_file=/run/lenovo-platform-profile-before-ac
+
+      if [[ ! -w "$profile_file" ]]; then
+        exit 0
+      fi
+
+      profile_supported() {
+        local wanted="$1"
+        [[ -r "$choices_file" ]] || return 1
+        grep -qw -- "$wanted" "$choices_file"
+      }
+
+      ac_online=0
+      for supply in /sys/class/power_supply/*; do
+        [[ -d "$supply" ]] || continue
+        [[ -r "$supply/online" ]] || continue
+        [[ "$(<"$supply/online")" == "1" ]] || continue
+
+        if [[ -r "$supply/type" ]]; then
+          type="$(<"$supply/type")"
+        else
+          type=""
+        fi
+
+        case "$type" in
+          Mains|USB|USB_C|USB_PD)
+            ac_online=1
+            break
+            ;;
+        esac
+      done
+
+      current="$(<"$profile_file")"
+
+      if [[ "$ac_online" == "1" ]]; then
+        if [[ ! -e "$state_file" ]]; then
+          printf '%s\n' "$current" > "$state_file"
+        fi
+
+        if profile_supported performance && [[ "$current" != "performance" ]]; then
+          printf 'performance\n' > "$profile_file"
+        fi
+      else
+        if [[ -r "$state_file" ]]; then
+          previous="$(<"$state_file")"
+          if profile_supported "$previous" && [[ "$current" != "$previous" ]]; then
+            printf '%s\n' "$previous" > "$profile_file"
+          fi
+          rm -f "$state_file"
+        fi
+      fi
+    '';
+  };
 in
 {
   # The Lenovo/Firmware platform profile is the source of truth. The ThinkPad
@@ -191,4 +253,18 @@ in
       RestartSec = 2;
     };
   };
+
+  systemd.services.lenovo-ac-platform-profile = {
+    description = "Switch Lenovo platform profile to performance on AC and restore on battery";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      ExecStart = "${acProfileProgram}/bin/lenovo-ac-platform-profile";
+    };
+  };
+
+  services.udev.extraRules = ''
+    SUBSYSTEM=="power_supply", ACTION=="change", TAG+="systemd", ENV{SYSTEMD_WANTS}+="lenovo-ac-platform-profile.service"
+  '';
 }
