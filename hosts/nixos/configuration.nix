@@ -15,6 +15,7 @@
     ./modules/desktop/apps.nix
     ./modules/desktop/audio.nix
     ./modules/desktop/hyprland.nix
+    ./modules/desktop/vivaldi.nix
 
     ./modules/programs/mewtion.nix
 
