@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir="${XDG_RUNTIME_DIR:-/tmp}/mic-mute-key"
+token_file="$state_dir/token"
+mic_source_script="/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/mic-source-waybar"
+hold_secs="${MIC_MUTE_HOLD_SECS:-0.55}"
+
+mkdir -p "$state_dir"
+
+new_token() {
+  printf '%s.%s.%s\n' "$(date +%s%N)" "$$" "$RANDOM"
+}
+
+press() {
+  local token
+  token=$(new_token)
+  printf '%s' "$token" > "$token_file"
+
+  (
+    sleep "$hold_secs"
+    if [[ -f "$token_file" ]] && [[ "$(cat "$token_file" 2>/dev/null || true)" == "$token" ]]; then
+      rm -f "$token_file"
+      "$mic_source_script" toggle
+    fi
+  ) >/dev/null 2>&1 &
+}
+
+release() {
+  if [[ -f "$token_file" ]]; then
+    rm -f "$token_file"
+    "$mic_source_script" mute-toggle
+  fi
+}
+
+case "${1:-}" in
+  press) press ;;
+  release) release ;;
+  *)
+    printf 'Usage: %s {press|release}\n' "${0##*/}" >&2
+    exit 2
+    ;;
+esac

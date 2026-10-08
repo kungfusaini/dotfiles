@@ -14,6 +14,7 @@ let
   });
 
   tabletOsk = "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/tablet-osk";
+  micMuteKey = "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/mic-mute-key";
 in
 {
   wayland.windowManager.hyprland = {
@@ -217,16 +218,21 @@ in
         ", XF86AudioRaiseVolume, exec, wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"
         ", XF86AudioLowerVolume, exec, wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"
         ", XF86AudioMute, exec, wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
-        ", XF86AudioMicMute, exec, wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"
         ", XF86MonBrightnessUp, exec, brightnessctl set 10%+"
         ", XF86MonBrightnessDown, exec, brightnessctl set 10%-"
       ];
 
       bindl = [
+        # Short press toggles mic mute; hold toggles laptop/headset mic source.
+        ", XF86AudioMicMute, exec, ${micMuteKey} press"
         ", XF86AudioNext, exec, playerctl next"
         ", XF86AudioPause, exec, playerctl play-pause"
         ", XF86AudioPlay, exec, playerctl play-pause"
         ", XF86AudioPrev, exec, playerctl previous"
+      ];
+
+      bindrl = [
+        ", XF86AudioMicMute, exec, ${micMuteKey} release"
       ];
 
       windowrulev2 = [
