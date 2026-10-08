@@ -1,0 +1,6 @@
+System configuration lives in /home/sumeet/.config/nixos.
+
+Rebuild with:
+  sudo nixos-rebuild switch --flake /home/sumeet/.config/nixos#nixos
+
+The old non-flake /etc/nixos/*.nix files and backups were removed after migrating to flakes.

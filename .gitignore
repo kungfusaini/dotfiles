@@ -1,0 +1,21 @@
+# Nix build outputs
+/result
+result
+result-*
+
+# Editor/OS noise
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Local/private overrides and secrets
+.env
+.env.*
+*.secret
+*.token
+secrets/
+private/
+
+# Pi/cache noise if ever copied here
+web-search-cache/

@@ -1,0 +1,470 @@
+diff -ruN '--exclude=.git' a/src/bin/control_panel.rs b/src/bin/control_panel.rs
+--- a/src/bin/control_panel.rs	2026-10-08 10:39:42.077025214 +0100
++++ b/src/bin/control_panel.rs	2026-10-08 10:39:42.084191496 +0100
+@@ -1,6 +1,15 @@
+ use iced::widget::{button, column, container, pick_list, row, scrollable, slider, text, text_input};
+ use iced::{Alignment, Color, Element, Length, Task};
+ use std::fs;
++use std::path::PathBuf;
++
++fn config_path() -> PathBuf {
++    std::env::var_os("XDG_CONFIG_HOME")
++        .map(PathBuf::from)
++        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
++        .unwrap_or_else(|| PathBuf::from("."))
++        .join("mewtion/config.txt")
++}
+ 
+ pub fn main() -> iced::Result {
+     iced::application(SettingsApp::default, SettingsApp::update, SettingsApp::view)
+@@ -72,7 +81,7 @@
+ 
+ impl Default for SettingsApp {
+     fn default() -> Self {
+-        let path = "mewtion_config.txt";
++        let path = config_path();
+         let mut app = Self {
+             selected_size: DotSize::Medium, selected_color: DotColor::White,
+             opacity: 0.85, margin_pct: 0.03, sensitivity: 3.5,
+@@ -80,7 +89,7 @@
+             status_message: String::new(),
+         };
+ 
+-        if let Ok(contents) = fs::read_to_string(path) {
++        if let Ok(contents) = fs::read_to_string(&path) {
+             for line in contents.lines() {
+                 let parts: Vec<&str> = line.split('=').collect();
+                 if parts.len() != 2 { continue; }
+@@ -141,7 +150,12 @@
+                     match self.anim_mode { AnimMode::Fluid => "Fluid", AnimMode::Rigid => "Rigid" },
+                     self.phone_ip
+                 );
+-                match fs::write("mewtion_config.txt", config_data) {
++                let path = config_path();
++                let result = path.parent()
++                    .map(fs::create_dir_all)
++                    .transpose()
++                    .and_then(|_| fs::write(path, config_data));
++                match result {
+                     Ok(_) => self.status_message = "Settings applied live!".to_string(),
+                     Err(_) => self.status_message = "Error saving config".to_string(),
+                 }
+diff -ruN '--exclude=.git' a/src/config.rs b/src/config.rs
+--- a/src/config.rs	2026-10-08 10:39:42.077172215 +0100
++++ b/src/config.rs	2026-10-08 10:39:42.084360640 +0100
+@@ -1,5 +1,13 @@
+ use std::fs;
+-use std::path::Path;
++use std::path::PathBuf;
++
++fn config_path() -> PathBuf {
++    std::env::var_os("XDG_CONFIG_HOME")
++        .map(PathBuf::from)
++        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".config")))
++        .unwrap_or_else(|| PathBuf::from("."))
++        .join("mewtion/config.txt")
++}
+ 
+ #[derive(Debug, Clone)]
+ pub struct MewtionConfig {
+@@ -28,12 +36,12 @@
+ 
+ impl MewtionConfig {
+     pub fn load() -> Self {
+-        let path = "mewtion_config.txt";
+-        if !Path::new(path).exists() { return Self::default(); }
++        let path = config_path();
++        if !path.exists() { return Self::default(); }
+ 
+         let mut config = Self::default();
+ 
+-        if let Ok(contents) = fs::read_to_string(path) {
++        if let Ok(contents) = fs::read_to_string(&path) {
+             for line in contents.lines() {
+                 let parts: Vec<&str> = line.split('=').collect();
+                 if parts.len() != 2 { continue; }
+diff -ruN '--exclude=.git' a/src/iio.rs b/src/iio.rs
+--- a/src/iio.rs	2026-10-08 10:39:42.077312596 +0100
++++ b/src/iio.rs	2026-10-08 10:39:42.084527660 +0100
+@@ -1,147 +1,40 @@
+-//! Built-in motion sensors via the Linux IIO (Industrial I/O) sysfs interface.
++//! Built-in motion sensors using Linux IIO buffered capture.
+ //!
+-//! Laptops with a built-in accelerometer expose it under
+-//! `/sys/bus/iio/devices/iio:deviceN`, either from a dedicated driver or
+-//! through the HID sensor hub. Devices are discovered by the channels they
+-//! expose rather than by driver name, so no per-vendor allowlist is needed,
+-//! and a hub that splits accelerometer, gyroscope and gravity across sibling
+-//! devices works the same as a single combined device.
+-//!
+-//! Reading `*_raw` is the portable interface, but it is not a cheap memory
+-//! fetch on every driver: a HID sensor hub answers each read by requesting a
+-//! fresh report, which costs about one sampling period per axis and does not
+-//! parallelise. An accelerometer parked at 10 Hz therefore yields roughly
+-//! 5 Hz here, so this module reads only the axes the overlay consumes and
+-//! paces itself from the rate the hardware reports. Dedicated I2C
+-//! accelerometers return a cached register value immediately and run at the
+-//! full loop rate.
++//! HID sensor-hub `*_raw` sysfs attributes can be stale cached values on some
++//! laptops (including the ThinkPad X1 2-in-1). Enabling the IIO scan buffer and
++//! reading `/dev/iio:deviceN` keeps the sensor powered and delivers fresh,
++//! coherent XYZ reports.
+ 
+ use crate::sensor::MotionSample;
+-use std::fs;
++use std::fs::{self, File, OpenOptions};
++use std::io::Read;
+ use std::path::{Path, PathBuf};
+-use std::thread::sleep;
+-use std::time::{Duration, Instant};
+ 
+ const IIO_DEVICES: &str = "/sys/bus/iio/devices";
+-
+-/// Sampling faster than this gains nothing: the overlay redraws at 60 FPS and
+-/// vehicle motion has no content at these frequencies.
+-const MAX_POLL_HZ: f32 = 100.0;
+-
+-/// Used when a device does not publish a sampling frequency.
+-const DEFAULT_POLL_HZ: f32 = 50.0;
+-
+-/// Cutoff of the fallback gravity estimator. Low enough to pass sustained
+-/// orientation but not vehicle acceleration.
+ const GRAVITY_CUTOFF_HZ: f32 = 0.25;
+-
+-/// Lateral and forward axes. The overlay ignores vertical acceleration, and on
+-/// a HID sensor hub every skipped accelerometer axis saves a full sampling
+-/// period, so axes outside this mask are left at zero in the emitted sample.
+-const PLANAR: [bool; 3] = [true, true, false];
+-
+-/// Yaw rate, the only angular velocity the overlay mixes in.
+-const YAW: [bool; 3] = [false, false, true];
++const DEFAULT_HZ: f32 = 10.0;
+ 
+ fn read_f32(path: &Path) -> Option<f32> {
+     fs::read_to_string(path).ok()?.trim().parse().ok()
+ }
+ 
+-/// One three-axis channel group of a device, e.g. `in_accel_*`.
+-struct Triple {
+-    axes: [PathBuf; 3],
+-    scale: [f32; 3],
+-    offset: [f32; 3],
+-}
+-
+-impl Triple {
+-    /// Opens `kind` on `dev`, or `None` if the device has no such channel.
+-    fn open(dev: &Path, kind: &str) -> Option<Triple> {
+-        let axes = ["x", "y", "z"].map(|axis| dev.join(format!("in_{kind}_{axis}_raw")));
+-        if !axes.iter().all(|path| path.exists()) {
+-            return None;
+-        }
+-
+-        // Scale and offset are published either once for the whole group or
+-        // per axis; per-axis wins where both exist.
+-        let attr = |axis: &str, name: &str| {
+-            read_f32(&dev.join(format!("in_{kind}_{axis}_{name}")))
+-                .or_else(|| read_f32(&dev.join(format!("in_{kind}_{name}"))))
+-        };
+-
+-        Some(Triple {
+-            axes,
+-            scale: ["x", "y", "z"].map(|axis| attr(axis, "scale").unwrap_or(1.0)),
+-            offset: ["x", "y", "z"].map(|axis| attr(axis, "offset").unwrap_or(0.0)),
+-        })
+-    }
+-
+-    /// Reads the requested axes, leaving the rest at zero. The IIO ABI defines
+-    /// the processed value as `(raw + offset) * scale`, in m/s² for
+-    /// acceleration and rad/s for angular velocity.
+-    fn read(&self, wanted: [bool; 3]) -> Option<[f32; 3]> {
+-        let mut values = [0.0; 3];
+-        for (i, value) in values.iter_mut().enumerate() {
+-            if wanted[i] {
+-                *value = (read_f32(&self.axes[i])? + self.offset[i]) * self.scale[i];
+-            }
+-        }
+-        Some(values)
+-    }
+-}
+-
+-/// Reads the rate a channel is currently running at.
+-fn sampling_rate(dev: &Path, kind: &str) -> Option<f32> {
+-    read_f32(&dev.join(format!("in_{kind}_sampling_frequency"))).filter(|hz| *hz > 0.0)
+-}
+-
+-/// Sensor hubs commonly idle at 10 Hz, which bounds how fast this path can
+-/// sample. Raising it needs write access to a root-owned attribute, so failure
+-/// is expected and simply leaves the device at its default rate.
+-fn raise_sampling_rate(dev: &Path, kind: &str) {
+-    let frequency = dev.join(format!("in_{kind}_sampling_frequency"));
+-    if !frequency.exists() || sampling_rate(dev, kind).is_some_and(|hz| hz >= MAX_POLL_HZ) {
+-        return;
+-    }
+-
+-    let supported: Vec<f32> = fs::read_to_string(
+-        dev.join(format!("in_{kind}_sampling_frequency_available")),
+-    )
+-    .map(|list| {
+-        list.split_whitespace()
+-            .filter_map(|value| value.parse().ok())
+-            .collect()
+-    })
+-    .unwrap_or_default();
+-
+-    // Prefer the slowest supported rate that still keeps up; if the device
+-    // cannot reach it, take the fastest it offers.
+-    let target = supported
+-        .iter()
+-        .copied()
+-        .filter(|hz| *hz >= MAX_POLL_HZ)
+-        .min_by(|a, b| a.total_cmp(b))
+-        .or_else(|| supported.iter().copied().max_by(|a, b| a.total_cmp(b)))
+-        .unwrap_or(MAX_POLL_HZ);
+-
+-    let _ = fs::write(&frequency, format!("{target}"));
++fn write_attr(path: &Path, value: &str) -> std::io::Result<()> {
++    fs::write(path, value)
+ }
+ 
+ pub struct IioSource {
+-    accel: Triple,
+-    gyro: Option<Triple>,
+-    gravity: Option<Triple>,
+-    /// Rate the accelerometer reports, which bounds the whole loop.
+-    accel_hz: f32,
++    file: File,
++    device: PathBuf,
++    scale: f32,
++    offset: f32,
++    hz: f32,
+ }
+ 
+ impl IioSource {
+-    /// Finds the local motion sensors, or `None` when the machine has no
+-    /// accelerometer exposed through IIO.
+     pub fn discover() -> Option<IioSource> {
+         let mut devices: Vec<PathBuf> = fs::read_dir(IIO_DEVICES)
+             .ok()?
+-            .filter_map(|entry| entry.ok())
++            .filter_map(Result::ok)
+             .map(|entry| entry.path())
+             .filter(|path| {
+                 path.file_name()
+@@ -151,123 +44,123 @@
+             .collect();
+         devices.sort();
+ 
+-        let (mut accel, mut gyro, mut gravity) = (None, None, None);
+-        let mut accel_hz = DEFAULT_POLL_HZ;
++        for device in devices {
++            if !["x", "y", "z"]
++                .iter()
++                .all(|axis| device.join(format!("scan_elements/in_accel_{axis}_en")).exists())
++            {
++                continue;
++            }
+ 
+-        for dev in &devices {
+-            for (slot, kind) in [
+-                (&mut accel, "accel"),
+-                (&mut gyro, "anglvel"),
+-                (&mut gravity, "gravity"),
+-            ] {
+-                if slot.is_none() {
+-                    if let Some(triple) = Triple::open(dev, kind) {
+-                        raise_sampling_rate(dev, kind);
+-                        if kind == "accel" {
+-                            accel_hz = sampling_rate(dev, kind).unwrap_or(DEFAULT_POLL_HZ);
+-                        }
+-                        *slot = Some(triple);
+-                    }
+-                }
++            match Self::open_buffered(device.clone()) {
++                Ok(source) => return Some(source),
++                Err(error) => eprintln!(
++                    "Mewtion: cannot open buffered sensor {}: {error}",
++                    device.display()
++                ),
+             }
+         }
++        None
++    }
++
++    fn open_buffered(device: PathBuf) -> std::io::Result<IioSource> {
++        let buffer = device.join("buffer");
++        let scan = device.join("scan_elements");
++
++        // Reconfigure from a known state. XYZ are all enabled so each report is
++        // coherent and always 12 bytes (three little-endian signed i32 values).
++        write_attr(&buffer.join("enable"), "0")?;
++        for axis in ["x", "y", "z"] {
++            write_attr(&scan.join(format!("in_accel_{axis}_en")), "1")?;
++        }
++        if scan.join("in_timestamp_en").exists() {
++            // Timestamp is not part of our 12-byte frame. It defaults to off;
++            // failure here is harmless on systems that don't grant this optional
++            // attribute to desktop users.
++            let _ = write_attr(&scan.join("in_timestamp_en"), "0");
++        }
++        write_attr(&buffer.join("length"), "32")?;
++        write_attr(&buffer.join("enable"), "1")?;
+ 
+-        Some(IioSource {
+-            accel: accel?,
+-            gyro,
+-            gravity,
+-            accel_hz,
++        let name = device
++            .file_name()
++            .and_then(|name| name.to_str())
++            .ok_or_else(|| std::io::Error::other("invalid IIO device name"))?;
++        let devnode = PathBuf::from("/dev").join(name);
++        let file = OpenOptions::new().read(true).open(&devnode)?;
++
++        Ok(IioSource {
++            file,
++            scale: read_f32(&device.join("in_accel_scale")).unwrap_or(1.0),
++            offset: read_f32(&device.join("in_accel_offset")).unwrap_or(0.0),
++            hz: read_f32(&device.join("in_accel_sampling_frequency"))
++                .filter(|hz| *hz > 0.0)
++                .unwrap_or(DEFAULT_HZ),
++            device,
+         })
+     }
+ 
+-    /// Rate the loop aims for, bounded by what the accelerometer produces.
+-    fn poll_hz(&self) -> f32 {
+-        self.accel_hz.min(MAX_POLL_HZ)
++    pub fn describe(&self) -> String {
++        format!(
++            "buffered accelerometer {} at {:.0} Hz, estimated gravity",
++            self.device.display(),
++            self.hz
++        )
+     }
+ 
+-    pub fn describe(&self) -> String {
+-        let gravity = match self.gravity {
+-            Some(_) => "hardware gravity channel",
+-            None => "estimated gravity",
+-        };
+-        let gyro = match self.gyro {
+-            Some(_) => "gyroscope",
+-            None => "no gyroscope",
+-        };
+-        format!("accelerometer at {:.0} Hz, {gyro}, {gravity}", self.poll_hz())
++    fn read_xyz(&mut self) -> std::io::Result<[f32; 3]> {
++        let mut frame = [0_u8; 12];
++        self.file.read_exact(&mut frame)?;
++        let mut xyz = [0.0; 3];
++        for (index, value) in xyz.iter_mut().enumerate() {
++            let start = index * 4;
++            let raw = i32::from_le_bytes(frame[start..start + 4].try_into().unwrap()) as f32;
++            *value = (raw + self.offset) * self.scale;
++        }
++        Ok(xyz)
+     }
+ }
+ 
+-/// Streams samples until the process exits, calling `on_sample` for each one.
+-///
+-/// The overlay wants linear acceleration. Where the device publishes a gravity
+-/// channel it is subtracted directly; otherwise gravity is tracked with a
+-/// low-pass filter and subtracted, which is how Android derives
+-/// `TYPE_LINEAR_ACCELERATION` on devices without a dedicated sensor.
+-pub fn run_iio_source_blocking<F>(source: IioSource, mut on_sample: F)
++impl Drop for IioSource {
++    fn drop(&mut self) {
++        let _ = write_attr(&self.device.join("buffer/enable"), "0");
++    }
++}
++
++pub fn run_iio_source_blocking<F>(mut source: IioSource, mut on_sample: F)
+ where
+     F: FnMut(MotionSample),
+ {
+-    let period = Duration::from_secs_f32(1.0 / source.poll_hz());
+     let rc = 1.0 / (2.0 * std::f32::consts::PI * GRAVITY_CUTOFF_HZ);
+-
+-    let mut estimated_gravity: Option<[f32; 3]> = None;
+-    let mut last_sample_at: Option<Instant> = None;
++    let dt = 1.0 / source.hz.max(1.0);
++    let alpha = dt / (rc + dt);
++    let mut gravity: Option<[f32; 3]> = None;
+ 
+     loop {
+-        let started = Instant::now();
+-
+-        // A transient read failure (sensor resuming, hub busy) should skip the
+-        // sample rather than end the stream.
+-        let Some(accel) = source.accel.read(PLANAR) else {
+-            sleep(period);
+-            continue;
+-        };
+-
+-        let gravity = match source.gravity.as_ref().and_then(|g| g.read(PLANAR)) {
+-            Some(gravity) => gravity,
+-            None => {
+-                // Drivers that block until a fresh report and drivers that
+-                // return instantly give very different intervals, so derive
+-                // the filter constant from the interval actually observed.
+-                let dt = last_sample_at
+-                    .map(|at| at.elapsed().as_secs_f32())
+-                    .unwrap_or(period.as_secs_f32())
+-                    .clamp(1e-3, 1.0);
+-                let alpha = dt / (rc + dt);
+-
+-                // Seeding from the first reading avoids a lurch across the
+-                // screen while the filter converges from zero.
+-                let gravity = estimated_gravity.get_or_insert(accel);
+-                for (axis, sampled) in gravity.iter_mut().zip(accel) {
+-                    *axis += alpha * (sampled - *axis);
+-                }
+-                *gravity
++        let accel = match source.read_xyz() {
++            Ok(sample) => sample,
++            Err(error) => {
++                eprintln!("Mewtion: buffered accelerometer read failed: {error}");
++                break;
+             }
+         };
+ 
+-        let gyro = source
+-            .gyro
+-            .as_ref()
+-            .and_then(|g| g.read(YAW))
+-            .unwrap_or_default();
+-
+-        last_sample_at = Some(Instant::now());
++        let estimated = gravity.get_or_insert(accel);
++        for (axis, sampled) in estimated.iter_mut().zip(accel) {
++            *axis += alpha * (sampled - *axis);
++        }
+ 
+         on_sample(MotionSample {
+-            ax: accel[0] - gravity[0],
+-            ay: accel[1] - gravity[1],
+-            az: accel[2] - gravity[2],
+-            gx: gyro[0],
+-            gy: gyro[1],
+-            gz: gyro[2],
++            // ThinkPad sensor coordinates in normal laptop orientation: X is
++            // screen-horizontal, Y is front/back, and Z is vertical.
++            ax: accel[0] - estimated[0],
++            ay: accel[1] - estimated[1],
++            az: accel[2] - estimated[2],
++            // The gyro has the same stale-sysfs issue; omit it until it is also
++            // consumed through a second buffered IIO device.
++            gx: 0.0,
++            gy: 0.0,
++            gz: 0.0,
+         });
+-
+-        // Drivers that block until a fresh report have already consumed the
+-        // interval; only sleep off whatever is left, so fast drivers are paced
+-        // instead of spinning a core.
+-        if let Some(remaining) = period.checked_sub(started.elapsed()) {
+-            sleep(remaining);
+-        }
+     }
+ }

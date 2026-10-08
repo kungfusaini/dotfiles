@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DEVICE='tpps/2-elan-trackpoint'
+CONFIG="$HOME/.config/hypr/conf/input.lua"
+PROFILE='adaptive'
+SENS='0.4'
+FORCE_NO_ACCEL='false'
+
+apply_setting() {
+  local sens="$1"
+  local profile="${2:-$PROFILE}"
+  local force="${3:-$FORCE_NO_ACCEL}"
+
+  # force_no_accel is a global Hyprland input option, not a per-device option.
+  hyprctl eval "hl.config({ input = { force_no_accel = $force } })" >/dev/null
+  hyprctl eval "hl.device({ name = \"$DEVICE\", sensitivity = $sens, accel_profile = \"$profile\", scroll_method = \"on_button_down\", scroll_button = 274, scroll_button_lock = false, natural_scroll = false })" >/dev/null
+
+  SENS="$sens"
+  PROFILE="$profile"
+  FORCE_NO_ACCEL="$force"
+
+  local msg="TrackPoint: sensitivity=$SENS | profile=$PROFILE | force_no_accel=$FORCE_NO_ACCEL"
+  echo "Applied: $msg"
+  hyprctl notify 1 2500 "rgb(88c0d0)" "$msg" >/dev/null 2>&1 || true
+}
+
+show_current() {
+  local actual_force
+  actual_force="$(hyprctl getoption input:force_no_accel 2>/dev/null | awk '/bool:/ {print $2; exit}')"
+  [ -n "$actual_force" ] || actual_force="unknown"
+
+  cat <<EOF
+================================================================
+CURRENT TEST SETTING
+  device:          $DEVICE
+  sensitivity:     $SENS
+  accel_profile:   $PROFILE
+  force_no_accel:  $FORCE_NO_ACCEL    actual Hyprland global: $actual_force
+================================================================
+EOF
+}
+
+save_setting() {
+  local tmp
+  tmp="$(mktemp)"
+  awk -v sens="$SENS" -v profile="$PROFILE" -v force="$FORCE_NO_ACCEL" '
+    BEGIN { maybe=0; in_tp=0; in_input=0; input_depth=0; saw_force=0 }
+
+    /input[[:space:]]*=[[:space:]]*\{/ {
+      in_input=1
+      input_depth=1
+      saw_force=0
+    }
+
+    in_input && /force_no_accel[[:space:]]*=/ {
+      sub(/force_no_accel[[:space:]]*=[[:space:]]*(true|false)/, "force_no_accel = " force)
+      saw_force=1
+    }
+
+    /hl\.device\(\{/ { maybe=1 }
+    maybe && /name[[:space:]]*=[[:space:]]*"tpps\/2-elan-trackpoint"/ { in_tp=1 }
+    in_tp && /sensitivity[[:space:]]*=/ {
+      sub(/sensitivity[[:space:]]*=[[:space:]]*-?[0-9.]+/, "sensitivity   = " sens)
+    }
+    in_tp && /accel_profile[[:space:]]*=/ {
+      sub(/accel_profile[[:space:]]*=[[:space:]]*"[^"]+"/, "accel_profile = \"" profile "\"")
+    }
+
+    { print }
+
+    in_input && /sensitivity[[:space:]]*=/ && saw_force == 0 {
+      print "        force_no_accel = " force ","
+      saw_force=1
+    }
+
+    in_tp && /\}\)/ { in_tp=0; maybe=0 }
+    maybe && /\}\)/ { maybe=0 }
+
+    in_input && /\}/ {
+      input_depth--
+      if (input_depth <= 0) in_input=0
+    }
+    in_input && /\{/ { input_depth++ }
+  ' "$CONFIG" > "$tmp"
+  cp "$CONFIG" "$CONFIG.backup-trackpoint-tune"
+  mv "$tmp" "$CONFIG"
+  echo "Saved to $CONFIG"
+  echo "Backup: $CONFIG.backup-trackpoint-tune"
+}
+
+nudge() {
+  awk -v x="$SENS" -v d="$1" 'BEGIN {
+    y=x+d
+    if (y > 1) y=1
+    if (y < -1) y=-1
+    printf "%.2f", y
+  }'
+}
+
+clear
+cat <<EOF
+TrackPoint tuner for: $DEVICE
+
+Important:
+  - flat = libinput's flatter profile, but it can still feel accelerated on a TrackPoint.
+  - true no-accel in Hyprland needs the global option force_no_accel=true.
+  - Press n below to test that real no-accel mode.
+
+How to test each setting:
+  1. Move to all four screen corners.
+  2. Try clicking small UI targets.
+  3. Select a bit of text.
+  4. Notice: are you overshooting, undershooting, or pushing too hard?
+
+EOF
+
+apply_setting "$SENS" "$PROFILE" "$FORCE_NO_ACCEL"
+
+while true; do
+  clear
+  show_current
+  cat <<EOF
+
+Presets, adaptive acceleration:
+  0) sensitivity 0.0  default
+  1) sensitivity 0.2  gentle
+  2) sensitivity 0.4  balanced starting point
+  3) sensitivity 0.6  quicker
+  4) sensitivity 0.8  fast
+  5) sensitivity 1.0  max Hyprland boost
+
+Fine tune:
+  -) down by 0.05
+  +) up by 0.05
+  f) toggle flat/adaptive comparison, force_no_accel off
+  n) toggle TRUE no-accel mode, uses global force_no_accel
+
+Actions:
+  s) save current setting to Hyprland config
+  r) reload Hyprland and reapply current test setting
+  q) quit without saving
+EOF
+  read -rp '> ' choice
+  case "$choice" in
+    0) apply_setting 0.0 adaptive false ;;
+    1) apply_setting 0.2 adaptive false ;;
+    2) apply_setting 0.4 adaptive false ;;
+    3) apply_setting 0.6 adaptive false ;;
+    4) apply_setting 0.8 adaptive false ;;
+    5) apply_setting 1.0 adaptive false ;;
+    -) apply_setting "$(nudge -0.05)" "$PROFILE" "$FORCE_NO_ACCEL" ;;
+    +|=) apply_setting "$(nudge 0.05)" "$PROFILE" "$FORCE_NO_ACCEL" ;;
+    f)
+      if [ "$PROFILE" = adaptive ]; then apply_setting "$SENS" flat false; else apply_setting "$SENS" adaptive false; fi
+      ;;
+    n)
+      if [ "$FORCE_NO_ACCEL" = false ]; then apply_setting "$SENS" flat true; else apply_setting "$SENS" adaptive false; fi
+      ;;
+    s) save_setting; hyprctl reload >/dev/null || true; apply_setting "$SENS" "$PROFILE" "$FORCE_NO_ACCEL" >/dev/null; exit 0 ;;
+    r) hyprctl reload; apply_setting "$SENS" "$PROFILE" "$FORCE_NO_ACCEL" ;;
+    q) echo 'Not saved.'; exit 0 ;;
+    *) echo 'Unknown choice.' ;;
+  esac
+
+done

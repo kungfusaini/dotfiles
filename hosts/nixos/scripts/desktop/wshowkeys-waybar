@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+status() {
+  printf '{"text":"⌨ keys","class":"active","tooltip":"wshowkeys is running — click to stop"}\n'
+}
+
+toggle() {
+  if pgrep -x wshowkeys >/dev/null; then
+    pkill -x wshowkeys
+  else
+    setsid -f wshowkeys -a bottom >"${XDG_STATE_HOME:-$HOME/.local/state}/wshowkeys.log" 2>&1
+  fi
+}
+
+case "${1:-status}" in
+  status|--status) status ;;
+  toggle|--toggle) toggle ;;
+  *)
+    printf 'Usage: %s [status|toggle]\n' "${0##*/}" >&2
+    exit 2
+    ;;
+esac

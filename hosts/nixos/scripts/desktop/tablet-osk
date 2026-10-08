@@ -1,0 +1,132 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+TABLET_FILE=${TABLET_FILE:-/sys/devices/platform/thinkpad_acpi/hotkey_tablet_mode}
+POLL_INTERVAL=${POLL_INTERVAL:-0.5}
+RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp}
+STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}
+DISABLED_FILE=${DISABLED_FILE:-$RUNTIME_DIR/tablet-osk-disabled}
+LOCK_FILE=${LOCK_FILE:-$RUNTIME_DIR/tablet-osk.lock}
+LOG_FILE=${LOG_FILE:-$STATE_DIR/tablet-osk.log}
+
+WVKBD_ARGS=(
+  -L 300
+  --alpha 235
+  --bg 151515
+  --fg 2b2b2b
+  --fg-sp 3a3a3a
+  --press 5a5a5a
+  --press-sp 666666
+  --text f2f2f2
+  --text-sp f2f2f2
+)
+
+mkdir -p "$STATE_DIR"
+
+osk_command() {
+  if command -v wvkbd-mobintl >/dev/null 2>&1; then
+    printf '%s\n' wvkbd-mobintl
+  elif command -v wvkbd >/dev/null 2>&1; then
+    printf '%s\n' wvkbd
+  else
+    return 1
+  fi
+}
+
+osk_running() {
+  pgrep -x wvkbd-mobintl >/dev/null 2>&1 || pgrep -x wvkbd >/dev/null 2>&1
+}
+
+start_osk() {
+  local osk
+  osk=$(osk_command) || {
+    echo "tablet-osk: wvkbd is not installed" >&2
+    notify-send "On-screen keyboard" "wvkbd is not installed" 2>/dev/null || true
+    return 1
+  }
+
+  if ! osk_running; then
+    "$osk" "${WVKBD_ARGS[@]}" >>"$LOG_FILE" 2>&1 &
+  fi
+}
+
+stop_osk() {
+  pkill -x wvkbd-mobintl >/dev/null 2>&1 || true
+  pkill -x wvkbd >/dev/null 2>&1 || true
+}
+
+hide_osk() {
+  touch "$DISABLED_FILE"
+  stop_osk
+
+  # Best-effort blur/unselect for the text field that summoned typing.
+  sleep 0.05
+  if command -v wtype >/dev/null 2>&1; then
+    wtype -k Escape >/dev/null 2>&1 || true
+  fi
+}
+
+toggle_osk() {
+  if osk_running; then
+    hide_osk
+    exit 0
+  fi
+
+  rm -f "$DISABLED_FILE"
+  start_osk
+}
+
+daemon() {
+  exec 9>"$LOCK_FILE"
+  if ! flock -n 9; then
+    echo "tablet-osk: another watcher is already running"
+    exit 0
+  fi
+
+  if [[ ! -r "$TABLET_FILE" ]]; then
+    echo "tablet-osk: cannot read $TABLET_FILE" >&2
+    exit 1
+  fi
+
+  cleanup() {
+    stop_osk
+    exit 0
+  }
+  trap cleanup INT TERM
+  trap stop_osk EXIT
+
+  local last="" tablet
+  while true; do
+    tablet=$(tr -d '[:space:]' < "$TABLET_FILE" 2>/dev/null || echo 0)
+
+    if [[ "$tablet" == "1" ]]; then
+      if [[ -e "$DISABLED_FILE" ]]; then
+        [[ "$last" == "disabled" ]] || echo "tablet-osk: tablet mode on; OSK manually hidden"
+        stop_osk
+        last="disabled"
+      else
+        [[ "$last" == "tablet" ]] || echo "tablet-osk: tablet mode on; starting keyboard"
+        start_osk
+        last="tablet"
+      fi
+    else
+      [[ "$last" == "laptop" ]] || echo "tablet-osk: tablet mode off; stopping keyboard"
+      rm -f "$DISABLED_FILE"
+      stop_osk
+      last="laptop"
+    fi
+
+    sleep "$POLL_INTERVAL"
+  done
+}
+
+case "${1:-daemon}" in
+  daemon|--daemon|watch|--watch) daemon ;;
+  toggle|--toggle) toggle_osk ;;
+  hide|--hide) hide_osk ;;
+  show|--show) rm -f "$DISABLED_FILE"; start_osk ;;
+  *)
+    printf 'Usage: %s [daemon|toggle|hide|show]\n' "${0##*/}" >&2
+    exit 2
+    ;;
+esac

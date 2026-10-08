@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+status() {
+  if makoctl mode 2>/dev/null | grep -qx 'do-not-disturb'; then
+    printf '{"text":"","class":"active","tooltip":"Do Not Disturb: on\\nClick to allow notifications"}\n'
+  else
+    printf '{"text":"","class":"inactive","tooltip":"Notifications: on\\nClick for Do Not Disturb"}\n'
+  fi
+}
+
+toggle() {
+  makoctl mode -t do-not-disturb >/dev/null
+
+  if makoctl mode 2>/dev/null | grep -qx 'do-not-disturb'; then
+    makoctl dismiss --all --no-history 2>/dev/null || true
+  else
+    notify-send "Notifications enabled" "Do Not Disturb is off" 2>/dev/null || true
+  fi
+
+  pkill -RTMIN+9 waybar 2>/dev/null || true
+}
+
+case "${1:-status}" in
+  status|--status) status ;;
+  toggle|--toggle) toggle ;;
+  *)
+    printf 'Usage: %s [status|toggle]\n' "${0##*/}" >&2
+    exit 2
+    ;;
+esac

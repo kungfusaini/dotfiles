@@ -1,0 +1,140 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+notify() {
+  command -v notify-send >/dev/null && notify-send "Bluetooth" "$1" || true
+}
+
+bt_powered() {
+  bluetoothctl show 2>/dev/null | grep -q "Powered: yes"
+}
+
+connected_devices() {
+  bluetoothctl devices Connected 2>/dev/null || true
+}
+
+connected_names() {
+  connected_devices | sed -E 's/^Device [0-9A-F:]+ //'
+}
+
+status() {
+  if ! bluetoothctl show >/dev/null 2>&1; then
+    printf '{"text":"󰂲 off","tooltip":"Bluetooth controller unavailable","class":"off"}\n'
+    exit 0
+  fi
+
+  if ! bt_powered; then
+    printf '{"text":"󰂲 off","tooltip":"Bluetooth is powered off","class":"off"}\n'
+    exit 0
+  fi
+
+  local names count tooltip text class
+  names="$(connected_names)"
+  count="$(printf '%s\n' "$names" | sed '/^$/d' | wc -l)"
+
+  if [ "$count" -gt 0 ]; then
+    if [ "$count" -eq 1 ]; then
+      text="󰂯 $(printf '%s' "$names" | head -n1)"
+    else
+      text="󰂯 ${count} devices"
+    fi
+    tooltip="Connected:\n$(printf '%s' "$names" | sed 's/"/\\"/g')"
+    class="connected"
+  else
+    text="󰂯 on"
+    tooltip="Bluetooth is on; no connected devices"
+    class="on"
+  fi
+
+  printf '{"text":"%s","tooltip":"%s","class":"%s"}\n' \
+    "$(printf '%s' "$text" | sed 's/"/\\"/g')" \
+    "$(printf '%s' "$tooltip" | sed ':a;N;$!ba;s/\n/\\n/g')" \
+    "$class"
+}
+
+choose() {
+  wofi --dmenu --prompt "Bluetooth" --width 520 --height 420 2>/dev/null
+}
+
+connect_device() {
+  local mac="$1" name="$2"
+
+  notify "Connecting to ${name}…"
+  bluetoothctl agent NoInputNoOutput >/dev/null 2>&1 || true
+  bluetoothctl default-agent >/dev/null 2>&1 || true
+  bluetoothctl pair "$mac" >/dev/null 2>&1 || true
+  bluetoothctl trust "$mac" >/dev/null 2>&1 || true
+  bluetoothctl connect "$mac" >/dev/null 2>&1 && notify "Connected to ${name}" || notify "Could not connect to ${name}"
+}
+
+scan_and_connect() {
+  notify "Scanning for 15 seconds… put headphones in pairing mode"
+  bluetoothctl power on >/dev/null 2>&1 || true
+  bluetoothctl pairable on >/dev/null 2>&1 || true
+  bluetoothctl agent NoInputNoOutput >/dev/null 2>&1 || true
+  bluetoothctl default-agent >/dev/null 2>&1 || true
+  bluetoothctl --timeout 15 scan on >/dev/null 2>&1 || true
+  bluetoothctl scan off >/dev/null 2>&1 || true
+
+  local line mac name devices
+  devices="$(bluetoothctl devices | sed -E 's/^Device ([0-9A-F:]+) (.*)$/\2  \1/' | sort -f)"
+  if [ -z "$devices" ]; then
+    notify "No devices found. Make sure the headphones are in pairing mode, then try Scan again."
+    exit 0
+  fi
+
+  line="$(printf '%s\n' "$devices" | choose || true)"
+  [ -n "$line" ] || exit 0
+  mac="${line##*  }"
+  name="${line%  *}"
+
+  connect_device "$mac" "$name"
+}
+
+menu() {
+  command -v wofi >/dev/null || { notify "wofi is not installed"; exit 1; }
+
+  local powered action paired connected mac name status_label options
+  powered="off"; bt_powered && powered="on"
+
+  options=""
+  if [ "$powered" = "on" ]; then
+    options+="󰂲 Turn Bluetooth off\n"
+    options+="󰐢 Scan & connect new device\n"
+  else
+    options+="󰂯 Turn Bluetooth on\n"
+  fi
+
+  while read -r _ mac name; do
+    [ -n "${mac:-}" ] || continue
+    if bluetoothctl info "$mac" 2>/dev/null | grep -q "Connected: yes"; then
+      status_label="connected"
+    else
+      status_label="paired"
+    fi
+    options+="󰂱 ${name} (${status_label})  ${mac}\n"
+  done < <(bluetoothctl devices Paired 2>/dev/null)
+
+  action="$(printf '%b' "$options" | choose || true)"
+  [ -n "$action" ] || exit 0
+
+  case "$action" in
+    *"Turn Bluetooth on"*) bluetoothctl power on >/dev/null && notify "Bluetooth turned on" ;;
+    *"Turn Bluetooth off"*) bluetoothctl power off >/dev/null && notify "Bluetooth turned off" ;;
+    *"Scan & connect"*) scan_and_connect ;;
+    *)
+      mac="${action##*  }"
+      name="${action#󰂱 }"; name="${name% (*}"
+      if bluetoothctl info "$mac" 2>/dev/null | grep -q "Connected: yes"; then
+        bluetoothctl disconnect "$mac" >/dev/null && notify "Disconnected ${name}" || notify "Could not disconnect ${name}"
+      else
+        connect_device "$mac" "$name"
+      fi
+      ;;
+  esac
+}
+
+case "${1:-status}" in
+  --menu) menu ;;
+  *) status ;;
+esac

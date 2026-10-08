@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+
+state_file=/sys/devices/platform/thinkpad_acpi/hotkey_tablet_mode
+
+if [[ ! -r "$state_file" ]]; then
+  printf '{"text":"mode ?","tooltip":"ThinkPad tablet mode state unavailable","class":"unknown"}\n'
+  exit 0
+fi
+
+state=$(cat "$state_file" 2>/dev/null)
+
+case "$state" in
+  1)
+    printf '{"text":"󰓶 Tablet","tooltip":"Tablet / touchscreen mode","class":"tablet"}\n'
+    ;;
+  0)
+    printf '{"text":"󰌢 Laptop","tooltip":"Normal laptop mode","class":"laptop"}\n'
+    ;;
+  *)
+    printf '{"text":"mode %s","tooltip":"Unknown tablet mode state","class":"unknown"}\n' "$state"
+    ;;
+esac
