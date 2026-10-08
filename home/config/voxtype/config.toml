@@ -9,6 +9,7 @@ enabled = false
 device = "default"
 sample_rate = 16000
 max_duration_secs = 60
+pause_media = false
 
 [parakeet]
 # Quantized TDT v3 is optimized for fast CPU inference and includes punctuation.
