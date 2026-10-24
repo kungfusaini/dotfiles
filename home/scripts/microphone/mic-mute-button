@@ -1,0 +1,160 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir="${XDG_RUNTIME_DIR:-/tmp}/mic-mute-button"
+state_file="$state_dir/pending-press"
+flash_file="$state_dir/source-unavailable"
+lock_file="$state_dir/lock"
+double_press_ms=400
+self=$(readlink -f "$0")
+
+mkdir -p "$state_dir"
+
+signal_waybar() {
+  # Match both a native Waybar process and Nixpkgs' wrapped executable, just
+  # like the event-driven platform-profile monitor does.
+  pkill -RTMIN+10 -x waybar 2>/dev/null || true
+  pkill -RTMIN+10 -x .waybar-wrapped 2>/dev/null || true
+}
+
+current_source_name() {
+  wpctl inspect @DEFAULT_AUDIO_SOURCE@ 2>/dev/null \
+    | awk -F'= ' '/node.name/ { gsub(/"/, "", $2); print $2; exit }'
+}
+
+# Print audio source rows as: "<id> <node-name>". WirePlumber can expose
+# Bluetooth microphones under Filters with an [Audio/Source] role rather than
+# under Sources, so discover source node names across the whole Audio section.
+list_audio_sources() {
+  local line in_audio=0 id name
+  while IFS= read -r line; do
+    if [[ $line == Audio ]]; then
+      in_audio=1
+      continue
+    fi
+    if [[ $line == Video || $line == Settings ]]; then
+      in_audio=0
+      continue
+    fi
+    (( in_audio )) || continue
+
+    if [[ $line =~ ([0-9]+)\.[[:space:]]+(alsa_input\.[^[:space:]]+|bluez_input\.[^[:space:]]+) ]]; then
+      id=${BASH_REMATCH[1]}
+      name=${BASH_REMATCH[2]}
+      printf '%s %s\n' "$id" "$name"
+    fi
+  done < <(wpctl status --name 2>/dev/null)
+}
+
+flash_unavailable() {
+  # Blink the existing icon twice without replacing it with another symbol.
+  for _ in 1 2; do
+    : > "$flash_file"
+    signal_waybar
+    sleep 0.16
+    rm -f "$flash_file"
+    signal_waybar
+    sleep 0.16
+  done
+}
+
+switch_source() {
+  local current laptop_id="" laptop_name="" headset_id="" headset_name=""
+  local id name target_id="" target_name="" confirmed=""
+  current=$(current_source_name || true)
+
+  while read -r id name; do
+    case "$name" in
+      bluez_input.*)
+        if [[ -z "$headset_id" ]]; then
+          headset_id=$id
+          headset_name=$name
+        fi
+        ;;
+      alsa_input.pci-*)
+        if [[ -z "$laptop_id" ]]; then
+          laptop_id=$id
+          laptop_name=$name
+        fi
+        ;;
+    esac
+  done < <(list_audio_sources)
+
+  if [[ $current == bluez_input.* ]]; then
+    target_id=$laptop_id
+    target_name=$laptop_name
+  else
+    target_id=$headset_id
+    target_name=$headset_name
+  fi
+
+  if [[ -z "$target_id" || -z "$target_name" ]]; then
+    flash_unavailable
+    return 0
+  fi
+
+  if ! wpctl set-default "$target_id"; then
+    flash_unavailable
+    return 0
+  fi
+
+  # set-default updates WirePlumber metadata asynchronously. Wait until the
+  # alias resolves to the requested node before asking Waybar to redraw.
+  for _ in {1..20}; do
+    confirmed=$(current_source_name || true)
+    [[ $confirmed == "$target_name" ]] && break
+    sleep 0.025
+  done
+
+  signal_waybar
+}
+
+resolve_single_press() {
+  local expected_token=${1:?}
+  sleep 0.4
+
+  exec 9>"$lock_file"
+  flock 9
+
+  local _saved_ms saved_token
+  if [[ -r "$state_file" ]]; then
+    read -r _saved_ms saved_token < "$state_file" || true
+    if [[ ${saved_token:-} == "$expected_token" ]]; then
+      rm -f "$state_file"
+      wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle
+      signal_waybar
+    fi
+  fi
+}
+
+case "${1:-}" in
+  resolve-single)
+    resolve_single_press "${2:-}"
+    exit 0
+    ;;
+  switch-source)
+    switch_source
+    exit 0
+    ;;
+esac
+
+exec 9>"$lock_file"
+flock 9
+
+now_ms=$(date +%s%3N)
+last_ms=0
+_last_token=""
+[[ -r "$state_file" ]] && read -r last_ms _last_token < "$state_file" || true
+
+if [[ "$last_ms" =~ ^[0-9]+$ ]] && (( now_ms - last_ms >= 0 && now_ms - last_ms <= double_press_ms )); then
+  # Cancel the pending mute toggle and use the double press for source switching.
+  rm -f "$state_file"
+  switch_source
+  exit 0
+fi
+
+# Delay the single-press mute action until the double-press window has elapsed.
+token="$now_ms.$$.${RANDOM}"
+printf '%s %s\n' "$now_ms" "$token" > "$state_file"
+# Do not let the timer inherit this process's flock descriptor.
+nohup "$self" resolve-single "$token" 9>&- >/dev/null 2>&1 &

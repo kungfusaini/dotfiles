@@ -8,7 +8,7 @@ enabled = false
 [audio]
 device = "default"
 sample_rate = 16000
-max_duration_secs = 60
+max_duration_secs = 3600
 pause_media = false
 
 [parakeet]
@@ -18,11 +18,17 @@ model_type = "tdt"
 on_demand_loading = false
 
 [output]
-mode = "type"
-fallback_to_clipboard = false
+# Paste mode is much faster than key-by-key typing for long transcriptions.
+# restore_clipboard puts the previous clipboard back after the paste keystroke.
+mode = "paste"
+# Kitty handles Ctrl+Shift+V as clipboard paste, avoiding Vim's Ctrl+V literal-next command.
+paste_keys = "ctrl+shift+v"
+fallback_to_clipboard = true
 type_delay_ms = 0
 pre_type_delay_ms = 0
 auto_submit = true
+restore_clipboard = true
+restore_clipboard_delay_ms = 500
 
 [output.notification]
 on_recording_start = false

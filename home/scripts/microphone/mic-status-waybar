@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir="${XDG_RUNTIME_DIR:-/tmp}/mic-mute-button"
+flash_file="$state_dir/source-unavailable"
+volume_state=$(wpctl get-volume @DEFAULT_AUDIO_SOURCE@ 2>/dev/null || true)
+source_info=$(wpctl inspect @DEFAULT_AUDIO_SOURCE@ 2>/dev/null || true)
+source_name=$(awk -F'= ' '/node.name/ { gsub(/"/, "", $2); print $2; exit }' <<< "$source_info")
+source_description=$(awk -F'= ' '/node.description/ { gsub(/"/, "", $2); print $2; exit }' <<< "$source_info")
+
+if [[ -z "$volume_state" ]]; then
+  printf '{"text":"󰍮","class":"unknown","tooltip":"Microphone state unavailable"}\n'
+  exit 0
+fi
+
+case "$source_name" in
+  bluez_input.*)
+    icon="󰋎"
+    device="Bluetooth headset"
+    class="headset"
+    ;;
+  *)
+    icon="󰌢"
+    device="Laptop microphone"
+    class="laptop"
+    ;;
+esac
+
+if [[ -e "$flash_file" ]]; then
+  class="flash-hidden"
+elif [[ "$volume_state" == *MUTED* ]]; then
+  class="$class-muted"
+  mute_state="muted"
+else
+  mute_state="live"
+fi
+
+# mute_state is only used in the tooltip; preserve it while the icon is hidden.
+if [[ -z ${mute_state:-} ]]; then
+  if [[ "$volume_state" == *MUTED* ]]; then
+    mute_state="muted"
+  else
+    mute_state="live"
+  fi
+fi
+
+tooltip="$device ($mute_state)"
+[[ -n "$source_description" ]] && tooltip="$tooltip: $source_description"
+printf '{"text":"%s","class":"%s","tooltip":"%s\\n%s"}\n' \
+  "$icon" "$class" "$tooltip" "$volume_state"

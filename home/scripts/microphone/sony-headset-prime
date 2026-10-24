@@ -1,0 +1,265 @@
+#!/usr/bin/env bash
+set -u
+
+readonly sony_mac='58:18:62:B5:3F:E4'
+readonly sony_card='bluez_card.58_18_62_B5_3F_E4'
+readonly sony_input_pattern='bluez_input\.58_18_62_B5_3F_E4\.[0-9]'
+readonly msbc_profile=196865
+readonly lc3_profile=196866
+readonly ldac_profile=131080
+readonly settle_seconds=3
+readonly minimum_capture_bytes=4096
+readonly minimum_capture_peak=1
+
+log() {
+  printf 'sony-headset-prime: %s\n' "$*"
+}
+
+is_connected() {
+  bluetoothctl info "$sony_mac" 2>/dev/null |
+    grep -q $'^\tConnected: yes$'
+}
+
+find_card_id() {
+  local line
+  line=$(wpctl status --name 2>/dev/null |
+    grep -m1 "$sony_card") || return 1
+
+  if [[ "$line" =~ ([0-9]+)\. ]]; then
+    printf '%s\n' "${BASH_REMATCH[1]}"
+  else
+    return 1
+  fi
+}
+
+find_transport_input() {
+  local line
+  line=$(wpctl status --name 2>/dev/null |
+    grep -m1 -E "$sony_input_pattern") || return 1
+
+  if [[ "$line" =~ ([0-9]+)\.[[:space:]]+([^[:space:]]+) ]]; then
+    printf '%s\n' "${BASH_REMATCH[2]}"
+  else
+    return 1
+  fi
+}
+
+wait_for_card() {
+  local card_id
+  for _ in {1..40}; do
+    if ! is_connected; then
+      return 1
+    fi
+    if card_id=$(find_card_id); then
+      printf '%s\n' "$card_id"
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+wait_for_stable_connection() {
+  local checks=$((settle_seconds * 4))
+  for ((i = 0; i < checks; i++)); do
+    is_connected || return 1
+    sleep 0.25
+  done
+}
+
+wait_for_transport_input() {
+  local node
+  for _ in {1..40}; do
+    if ! is_connected; then
+      return 1
+    fi
+    if node=$(find_transport_input); then
+      printf '%s\n' "$node"
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+restore_ldac() {
+  local card_id=${1:-}
+  if [[ -n "$card_id" ]] && is_connected; then
+    wpctl set-profile "$card_id" "$ldac_profile" 2>/dev/null || true
+  fi
+}
+
+controller_rejected_sco_since() {
+  local started=${1:?}
+  # Do not use grep -q here: writeShellApplication enables pipefail, and
+  # journalctl receiving SIGPIPE after an early match would invert the result.
+  journalctl -k --since "@${started}" --no-pager 2>/dev/null |
+    grep 'Bluetooth: hci0: SCO packet for unknown connection handle' >/dev/null
+}
+
+prime_failure() {
+  local message=${1:?} started=${2:?} card_id=${3:-}
+  log "$message"
+  restore_ldac "$card_id"
+
+  if controller_rejected_sco_since "$started"; then
+    log 'Intel controller rejected the SCO connection; reset required'
+    return 2
+  fi
+  # BlueZ/AVDTP failures do not always produce a kernel SCO warning. If the
+  # device still claims to be connected but priming failed, the transport is
+  # unusable and needs the same bounded controller recovery.
+  if is_connected; then
+    log 'Bluetooth transport failed while connected; reset required'
+    return 2
+  fi
+  return 1
+}
+
+recover_controller() {
+  log 'recovering Bluetooth controller and PipeWire after stale SCO state'
+  bluetoothctl disconnect "$sony_mac" >/dev/null 2>&1 || true
+  sleep 1
+  bluetoothctl power off >/dev/null 2>&1 || true
+  sleep 2
+  bluetoothctl power on >/dev/null 2>&1 || true
+  sleep 2
+  systemctl --user restart pipewire pipewire-pulse wireplumber
+  sleep 3
+  bluetoothctl connect "$sony_mac" >/dev/null 2>&1 || true
+  sleep 3
+}
+
+prime_connection() {
+  local card_id="" input_node record_rc=0 capture_bytes=0 capture_peak=0
+  local started recording="${XDG_RUNTIME_DIR:-/tmp}/sony-msbc-prime.wav"
+  started=$(date +%s)
+
+  log 'new connection detected; waiting for PipeWire'
+  if ! card_id=$(wait_for_card); then
+    prime_failure 'PipeWire card did not become available' "$started" "$card_id"
+    return $?
+  fi
+
+  # BlueZ reports Connected before AVDTP and the controller have necessarily
+  # finished settling. Switching profiles during that window can race the
+  # initial A2DP setup and wedge both the SCO and A2DP transports.
+  log "waiting ${settle_seconds}s for the Bluetooth transport to settle"
+  if ! wait_for_stable_connection; then
+    prime_failure 'headset disconnected while settling' "$started" "$card_id"
+    return $?
+  fi
+
+  log 'opening one mSBC microphone cycle'
+  if ! wpctl set-profile "$card_id" "$msbc_profile"; then
+    prime_failure 'could not select mSBC' "$started" "$card_id"
+    return $?
+  fi
+
+  if ! input_node=$(wait_for_transport_input); then
+    prime_failure 'mSBC input node did not become available' "$started" "$card_id"
+    return $?
+  fi
+
+  rm -f "$recording"
+  timeout 3 pw-record \
+    --target "$input_node" \
+    --rate 48000 \
+    --channels 1 \
+    --format s16 \
+    "$recording" >/dev/null 2>&1 || record_rc=$?
+
+  if [[ -f "$recording" ]]; then
+    capture_bytes=$(stat -c %s "$recording" 2>/dev/null || printf '0')
+    # PipeWire may continue writing zero-filled frames after the Bluetooth
+    # transport has failed. Inspect signed 16-bit samples after the WAV header
+    # so silence cannot be mistaken for a successful SCO capture.
+    capture_peak=$(od -An -v -t d2 -j 128 "$recording" 2>/dev/null |
+      awk '{ for (i = 1; i <= NF; i++) { v = $i < 0 ? -$i : $i; if (v > peak) peak = v } } END { print peak + 0 }')
+  fi
+  rm -f "$recording"
+
+  # Controller completion/error events can arrive just after pw-record exits.
+  sleep 1
+  if controller_rejected_sco_since "$started"; then
+    prime_failure 'mSBC transport was rejected by the controller' "$started" "$card_id"
+    return $?
+  fi
+  if [[ "$record_rc" -ne 0 && "$record_rc" -ne 124 ]]; then
+    prime_failure "mSBC stream failed with status $record_rc" "$started" "$card_id"
+    return $?
+  fi
+  # timeout(1) returning 124 only means pw-record stayed alive; require real
+  # samples as well as a clean kernel transport before preferring LC3-SWB.
+  if (( capture_bytes < minimum_capture_bytes || capture_peak < minimum_capture_peak )); then
+    prime_failure "mSBC stream produced no signal (${capture_bytes} bytes, peak ${capture_peak})" "$started" "$card_id"
+    return $?
+  fi
+  if ! is_connected; then
+    prime_failure 'headset disconnected during mSBC cycle' "$started" "$card_id"
+    return $?
+  fi
+
+  # Selecting mSBC causes WirePlumber to remember it as the preferred headset
+  # profile. Select LC3-SWB once (without opening another stream) so future
+  # microphone clients autoswitch to LC3-SWB instead.
+  log "mSBC cycle completed with peak ${capture_peak}; restoring LC3-SWB preference"
+  if ! wpctl set-profile "$card_id" "$lc3_profile"; then
+    prime_failure 'could not select LC3-SWB preference' "$started" "$card_id"
+    return $?
+  fi
+  sleep 1
+  if controller_rejected_sco_since "$started"; then
+    prime_failure 'LC3-SWB transition was rejected by the controller' "$started" "$card_id"
+    return $?
+  fi
+
+  restore_ldac "$card_id"
+  sleep 1
+  if controller_rejected_sco_since "$started"; then
+    prime_failure 'LDAC restore left a stale SCO transport' "$started" "$card_id"
+    return $?
+  fi
+  log 'connection primed and restored to LDAC'
+}
+
+state_dir="${XDG_RUNTIME_DIR:-/tmp}/sony-headset-prime"
+primed_marker="$state_dir/current-connection-primed"
+mkdir -p "$state_dir"
+
+connection_seen=0
+recovery_attempts=0
+while true; do
+  if is_connected; then
+    if [[ "$connection_seen" -eq 0 ]]; then
+      if [[ -e "$primed_marker" ]]; then
+        log 'service restarted; current connection is already primed'
+        connection_seen=1
+      else
+        prime_rc=0
+        prime_connection || prime_rc=$?
+        if [[ "$prime_rc" -eq 0 ]]; then
+          : > "$primed_marker"
+          connection_seen=1
+          recovery_attempts=0
+        elif [[ "$prime_rc" -eq 2 && "$recovery_attempts" -lt 2 ]]; then
+          recovery_attempts=$((recovery_attempts + 1))
+          rm -f "$primed_marker"
+          recover_controller
+          connection_seen=0
+        else
+          log "priming failed with status ${prime_rc}; waiting for the next connection"
+          connection_seen=1
+        fi
+      fi
+    fi
+  else
+    if [[ "$connection_seen" -eq 1 || -e "$primed_marker" ]]; then
+      rm -f "$primed_marker"
+      log 'connection state cleared'
+    fi
+    connection_seen=0
+    recovery_attempts=0
+  fi
+  sleep 1
+done
