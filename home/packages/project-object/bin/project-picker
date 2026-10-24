@@ -1,411 +1,57 @@
 #!/usr/bin/env python3
 
-import importlib.util
-from importlib.machinery import SourceFileLoader
+import json
 import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-BACKEND_COMMAND = SCRIPT_DIR / "project-picker-tui"
-PACKAGED_BACKEND_SOURCE = SCRIPT_DIR / ".project-picker-tui-wrapped"
-BACKEND_SOURCE = PACKAGED_BACKEND_SOURCE if PACKAGED_BACKEND_SOURCE.exists() else BACKEND_COMMAND
-loader = SourceFileLoader("project_picker_backend", str(BACKEND_SOURCE))
-spec = importlib.util.spec_from_loader(loader.name, loader)
-backend = importlib.util.module_from_spec(spec)
-loader.exec_module(backend)
-
-try:
-    import gi
-    gi.require_version("Gtk", "4.0")
-    gi.require_version("Adw", "1")
-    from gi.repository import Adw, Gdk, Gio, Gtk
-except (ImportError, ValueError) as error:
-    print(f"Project picker: GTK interface unavailable: {error}", file=sys.stderr)
-    os.execv(str(BACKEND_COMMAND), [str(BACKEND_COMMAND)])
-
-APP_ID = "dev.project_object.Picker"
-
-CSS = """
-window { background: transparent; }
-.picker-shell {
-  background: #11131a;
-  color: #eef1f8;
-  border-radius: 18px;
-  border: 1px solid rgba(255,255,255,0.10);
-  box-shadow: 0 18px 50px rgba(0,0,0,0.45);
-}
-.header { padding: 24px 28px 14px; }
-.title { font-size: 22px; font-weight: 750; letter-spacing: -0.3px; }
-.shortcut { color: #8d93a5; font-size: 12px; }
-.search { margin: 0 24px 14px; min-height: 46px; border-radius: 12px; font-size: 15px; }
-.project-list { background: transparent; margin: 0 18px; }
-.project-row { border-radius: 12px; margin: 2px 0; padding: 4px; background: transparent; }
-.project-row:selected { background: #262b3a; }
-.project-row:hover { background: rgba(255,255,255,0.045); }
-.row-content { padding: 11px 13px; }
-.project-dot { color: #676f86; font-size: 18px; min-width: 24px; }
-.current-dot { color: #74d3ae; }
-.open-dot { color: #79a8ff; }
-.project-name { font-size: 15px; font-weight: 650; }
-.project-path { color: #8990a3; font-size: 12px; }
-.badge { border-radius: 999px; padding: 4px 9px; font-size: 10px; font-weight: 700; }
-.current-badge { background: rgba(80,200,150,0.16); color: #82dfba; }
-.open-badge { background: rgba(90,145,255,0.16); color: #8eb5ff; }
-.footer { padding: 14px 28px 18px; color: #777f93; font-size: 11px; }
-.footer-key { color: #c2c7d4; font-weight: 650; }
-.empty { color: #8d93a5; padding: 48px; }
-.create-page { padding: 24px 28px 26px; }
-.section-title { font-size: 20px; font-weight: 750; }
-.section-copy { color: #8d93a5; margin-bottom: 18px; }
-.field-label { color: #b4bac8; font-size: 12px; font-weight: 650; margin-top: 10px; }
-.create-entry { min-height: 42px; border-radius: 10px; }
-.primary-button { background: #7c9cff; color: #0d1020; font-weight: 750; border-radius: 10px; min-height: 40px; }
-.secondary-button { border-radius: 10px; min-height: 40px; }
-.error { color: #ff8f9b; font-size: 12px; }
-"""
+HOME = Path.home()
+RUNTIME_ROOT = Path(os.environ.get("PROJECT_OBJECT_RUNTIME_DIR", Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/project-object-{os.getuid()}")) / "project-object"))
+PID_PATH = RUNTIME_ROOT / "picker-gui.json"
+GUI = Path(__file__).resolve().with_name("project-picker-gui")
+PACKAGED_GUI_SOURCE = GUI.with_name(".project-picker-gui-wrapped")
 
 
-def short_path(value):
-    home = str(Path.home())
-    return "~" + value[len(home):] if value == home or value.startswith(home + "/") else value
+def running_gui():
+    try:
+        record = json.loads(PID_PATH.read_text())
+        pid = int(record["pid"])
+        command = Path(record["command"])
+        os.kill(pid, 0)
+        if command not in (GUI, PACKAGED_GUI_SOURCE):
+            os.kill(pid, signal.SIGTERM)
+            return None
+        return pid
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        PID_PATH.unlink(missing_ok=True)
+        return None
 
 
-class ProjectRow(Gtk.ListBoxRow):
-    def __init__(self, project, state):
-        super().__init__()
-        self.project = project
-        self.state = state
-        self.add_css_class("project-row")
-
-        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
-        content.add_css_class("row-content")
-        dot = Gtk.Label(label="●" if state != "closed" else "○")
-        dot.add_css_class("project-dot")
-        if state == "current":
-            dot.add_css_class("current-dot")
-        elif state == "open":
-            dot.add_css_class("open-dot")
-        content.append(dot)
-
-        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
-        text.set_hexpand(True)
-        name = Gtk.Label(label=project["name"], xalign=0)
-        name.add_css_class("project-name")
-        path = Gtk.Label(label=short_path(project["mainDirectory"]), xalign=0, ellipsize=3)
-        path.add_css_class("project-path")
-        text.append(name)
-        text.append(path)
-        content.append(text)
-
-        if state != "closed":
-            badge = Gtk.Label(label=state.upper())
-            badge.add_css_class("badge")
-            badge.add_css_class(f"{state}-badge")
-            badge.set_valign(Gtk.Align.CENTER)
-            content.append(badge)
-        self.set_child(content)
-
-
-class PickerApplication(Adw.Application):
-    def __init__(self):
-        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
-        self.window = None
-        self.registry = None
-        self.session = None
-        self.rows = []
-        self.search_mode = False
-        self.pending_g = False
-
-    def do_startup(self):
-        Adw.Application.do_startup(self)
-        provider = Gtk.CssProvider()
-        provider.load_from_string(CSS)
-        Gtk.StyleContext.add_provider_for_display(Gdk.Display.get_default(), provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
-
-    def do_activate(self):
-        if self.window:
-            self.window.present()
-            self.focus_normal_mode()
-            return
-        try:
-            backend.ensure_directory(backend.DATA_ROOT)
-            backend.ensure_directory(backend.DATA_ROOT / "projects")
-            backend.ensure_directory(backend.RUNTIME_ROOT)
-            self.registry = backend.load_registry()
-            self.session = backend.load_session()
-            self.current_workspace = backend.active_workspace_name()
-        except Exception as error:
-            backend.notify_error(str(error))
-            self.quit()
-            return
-        self.build_window()
-        self.window.present()
-        self.focus_normal_mode()
-
-    def build_window(self):
-        self.window = Adw.ApplicationWindow(application=self)
-        self.window.set_title("Projects")
-        self.window.set_default_size(760, 570)
-        self.window.set_decorated(False)
-
-        shell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        shell.add_css_class("picker-shell")
-        handle = Gtk.WindowHandle()
-        handle.set_child(shell)
-        self.window.set_content(handle)
-
-        self.stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, transition_duration=140)
-        shell.append(self.stack)
-        self.stack.add_named(self.build_list_page(), "list")
-        self.stack.add_named(self.build_create_page(), "create")
-
-        keys = Gtk.EventControllerKey()
-        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        keys.connect("key-pressed", self.on_key_pressed)
-        self.window.add_controller(keys)
-
-    def build_list_page(self):
-        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        header.add_css_class("header")
-        title = Gtk.Label(label="Projects", xalign=0)
-        title.add_css_class("title")
-        title.set_hexpand(True)
-        shortcut = Gtk.Label(label="SUPER  P")
-        shortcut.add_css_class("shortcut")
-        header.append(title)
-        header.append(shortcut)
-        page.append(header)
-
-        self.search = Gtk.SearchEntry(placeholder_text="Press / to search projects…")
-        self.search.add_css_class("search")
-        self.search.connect("search-changed", lambda _entry: self.refresh_rows())
-        self.search.connect("activate", lambda _entry: self.open_selected())
-        page.append(self.search)
-
-        scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
-        self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE, activate_on_single_click=False)
-        self.listbox.add_css_class("project-list")
-        self.listbox.connect("row-activated", lambda _box, _row: self.open_selected())
-        vim_keys = Gtk.EventControllerKey()
-        vim_keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        vim_keys.connect("key-pressed", self.on_normal_key_pressed)
-        self.listbox.add_controller(vim_keys)
-        scroll.set_child(self.listbox)
-        page.append(scroll)
-
-        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
-        footer.add_css_class("footer")
-        for label in ("j/k  Navigate", "gg/G  First/last", "/  Search", "Enter  Open", "Ctrl N  New", "Esc  Close"):
-            item = Gtk.Label(label=label)
-            item.add_css_class("footer-key")
-            footer.append(item)
-        page.append(footer)
-        self.refresh_rows()
-        return page
-
-    def build_create_page(self):
-        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
-        page.add_css_class("create-page")
-        title = Gtk.Label(label="New project", xalign=0)
-        title.add_css_class("section-title")
-        copy = Gtk.Label(label="Give it a name and choose the directory where the work lives.", xalign=0)
-        copy.add_css_class("section-copy")
-        page.append(title)
-        page.append(copy)
-
-        for label_text in ("PROJECT NAME",):
-            label = Gtk.Label(label=label_text, xalign=0)
-            label.add_css_class("field-label")
-            page.append(label)
-        self.name_entry = Gtk.Entry(placeholder_text="e.g. Elijah")
-        self.name_entry.add_css_class("create-entry")
-        self.name_entry.connect("activate", lambda _entry: self.directory_entry.grab_focus())
-        page.append(self.name_entry)
-
-        label = Gtk.Label(label="MAIN DIRECTORY", xalign=0)
-        label.add_css_class("field-label")
-        page.append(label)
-        directory_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.directory_entry = Gtk.Entry(placeholder_text="/home/you/projects/project", hexpand=True)
-        self.directory_entry.add_css_class("create-entry")
-        self.directory_entry.connect("activate", lambda _entry: self.create_project())
-        browse = Gtk.Button(label="Browse…")
-        browse.add_css_class("secondary-button")
-        browse.connect("clicked", self.choose_directory)
-        directory_row.append(self.directory_entry)
-        directory_row.append(browse)
-        page.append(directory_row)
-
-        self.create_error = Gtk.Label(xalign=0, wrap=True)
-        self.create_error.add_css_class("error")
-        self.create_error.set_visible(False)
-        page.append(self.create_error)
-
-        spacer = Gtk.Box(vexpand=True)
-        page.append(spacer)
-        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10, halign=Gtk.Align.END)
-        cancel = Gtk.Button(label="Cancel")
-        cancel.add_css_class("secondary-button")
-        cancel.connect("clicked", lambda _button: self.show_list())
-        create = Gtk.Button(label="Create project")
-        create.add_css_class("primary-button")
-        create.connect("clicked", lambda _button: self.create_project())
-        actions.append(cancel)
-        actions.append(create)
-        page.append(actions)
-        return page
-
-    def project_items(self):
-        query = self.search.get_text().strip().casefold() if hasattr(self, "search") else ""
-        open_ids = set(self.session["openProjectIds"])
-        rank = {"current": 0, "open": 1, "closed": 2}
-        items = []
-        for project in self.registry["projects"]:
-            if project.get("archivedAt") or query not in project["name"].casefold():
-                continue
-            state = "current" if project["name"] == self.current_workspace else "open" if project["id"] in open_ids else "closed"
-            items.append((project, state))
-        return sorted(items, key=lambda item: (rank[item[1]], item[0]["name"].casefold()))
-
-    def refresh_rows(self):
-        while child := self.listbox.get_first_child():
-            self.listbox.remove(child)
-        self.rows = []
-        for project, state in self.project_items():
-            row = ProjectRow(project, state)
-            self.rows.append(row)
-            self.listbox.append(row)
-        if self.rows:
-            self.listbox.select_row(self.rows[0])
-
-    def move_selection(self, delta):
-        if not self.rows:
-            return
-        selected = self.listbox.get_selected_row()
-        index = self.rows.index(selected) if selected in self.rows else 0
-        index = max(0, min(len(self.rows) - 1, index + delta))
-        self.listbox.select_row(self.rows[index])
-
-    def select_edge(self, last=False):
-        if self.rows:
-            self.listbox.select_row(self.rows[-1 if last else 0])
-
-    def focus_normal_mode(self):
-        self.search_mode = False
-        self.pending_g = False
-        self.listbox.grab_focus()
-
-    def enter_search_mode(self):
-        self.search_mode = True
-        self.pending_g = False
-        self.search.grab_focus()
-
-    def open_selected(self):
-        row = self.listbox.get_selected_row()
-        if not row:
-            return
-        try:
-            backend.enter_project(row.project, self.session, row.state == "closed")
-        except Exception as error:
-            backend.notify_error(str(error))
-            return
-        self.window.close()
-
-    def show_create(self):
-        self.create_error.set_visible(False)
-        self.stack.set_visible_child_name("create")
-        self.name_entry.grab_focus()
-
-    def show_list(self):
-        self.stack.set_visible_child_name("list")
-        self.focus_normal_mode()
-
-    def choose_directory(self, _button):
-        dialog = Gtk.FileDialog(title="Choose main directory")
-        dialog.select_folder(self.window, None, self.directory_chosen)
-
-    def directory_chosen(self, dialog, result):
-        try:
-            folder = dialog.select_folder_finish(result)
-            if folder and folder.get_path():
-                self.directory_entry.set_text(folder.get_path())
-        except Exception:
-            pass
-
-    def create_project(self):
-        try:
-            project = backend.create_project(self.registry, self.name_entry.get_text(), self.directory_entry.get_text())
-            backend.enter_project(project, self.session, True)
-        except Exception as error:
-            self.create_error.set_text(str(error))
-            self.create_error.set_visible(True)
-            return
-        self.window.close()
-
-    def on_normal_key_pressed(self, _controller, keyval, _keycode, _state):
-        if self.search_mode or self.stack.get_visible_child_name() != "list":
-            return False
-        if keyval in (Gdk.KEY_slash, Gdk.KEY_KP_Divide):
-            self.enter_search_mode()
-            return True
-        if keyval in (Gdk.KEY_j, Gdk.KEY_Down):
-            self.move_selection(1)
-            self.pending_g = False
-            return True
-        if keyval in (Gdk.KEY_k, Gdk.KEY_Up):
-            self.move_selection(-1)
-            self.pending_g = False
-            return True
-        if keyval == Gdk.KEY_G:
-            self.select_edge(last=True)
-            self.pending_g = False
-            return True
-        if keyval == Gdk.KEY_g:
-            if self.pending_g:
-                self.select_edge(last=False)
-                self.pending_g = False
-            else:
-                self.pending_g = True
-            return True
-        self.pending_g = False
-        return False
-
-    def on_key_pressed(self, _controller, keyval, _keycode, state):
-        control = bool(state & Gdk.ModifierType.CONTROL_MASK)
-        if keyval == Gdk.KEY_Escape:
-            if self.stack.get_visible_child_name() == "create":
-                self.show_list()
-            elif self.search_mode:
-                self.search.set_text("")
-                self.focus_normal_mode()
-            else:
-                self.window.close()
-            return True
-        if control and keyval in (Gdk.KEY_n, Gdk.KEY_N):
-            self.show_create()
-            return True
-        if self.stack.get_visible_child_name() != "list":
-            return False
-
-        if self.search_mode:
-            if keyval == Gdk.KEY_Down or (control and keyval == Gdk.KEY_j):
-                self.move_selection(1)
-                return True
-            if keyval == Gdk.KEY_Up or (control and keyval == Gdk.KEY_k):
-                self.move_selection(-1)
-                return True
-            return False
-
-        return False
+def start_gui(preload):
+    RUNTIME_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    RUNTIME_ROOT.chmod(0o700)
+    arguments = [str(GUI)]
+    if preload:
+        arguments.append("--preload")
+    subprocess.Popen(
+        arguments,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def main():
-    if backend.focus_existing_picker():
+    preload = "--preload" in sys.argv[1:]
+    pid = running_gui()
+    if pid:
+        if not preload:
+            os.kill(pid, signal.SIGUSR1)
         return
-    application = PickerApplication()
-    raise SystemExit(application.run(sys.argv))
+    start_gui(preload)
 
 
 if __name__ == "__main__":
