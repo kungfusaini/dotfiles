@@ -10,6 +10,11 @@
       momentum_scroll = 0.96;
       scrollback_lines = 10000;
     };
+    extraConfig = ''
+      # Kitty defaults to Ctrl+Shift+click; also support conventional Ctrl+click.
+      mouse_map ctrl+left release grabbed,ungrabbed mouse_handle_click link
+      mouse_map ctrl+left press grabbed discard_event
+    '';
   };
 
   # Keep generated Dank Material files as raw files until/unless we decide to

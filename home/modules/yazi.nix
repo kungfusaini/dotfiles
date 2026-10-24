@@ -1,8 +1,13 @@
 { ... }:
 
 {
+  programs.bash.enable = true;
+
   programs.yazi = {
     enable = true;
+    enableBashIntegration = true;
+    # Keep the usual command name while allowing Yazi to change the parent shell's directory.
+    shellWrapperName = "yazi";
     keymap = {
       mgr.prepend_keymap = [
         {
