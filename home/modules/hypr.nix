@@ -293,9 +293,9 @@ in
         "match:title ^Display Layout$, center on"
         "match:title ^Display Layout$, size 760 560"
 
-        "match:class ^project-picker$, float on"
-        "match:class ^project-picker$, center on"
-        "match:class ^project-picker$, size 900 650"
+        "match:class ^(dev.project_object.Picker|project-picker)$, float on"
+        "match:class ^(dev.project_object.Picker|project-picker)$, center on"
+        "match:class ^(dev.project_object.Picker|project-picker)$, size 760 570"
 
         # Generic fix for small fixed-size dialogs/popups: don't force modal
         # windows into the tiling layout.

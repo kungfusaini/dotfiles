@@ -1,15 +1,22 @@
 { lib
 , stdenvNoCC
 , makeWrapper
+, wrapGAppsHook4
+, gobject-introspection
 , python3
+, gtk4
+, libadwaita
 , kitty
 , hyprland
 , libnotify
 }:
 
+let
+  pythonEnv = python3.withPackages (packages: [ packages.pygobject3 ]);
+in
 stdenvNoCC.mkDerivation {
   pname = "project-object";
-  version = "0.2.0";
+  version = "0.3.0";
   src = lib.cleanSourceWith {
     src = ./.;
     filter = path: type:
@@ -19,22 +26,30 @@ stdenvNoCC.mkDerivation {
         || relative == "integrations" || lib.hasPrefix "integrations/" relative;
   };
 
-  nativeBuildInputs = [ makeWrapper python3 ];
+  nativeBuildInputs = [ makeWrapper wrapGAppsHook4 gobject-introspection pythonEnv ];
+  buildInputs = [ gtk4 libadwaita ];
+  dontWrapGApps = true;
 
   installPhase = ''
     runHook preInstall
     mkdir -p "$out/bin" "$out/lib" "$out/share/project-object/pi"
-    cp bin/project-picker bin/project-terminal "$out/bin/"
+    cp bin/project-picker bin/project-picker-tui bin/project-terminal "$out/bin/"
     cp lib/project_object.py "$out/lib/"
     cp integrations/pi/project-object.ts "$out/share/project-object/pi/"
-    chmod 0555 "$out/bin/project-picker" "$out/bin/project-terminal"
+    chmod 0555 "$out/bin/project-picker" "$out/bin/project-picker-tui" "$out/bin/project-terminal"
     patchShebangs "$out/bin"
-    wrapProgram "$out/bin/project-picker" \
+    runHook postInstall
+  '';
+
+  postFixup = ''
+    wrapGApp "$out/bin/project-picker" \
+      --prefix PATH : ${lib.makeBinPath [ hyprland libnotify ]} \
+      --set PROJECT_OBJECT_TERMINAL "$out/bin/project-terminal"
+    wrapProgram "$out/bin/project-picker-tui" \
       --prefix PATH : ${lib.makeBinPath [ kitty hyprland libnotify ]} \
       --set PROJECT_OBJECT_TERMINAL "$out/bin/project-terminal"
     wrapProgram "$out/bin/project-terminal" \
       --prefix PATH : ${lib.makeBinPath [ kitty hyprland ]}
-    runHook postInstall
   '';
 
   meta = {
