@@ -354,6 +354,7 @@ class PickerApplication(Adw.Application):
             "move-down": (lambda: self.move_selection(1), ["j", "Down"]),
             "move-up": (lambda: self.move_selection(-1), ["k", "Up"]),
             "search": (self.enter_search_mode, ["slash", "KP_Divide"]),
+            "open": (self.open_selected, ["Return", "KP_Enter"]),
             "last": (lambda: self.select_edge(last=True), ["<Shift>g"]),
             "g-prefix": (self.handle_g, ["g"]),
         }
