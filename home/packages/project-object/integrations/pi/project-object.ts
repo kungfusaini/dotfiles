@@ -191,6 +191,38 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
     }
   });
 
+  pi.registerCommand("catchup", {
+    description: "Summarize where project work stopped and what to do next",
+    handler: async (args, ctx) => {
+      if (!ctx.isIdle()) {
+        ctx.ui.notify("Wait for the current response to finish before running /catchup", "warning");
+        return;
+      }
+      if (!resolution.project && !resolution.error) resolution = resolveProject();
+      if (resolution.error) {
+        ctx.ui.notify(`Project context error: ${resolution.error}`, "error");
+        return;
+      }
+      const project = resolution.project;
+      if (!project) {
+        ctx.ui.notify("No project object is attached to this Pi session", "warning");
+        return;
+      }
+
+      const optionalFocus = args.trim();
+      pi.sendUserMessage([
+        `Catch me up on where we left off in the ${project.name} project and what I should do next.`,
+        "Do not introduce or explain the project to me. Assume I remember what the project is.",
+        "Use tools to inspect the newest relevant worklogs first, then TODO.md and NOTES.md in the project home, plus uncommitted Git changes and recent commits in the main directory when it is a Git repository.",
+        `Project home: ${project.projectHome}`,
+        `Main directory: ${project.mainDirectory}`,
+        "Reply concisely under exactly these headings: What we were doing; Where we left off; What's next.",
+        "Prefer concrete recent evidence. If the records are sparse, say what you inferred from Git rather than filling space with general project background.",
+        optionalFocus ? `Pay particular attention to: ${optionalFocus}` : "",
+      ].filter(Boolean).join("\n"));
+    },
+  });
+
   pi.registerCommand("project", {
     description: "Show the project object attached to this Pi session",
     handler: async (_args, ctx) => {
