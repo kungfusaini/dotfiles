@@ -1,12 +1,27 @@
 ---
 name: nanogpt
-description: Use Sumeet's NanoGPT subscription safely for live model discovery, capability-aware model ranking, subscription usage checks, and delegated LLM calls. Use when a task mentions NanoGPT or when selecting or consulting a specialized external model would materially help.
+description: Use Sumeet's NanoGPT subscription only when the user's current request explicitly asks to use, test, inspect, or build with NanoGPT. Never use it autonomously for routine work, reviews, delegation, model selection, or second opinions.
 license: MIT
 ---
 
 # NanoGPT subscription
 
 Use the model-callable `nanogpt_*` tools supplied by the global Pi extension. Do not construct NanoGPT curl requests unless debugging the extension itself.
+
+## Explicit opt-in boundary
+
+NanoGPT is disabled by default. Invoke a `nanogpt_*` tool only when the user's **current request explicitly asks to use NanoGPT**. Permission is per request and does not persist into later turns.
+
+Do not infer permission from a request for an independent review, second opinion, model recommendation, decision, benchmark, or high-quality result. Do not use NanoGPT merely because it might materially help. Generic references that discuss NanoGPT, ask how it works, or say not to use it are not authorization.
+
+Valid authorization includes direct requests such as:
+
+- “Use NanoGPT to review this.”
+- “Ask NanoGPT for a second opinion.”
+- “Test this NanoGPT-backed tool.”
+- “Build this with NanoGPT and exercise the integration.”
+
+Without such authorization, complete the task using Pi's current model and ordinary tools. Do not ask for NanoGPT permission unless its use is genuinely necessary to fulfill an explicit requirement.
 
 ## Billing boundary
 
@@ -27,7 +42,7 @@ Use the model-callable `nanogpt_*` tools supplied by the global Pi extension. Do
 
 ## Tool workflow
 
-1. Use `nanogpt_rank_models` when choosing a model for a task. State the task and hard requirements such as tools, reasoning, vision, structured output, and minimum context.
+1. After explicit authorization, use `nanogpt_rank_models` when choosing a model for the authorized task. State the task and hard requirements such as tools, reasoning, vision, structured output, and minimum context.
 2. Use ranking profile `decision` for routing, classification, rubric scoring, or calibrated yes/no judgments. This keeps Decisions-category models available without mixing them into prose-generation rankings.
 3. Treat rankings as heuristics. Prefer capability fit first; benchmark fields are incomplete and may be stale.
 4. Use `nanogpt_models` for exact-name lookup or detailed filtering.

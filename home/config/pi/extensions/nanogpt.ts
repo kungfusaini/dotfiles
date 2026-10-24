@@ -1,12 +1,40 @@
 import { Type, type Usage } from "@earendil-works/pi-ai";
-import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { readFile } from "node:fs/promises";
+import { defineTool, type ExtensionAPI, withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, resolve } from "node:path";
 
 const DEFAULT_BASE_URL = "https://api.nano-gpt.com/api/subscription/v1";
 const DEFAULT_SECRET_FILE = "/run/secrets/nanogpt-api-key";
 const WEBSITE_DETAILS_URL = "https://nano-gpt.com/api/explore/text-model-details";
 const CACHE_TTL_MS = 15 * 60 * 1000;
 const MAX_RESULT_MODELS = 25;
+const MAX_BULK_STATE_CHARS = 12_000;
+const NANOGPT_TOOL_NAMES = [
+  "nanogpt_models",
+  "nanogpt_rank_models",
+  "nanogpt_usage",
+  "nanogpt_chat",
+  "nanogpt_decide",
+  "nanogpt_bulk_decide",
+] as const;
+const NANOGPT_TOOL_NAME_SET = new Set<string>(NANOGPT_TOOL_NAMES);
+
+function explicitlyRequestsNanoGpt(prompt: string): boolean {
+  const name = String.raw`nano[\s-]?gpt`;
+  const directAction = String.raw`(?:use|call|invoke|ask|consult|query|run|try|test|check|delegate(?:\s+to)?|route(?:\s+to)?)`;
+  const delegatedAction = String.raw`(?:review|analy[sz]e|audit|decide|score|classify|rank|select|choose|answer|generate|write|code|reason)`;
+  const negative = /\b(?:do\s+not|don't|dont|never|without|avoid|stop|disable|forbid|prohibit|mustn'?t|shouldn'?t|should\s+not)\b/i;
+  const informational = /\b(?:how\s+to|explain|describe|tell\s+me\s+about|what\s+is)\b/i;
+  const request = new RegExp(
+    String.raw`\b${directAction}\b.{0,32}\b${name}\b|\b${name}\b.{0,32}\b(?:to\s+)?${delegatedAction}\b`,
+    "i",
+  );
+
+  return prompt
+    .split(/(?:[.!?;\n]+|,\s+(?:but|however)\b)/i)
+    .some((clause) => request.test(clause) && !negative.test(clause) && !informational.test(clause));
+}
 
 type Capabilities = {
   reasoning: boolean;
@@ -404,6 +432,66 @@ function validateDecisionQuestions(questions: Record<string, any>): void {
   }
 }
 
+type BulkDecisionItem = {
+  id: string;
+  state: unknown;
+  meta?: unknown;
+};
+
+type BulkDecisionResult = {
+  id: string;
+  meta?: unknown;
+  choice: string;
+  confidence: number | null;
+  probabilities: Record<string, number>;
+  ambiguous: boolean;
+  stateTruncated?: boolean;
+};
+
+type BulkDecisionFile = {
+  version: 1;
+  inputDigest: string;
+  modelRequested: string;
+  modelResolved: string | null;
+  question: { instructions: string; criteria: Record<string, string | null> };
+  thresholds: { confidence: number; margin: number };
+  total: number;
+  completed: number;
+  results: BulkDecisionResult[];
+  updatedAt: string;
+};
+
+function digestJson(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function finiteProbability(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function choiceAmbiguous(answer: any, confidenceThreshold: number, marginThreshold: number): boolean {
+  const probabilities = Object.values(answer?.probabilities || {}).map(finiteProbability).sort((a, b) => b - a);
+  const confidence = finite(answer?.confidence) ?? probabilities[0] ?? 0;
+  const margin = (probabilities[0] ?? 0) - (probabilities[1] ?? 0);
+  return confidence < confidenceThreshold || margin < marginThreshold;
+}
+
+function bulkState(state: unknown): { value: unknown; truncated: boolean } {
+  if (typeof state !== "string" || state.length <= MAX_BULK_STATE_CHARS) return { value: state, truncated: false };
+  const half = Math.floor(MAX_BULK_STATE_CHARS / 2);
+  return {
+    value: `${state.slice(0, half)}\n\n[...middle omitted for Decisions route size...]\n\n${state.slice(-half)}`,
+    truncated: true,
+  };
+}
+
+async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+  await mkdir(dirname(path), { recursive: true });
+  await withFileMutationQueue(path, async () => {
+    await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  });
+}
+
 const requirementProperties = {
   requireReasoning: Type.Optional(Type.Boolean({ description: "Require explicit reasoning support." })),
   requireTools: Type.Optional(Type.Boolean({ description: "Require function/tool calling support." })),
@@ -413,10 +501,17 @@ const requirementProperties = {
 };
 
 export default function nanogptExtension(pi: ExtensionAPI) {
+  let authorizedForCurrentRun = false;
+
+  const setNanoGptToolsActive = (active: boolean) => {
+    const otherTools = pi.getActiveTools().filter((name) => !NANOGPT_TOOL_NAME_SET.has(name));
+    pi.setActiveTools(active ? [...otherTools, ...NANOGPT_TOOL_NAMES] : otherTools);
+  };
+
   pi.registerTool(defineTool({
     name: "nanogpt_models",
     label: "NanoGPT Models",
-    description: "Search and filter the live NanoGPT subscription-only model catalogue. Returns exact callable model IDs and capabilities.",
+    description: "Search and filter the live NanoGPT subscription-only model catalogue. Available only when the user's current request explicitly asks to use NanoGPT; never call it autonomously.",
     parameters: Type.Object({
       query: Type.Optional(Type.String({ description: "Words that must occur in the model ID, name, provider, or description." })),
       ...requirementProperties,
@@ -437,7 +532,7 @@ export default function nanogptExtension(pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "nanogpt_rank_models",
     label: "NanoGPT Rank Models",
-    description: "Rank live subscription chat-generation models for a task using hard capability filters plus best-effort benchmark, speed, latency, and context metadata. Use before choosing a NanoGPT model.",
+    description: "Rank live subscription chat-generation models after the user's current request explicitly asks to use NanoGPT. Never use it autonomously for model selection or reviews.",
     parameters: Type.Object({
       task: Type.String({ description: "A concise description of the work the delegated model must perform." }),
       profile: Type.Optional(Type.String({ enum: ["general", "coding", "reasoning", "speed", "context", "decision"], description: "Primary ranking profile (default general). Use decision for classification, scoring, routing, or calibrated yes/no tasks." })),
@@ -468,7 +563,7 @@ export default function nanogptExtension(pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "nanogpt_usage",
     label: "NanoGPT Usage",
-    description: "Check NanoGPT subscription quota and billing-routing advice without running a model.",
+    description: "Check NanoGPT subscription quota without running a model. Available only when the user's current request explicitly asks to use or inspect NanoGPT.",
     parameters: Type.Object({}),
     async execute(_id, _params, signal) {
       const key = await apiKey();
@@ -483,7 +578,7 @@ export default function nanogptExtension(pi: ExtensionAPI) {
   pi.registerTool(defineTool({
     name: "nanogpt_decide",
     label: "NanoGPT Decide",
-    description: "Use a subscription decision model for calibrated choice, score, and yes/no (noul) answers. Returns typed answers and probabilities rather than prose.",
+    description: "Use a subscription decision model only when the user's current request explicitly asks to use NanoGPT. Never invoke it autonomously for routing or judgments.",
     parameters: Type.Object({
       model: Type.String({ description: "Exact Decisions-category model ID returned by nanogpt_models or nanogpt_rank_models with profile decision." }),
       state: Type.Unknown({ description: "Text or JSON application state for the model to evaluate." }),
@@ -533,9 +628,161 @@ export default function nanogptExtension(pi: ExtensionAPI) {
   }));
 
   pi.registerTool(defineTool({
+    name: "nanogpt_bulk_decide",
+    label: "NanoGPT Bulk Decide",
+    description: "Classify a local JSON array only when the user's current request explicitly asks to use NanoGPT. Never invoke it autonomously. Writes probabilities and metadata—but never raw state—to the output path.",
+    parameters: Type.Object({
+      model: Type.String({ description: "Exact Decisions-category model ID from the subscription catalogue." }),
+      inputPath: Type.String({ description: "Absolute or cwd-relative JSON file containing [{id,state,meta?}, ...]." }),
+      outputPath: Type.String({ description: "Absolute or cwd-relative JSON result path. Raw input states are never copied into it." }),
+      instructions: Type.String({ description: "Choice-question instructions. Each batch item is referenced by its ID." }),
+      criteria: Type.Record(Type.String(), Type.Union([Type.String(), Type.Null()]), { description: "Two or more named choice criteria." }),
+      batchSize: Type.Optional(Type.Integer({ minimum: 1, maximum: 128, description: "Items per request (default 96)." })),
+      confidenceThreshold: Type.Optional(Type.Number({ minimum: 0, maximum: 1, description: "Mark lower-confidence results ambiguous (default 0.65)." })),
+      marginThreshold: Type.Optional(Type.Number({ minimum: 0, maximum: 1, description: "Mark results ambiguous when top-two probability margin is lower (default 0.20)." })),
+    }),
+    async execute(_id, params, signal, onUpdate, ctx) {
+      const key = await apiKey();
+      const usageStatus = await subscriptionUsage(key, signal);
+      assertSubscriptionRouting(usageStatus);
+
+      const model = (await getCatalog(key, signal)).find((candidate) => candidate.id === params.model);
+      if (!model) throw new Error("Requested model is not an exact ID in the current subscription catalogue");
+      if (!isDecisionModel(model)) throw new Error("Requested model is not a Decisions-category model");
+      if (Object.keys(params.criteria).length < 2) throw new Error("Bulk choice classification requires at least two criteria");
+
+      const inputPath = resolve(ctx.cwd, params.inputPath);
+      const outputPath = resolve(ctx.cwd, params.outputPath);
+      if (inputPath === outputPath) throw new Error("Bulk input and output paths must differ");
+      const parsed = JSON.parse(await readFile(inputPath, "utf8"));
+      if (!Array.isArray(parsed) || !parsed.length) throw new Error("Bulk input must be a non-empty JSON array");
+      const items: BulkDecisionItem[] = parsed.map((item: any, index: number) => {
+        if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error(`Bulk item ${index} must be an object`);
+        if (typeof item.id !== "string" || !item.id.trim()) throw new Error(`Bulk item ${index} requires a non-empty string id`);
+        if (!("state" in item)) throw new Error(`Bulk item ${index} requires state`);
+        return { id: item.id, state: item.state, ...(item.meta === undefined ? {} : { meta: item.meta }) };
+      });
+      if (new Set(items.map((item) => item.id)).size !== items.length) throw new Error("Bulk item IDs must be unique");
+
+      const batchSize = params.batchSize ?? 96;
+      const confidenceThreshold = params.confidenceThreshold ?? 0.65;
+      const marginThreshold = params.marginThreshold ?? 0.20;
+      const inputDigest = digestJson(items);
+      let output: BulkDecisionFile = {
+        version: 1,
+        inputDigest,
+        modelRequested: model.id,
+        modelResolved: null,
+        question: { instructions: params.instructions, criteria: params.criteria },
+        thresholds: { confidence: confidenceThreshold, margin: marginThreshold },
+        total: items.length,
+        completed: 0,
+        results: [],
+        updatedAt: new Date().toISOString(),
+      };
+
+      try {
+        const prior = JSON.parse(await readFile(outputPath, "utf8")) as BulkDecisionFile;
+        if (prior.inputDigest !== inputDigest) throw new Error("Existing bulk output belongs to different input; choose a new output path");
+        if (prior.modelRequested !== model.id || digestJson(prior.question) !== digestJson(output.question)) {
+          throw new Error("Existing bulk output uses a different model or question rubric; choose a new output path");
+        }
+        output = prior;
+      } catch (error: any) {
+        if (error?.code !== "ENOENT") {
+          if (String(error?.message || error).includes("Existing bulk output")) throw error;
+          throw new Error(`Could not read existing bulk output: ${redact(error)}`);
+        }
+      }
+
+      const completedIds = new Set(output.results.map((result) => result.id));
+      const pending = items.filter((item) => !completedIds.has(item.id));
+      const totalBatches = Math.ceil(pending.length / batchSize);
+      for (let start = 0, batchNumber = 1; start < pending.length; start += batchSize, batchNumber++) {
+        if (signal?.aborted) throw new Error("Bulk decision run cancelled; completed batches remain saved");
+        const batch = pending.slice(start, start + batchSize);
+        const questionMap: Record<string, unknown> = {};
+        const preparedStates = batch.map((item) => bulkState(item.state));
+        const stateItems = batch.map((item, index) => {
+          const key = `item_${index}`;
+          questionMap[key] = {
+            type: "choice",
+            instructions: `${params.instructions}\nClassify only item ID ${item.id}.`,
+            criteria: params.criteria,
+          };
+          return { key, id: item.id, state: preparedStates[index].value };
+        });
+        onUpdate?.({
+          content: [{ type: "text", text: `Classifying batch ${batchNumber}/${totalBatches} (${output.completed}/${items.length} complete)…` }],
+          details: { model: model.id, inputPath, outputPath, completed: output.completed, total: items.length },
+        });
+
+        let payload: any;
+        let lastError: unknown;
+        for (let attempt = 0; attempt < 3; attempt++) {
+          try {
+            payload = await fetchJson(
+              `${apiV1BaseUrl()}/decisions`,
+              key,
+              signal,
+              {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  model: model.id,
+                  state: { items: stateItems },
+                  questions: questionMap,
+                  include_usage: true,
+                }),
+              },
+              5 * 60 * 1000,
+            );
+            break;
+          } catch (error) {
+            lastError = error;
+            if (signal?.aborted || attempt === 2) throw error;
+            await new Promise((resolveDelay) => setTimeout(resolveDelay, 1000 * 2 ** attempt));
+          }
+        }
+        if (!payload?.answers) throw new Error(`NanoGPT returned no answers: ${redact(lastError)}`);
+        output.modelResolved = payload.model ?? output.modelResolved ?? model.id;
+        for (let index = 0; index < batch.length; index++) {
+          const item = batch[index];
+          const answer = payload.answers[`item_${index}`];
+          if (!answer || answer.type !== "choice" || typeof answer.choice !== "string") {
+            throw new Error(`NanoGPT returned an invalid choice answer for item ${item.id}`);
+          }
+          output.results.push({
+            id: item.id,
+            ...(item.meta === undefined ? {} : { meta: item.meta }),
+            choice: answer.choice,
+            confidence: finite(answer.confidence),
+            probabilities: Object.fromEntries(Object.entries(answer.probabilities || {}).map(([name, value]) => [name, finiteProbability(value)])),
+            ambiguous: choiceAmbiguous(answer, confidenceThreshold, marginThreshold),
+            ...(preparedStates[index].truncated ? { stateTruncated: true } : {}),
+          });
+        }
+        output.completed = output.results.length;
+        output.updatedAt = new Date().toISOString();
+        await writeJsonAtomic(outputPath, output);
+      }
+
+      const ambiguous = output.results.filter((result) => result.ambiguous).length;
+      const counts = output.results.reduce<Record<string, number>>((acc, result) => {
+        acc[result.choice] = (acc[result.choice] ?? 0) + 1;
+        return acc;
+      }, {});
+      return {
+        content: [{ type: "text", text: `Classified ${output.completed}/${output.total} items with ${output.modelResolved ?? model.id}. ${ambiguous} ambiguous. Full results: ${outputPath}` }],
+        details: { model: output.modelResolved ?? model.id, inputPath, outputPath, completed: output.completed, total: output.total, ambiguous, counts },
+      };
+    },
+  }));
+
+  pi.registerTool(defineTool({
     name: "nanogpt_chat",
     label: "NanoGPT Chat",
-    description: "Delegate a self-contained text task to an exact model from the live NanoGPT subscription catalogue. Checks subscription routing first and refuses pay-as-you-go fallback.",
+    description: "Delegate a task only when the user's current request explicitly asks to use NanoGPT. Never invoke it autonomously for reviews or second opinions. Subscription routing is checked first.",
     parameters: Type.Object({
       model: Type.String({ description: "Exact model ID returned by nanogpt_models or nanogpt_rank_models. The ID is never modified with routing suffixes." }),
       prompt: Type.String({ description: "Self-contained task and context for the delegated model." }),
@@ -594,4 +841,33 @@ export default function nanogptExtension(pi: ExtensionAPI) {
       };
     },
   }));
+
+  // NanoGPT is opt-in per user request. Hiding the tools by default keeps the
+  // model from selecting them during ordinary work; the tool-call hook is a
+  // second enforcement layer in case another extension changes active tools.
+  // Runtime actions are unavailable while extensions are initially loading, so
+  // default deactivation happens as soon as the session runtime is ready.
+  pi.on("session_start", () => {
+    authorizedForCurrentRun = false;
+    setNanoGptToolsActive(false);
+  });
+
+  pi.on("before_agent_start", (event) => {
+    authorizedForCurrentRun = explicitlyRequestsNanoGpt(event.prompt);
+    setNanoGptToolsActive(authorizedForCurrentRun);
+  });
+
+  pi.on("tool_call", (event) => {
+    if (NANOGPT_TOOL_NAME_SET.has(event.toolName) && !authorizedForCurrentRun) {
+      return {
+        block: true,
+        reason: "NanoGPT is opt-in. The current user request did not explicitly ask to use NanoGPT.",
+      };
+    }
+  });
+
+  pi.on("agent_end", () => {
+    authorizedForCurrentRun = false;
+    setNanoGptToolsActive(false);
+  });
 }
