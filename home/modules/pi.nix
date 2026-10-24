@@ -25,6 +25,7 @@ in
 {
   xdg.configFile."pi/agent/bin/codex".source = "${pkgs.codex}/bin/codex";
   xdg.configFile."pi/agent/bin/codex-imagegen".source = "${codex-imagegen}/bin/codex-imagegen";
+  xdg.configFile."pi/agent/extensions/chatid.ts".source = ../config/pi/extensions/chatid.ts;
   xdg.configFile."pi/agent/extensions/codex-imagegen.ts".source = ../config/pi/extensions/codex-imagegen.ts;
   xdg.configFile."pi/agent/extensions/nanogpt.ts".source = ../config/pi/extensions/nanogpt.ts;
   xdg.configFile."pi/agent/skills/nanogpt/SKILL.md".source = ../config/pi/skills/nanogpt/SKILL.md;
