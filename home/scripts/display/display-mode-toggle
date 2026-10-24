@@ -1,0 +1,58 @@
+set -euo pipefail
+
+monitors=$(hyprctl monitors all -j)
+mapfile -t state < <(
+  printf '%s' "$monitors" | python3 -c '
+import json, sys
+monitors = json.load(sys.stdin)
+internal = next((m for m in monitors if m.get("name") == "eDP-1"), None)
+external = next((m for m in monitors if m.get("name") != "eDP-1" and not m.get("disabled", False)), None)
+print(external.get("name", "") if external else "")
+print("1" if external and external.get("mirrorOf", "none") != "none" else "0")
+print(external.get("scale", 1) if external else 1)
+print((external.get("x", 0)-internal.get("x", 0)) if external and internal else 0)
+print((external.get("y", 0)-internal.get("y", 0)) if external and internal else 0)
+'
+)
+
+external=${state[0]:-}
+mirrored=${state[1]:-0}
+external_scale=${state[2]:-1.25}
+current_dx=${state[3]:-1536}
+current_dy=${state[4]:-0}
+
+if [[ -z "$external" ]]; then
+  hyprctl notify -1 3000 'rgb(ff5555)' 'No active external monitor' >/dev/null
+  exit 1
+fi
+
+if [[ "$mirrored" == 1 ]]; then
+  position_file="${XDG_STATE_HOME:-$HOME/.local/state}/external-display-position"
+  if [[ -r "$position_file" ]]; then
+    read -r dx dy legacy_factor < "$position_file"
+    # Prototype builds stored canvas deltas plus their conversion factor. New
+    # builds store logical-pixel deltas directly; migrate the old format once.
+    if [[ -n "${legacy_factor:-}" ]]; then
+      read -r dx dy < <(python3 -c \
+        'import sys; print(round(float(sys.argv[1])*float(sys.argv[3])), round(float(sys.argv[2])*float(sys.argv[3])))' \
+        "$dx" "$dy" "$legacy_factor")
+      printf '%s %s\n' "$dx" "$dy" > "$position_file"
+    fi
+  else
+    dx=1536
+    dy=0
+  fi
+  # wlr-output-management does not carry Hyprland's compositor-specific mirror
+  # relationship, so clear that rule explicitly before restoring coordinates.
+  # auto-right gives the output a valid non-overlapping intermediate position.
+  hyprctl keyword monitor "$external,preferred,auto-right,$external_scale" >/dev/null
+  DISPLAY_LAYOUT_SILENT=1 display-layout-apply custom "$dx" "$dy" 1
+  hyprctl notify -1 2500 'rgb(00ff99)' "Extended desktop — $external" >/dev/null
+else
+  position_file="${XDG_STATE_HOME:-$HOME/.local/state}/external-display-position"
+  mkdir -p "${position_file%/*}"
+  printf '%s %s\n' "$current_dx" "$current_dy" > "$position_file"
+  hyprctl keyword monitor "$external,preferred,auto,$external_scale,mirror,eDP-1" >/dev/null
+  display-wallpaper-refresh
+  hyprctl notify -1 2500 'rgb(00ff99)' "Mirroring eDP-1 to $external" >/dev/null
+fi

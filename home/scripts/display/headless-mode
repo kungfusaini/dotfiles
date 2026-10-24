@@ -1,0 +1,207 @@
+set -euo pipefail
+
+runtime=${XDG_RUNTIME_DIR:-/tmp}/headless-mode
+lock_file=$runtime/lock
+control=/run/current-system/sw/bin/headless-mode-control
+sudo=/run/wrappers/bin/sudo
+countdown=${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/headless-countdown
+position_file=${XDG_STATE_HOME:-$HOME/.local/state}/external-display-position
+self=$(readlink -f "$0")
+mkdir -p "$runtime"
+
+log_timing() {
+  printf '%s pid=%s %s\n' "$(date --iso-8601=ns)" "$$" "$*" >> "$runtime/timing.log"
+}
+
+status() { "$sudo" -n "$control" status; }
+
+external_state() {
+  hyprctl monitors all -j | python3 -c '
+import json, sys
+ms=json.load(sys.stdin)
+i=next((m for m in ms if m.get("name")=="eDP-1" and not m.get("disabled",False)), None)
+e=next((m for m in ms if m.get("name")!="eDP-1" and not m.get("disabled",False)), None)
+if not i or not e: raise SystemExit(1)
+print(e["name"])
+print(e.get("scale") or 1)
+print("1" if e.get("mirrorOf","none") != "none" else "0")
+print(e.get("x",0)-i.get("x",0))
+print(e.get("y",0)-i.get("y",0))
+'
+}
+
+load_external() {
+  local output
+  output=$(external_state) || return 1
+  mapfile -t ext <<< "$output"
+  [[ -n ${ext[0]:-} ]]
+}
+
+restore_mode() {
+  local current recovery_failed=0
+  current=$(status)
+  # An emergency can queue duplicate restore requests before the first finishes.
+  # Do not reconfigure the desktop or repeat notifications once it is healthy.
+  if [[ $current == off ]] && hyprctl monitors all -j | python3 -c '
+import json, sys
+raise SystemExit(not any(m.get("name") == "eDP-1" and not m.get("disabled", False) for m in json.load(sys.stdin)))
+' 2>/dev/null; then
+    return 0
+  fi
+
+  # Stop further DRM probes immediately; one of those may be the reason the
+  # compositor's output reconfiguration is slow. Base input is re-enabled now.
+  if [[ $current != off ]]; then
+    "$sudo" -n "$control" begin-restore || true
+  fi
+
+  # wlr-randr blocked for 17 seconds after the external sink disappeared.
+  # Try Hyprland's native monitor command first and bound BOTH IPC paths. Do
+  # not delay ISH restoration indefinitely if neither compositor call works.
+  log_timing 'restore: enabling eDP-1 through Hyprland'
+  if ! timeout -k 1 2 hyprctl keyword monitor 'eDP-1,preferred,0x0,1.25' >/dev/null; then
+    log_timing 'restore: native panel command timed out or failed'
+  fi
+  if ! timeout -k 1 2 hyprctl monitors all -j | python3 -c '
+import json, sys
+raise SystemExit(not any(m.get("name") == "eDP-1" and not m.get("disabled", False) for m in json.load(sys.stdin)))
+'; then
+    log_timing 'restore: trying bounded wlr-randr fallback'
+    timeout -k 1 2 wlr-randr --output eDP-1 --on --preferred --pos 0,0 --scale 1.25 || true
+  fi
+  log_timing 'restore: panel re-enable attempted; reloading sensors'
+
+  # Even if ISH recovery fails, the laptop display and base input stay usable.
+  # The root helper reports restore-failed for a later retry.
+  if [[ $current != off ]] && ! "$sudo" -n "$control" restore; then
+    recovery_failed=1
+  fi
+  log_timing "restore: sensor reload finished (failed=$recovery_failed)"
+  if load_external; then
+    local dx=1536 dy=0 _
+    if [[ -r "$position_file" ]]; then
+      read -r dx dy _ < "$position_file" || true
+    fi
+    if [[ ${ext[2]} == 1 ]]; then
+      hyprctl keyword monitor "${ext[0]},preferred,auto-right,${ext[1]}" >/dev/null || true
+    fi
+    DISPLAY_LAYOUT_SILENT=1 display-layout-apply custom "$dx" "$dy" 1 || true
+  else
+    display-wallpaper-refresh || true
+  fi
+  quickshell kill --path "$countdown" >/dev/null 2>&1 || true
+  if (( recovery_failed == 0 )) && grep -qlx hinge /sys/bus/iio/devices/iio:device*/name 2>/dev/null; then
+    hyprctl notify -1 3000 'rgb(00ff99)' 'Laptop display, pen/touch, and hinge restored' >/dev/null || true
+  else
+    hyprctl notify -1 8000 'rgb(ff5555)' 'Display and input restored; ISH hinge recovery failed — retry restoration' >/dev/null || true
+  fi
+  return "$recovery_failed"
+}
+
+prime_mode() {
+  local -a ext
+  local watcher_pid="" expected_watcher=""
+  [[ -r "$runtime/watcher.pid" ]] && read -r watcher_pid < "$runtime/watcher.pid" || true
+  expected_watcher=$(grep -m1 '^exec-once=/nix/store/.*-headless-monitor-watch/bin/headless-monitor-watch$' \
+    "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.conf" 2>/dev/null | cut -d= -f2-)
+  if [[ ! ${watcher_pid:-} =~ ^[0-9]+$ ]] ||
+     [[ -z "$expected_watcher" ]] ||
+     ! kill -0 "$watcher_pid" 2>/dev/null ||
+     ! grep -azFq -- "$expected_watcher" "/proc/$watcher_pid/cmdline"; then
+    hyprctl notify -1 5000 'rgb(ff5555)' 'Current headless safety watcher is not running; sign out and back in first' >/dev/null
+    return 1
+  fi
+  if ! load_external; then
+    hyprctl notify -1 3500 'rgb(ff5555)' 'Connect an external monitor before enabling headless mode' >/dev/null
+    return 1
+  fi
+
+  # Mirroring uses eDP-1 as its source; remember and restore the extended
+  # desktop before switching off the laptop display.
+  if [[ ${ext[2]} == 1 ]]; then
+    display-mode-toggle
+    load_external || return 1
+  fi
+  mkdir -p "${position_file%/*}"
+  printf '%s %s\n' "${ext[3]}" "${ext[4]}" > "$position_file"
+
+  rm -f "$runtime/cancel-requested"
+  if ! "$sudo" -n "$control" prime; then
+    hyprctl notify -1 4500 'rgb(ff5555)' 'Could not prime headless mode; no display was disabled' >/dev/null
+    return 1
+  fi
+
+  # Both detached workers explicitly close the controller's lock descriptor.
+  # If Quickshell exits unexpectedly or deployment stalls, the failsafe restores
+  # ISH after 20 seconds rather than leaving hinge sensing down indefinitely.
+  nohup "$self" countdown 9>&- >"$runtime/countdown.log" 2>&1 </dev/null &
+  nohup "$self" priming-failsafe 9>&- >"$runtime/failsafe.log" 2>&1 </dev/null &
+}
+
+finish_countdown() {
+  local started=$SECONDS rc=0
+  HEADLESS_CANCEL_COMMAND="$self" quickshell --no-duplicate --path "$countdown" || rc=$?
+
+  log_timing 'countdown: requesting controller lock'
+  exec 9>"$lock_file"
+  flock 9
+  log_timing 'countdown: controller lock acquired'
+  [[ $(status) == primed ]] || return 0
+  if [[ -e "$runtime/cancel-requested" ]] || (( rc != 0 || SECONDS-started < 9 )); then
+    restore_mode
+    return 1
+  fi
+  local -a ext
+  if ! load_external; then
+    restore_mode
+    return 1
+  fi
+
+  # The keyboard, TrackPoint, touchpad and ThinkPad buttons are NEVER blocked.
+  # Only the display-side touchscreen and pen are inhibited.
+  "$sudo" -n "$control" deploy
+  if ! wlr-randr --output eDP-1 --off \
+      --output "${ext[0]}" --on --preferred --pos 0,0 --scale "${ext[1]}"; then
+    restore_mode
+    return 1
+  fi
+  # Do not hold the controller lock across wallpaper cleanup or notifications.
+  # A disconnected external display must be able to restore eDP-1 immediately.
+  flock -u 9
+  log_timing 'deployment complete; controller lock released'
+  if [[ $(status) == active ]]; then
+    display-wallpaper-refresh || true
+  fi
+  if [[ $(status) == active ]]; then
+    hyprctl notify -1 3000 'rgb(00ff99)' 'Headless active — double-tap F7 to restore' >/dev/null || true
+  fi
+}
+
+case "${1:-toggle}" in
+  status) status; exit 0 ;;
+  restore) touch "$runtime/cancel-requested" ;;
+  priming-failsafe)
+    sleep 20
+    if [[ $(status) == primed ]]; then
+      "$self" restore
+    fi
+    exit 0
+    ;;
+  countdown) finish_countdown; exit $? ;;
+esac
+
+log_timing "${1:-toggle}: requesting controller lock"
+exec 9>"$lock_file"
+flock 9
+log_timing "${1:-toggle}: controller lock acquired"
+case "${1:-toggle}" in
+  toggle)
+    case "$(status)" in
+      off) prime_mode ;;
+      primed|active|priming|restore-failed) restore_mode ;;
+      restoring) exit 0 ;;
+    esac
+    ;;
+  restore) restore_mode ;;
+  *) echo 'usage: headless-mode {toggle|restore|status}' >&2; exit 2 ;;
+esac

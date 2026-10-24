@@ -20,7 +20,7 @@ window#waybar {
   color: #00ff99;
 }
 
-#window, #clock, #tray, #backlight, #pulseaudio, #custom-bluetooth, #network, #battery, #custom-battery, #custom-wshowkeys, #custom-dnd, #custom-mic-source, #custom-tablet-mode, #custom-platform-profile, #custom-current-workspace, #custom-workspace-tabs {
+#window, #clock, #tray, #backlight, #pulseaudio, #network, #battery, #custom-battery, #custom-wshowkeys, #custom-dnd, #custom-mic-status, #custom-tablet-mode, #custom-platform-profile, #custom-current-workspace, #custom-workspace-tabs {
   padding: 0 10px;
 }
 
@@ -81,34 +81,22 @@ window#waybar {
   color: #eeeeee;
 }
 
-#custom-mic-source.laptop {
+#custom-mic-status.laptop,
+#custom-mic-status.headset {
   color: #00ff99;
 }
 
-#custom-mic-source.headset {
-  color: #00d5ff;
-}
-
-#custom-mic-source.unknown {
-  color: #ffcc66;
-}
-
-#custom-mic-source.laptop-muted,
-#custom-mic-source.headset-muted,
-#custom-mic-source.unknown-muted {
+#custom-mic-status.laptop-muted,
+#custom-mic-status.headset-muted {
   color: #ff6666;
 }
 
-#custom-bluetooth.connected {
-  color: #00d5ff;
+#custom-mic-status.flash-hidden {
+  opacity: 0;
 }
 
-#custom-bluetooth.on {
-  color: #eeeeee;
-}
-
-#custom-bluetooth.off {
-  color: #888888;
+#custom-mic-status.unknown {
+  color: #ffcc66;
 }
 
 #battery.plugged, #battery.full, #custom-battery.plugged {

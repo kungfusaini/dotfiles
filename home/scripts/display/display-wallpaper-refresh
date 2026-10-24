@@ -1,0 +1,54 @@
+set -euo pipefail
+
+# swaybg can retain stale layer surfaces when outputs change size. Restart the
+# wallpaper that is ALREADY running, with its actual executable and arguments;
+# this script must not choose an image, mode, or other user configuration.
+[[ -n ${HYPRLAND_INSTANCE_SIGNATURE:-} ]] || exit 0
+mapfile -t candidates < <({
+  pgrep -u "$UID" -x 'swaybg' || true
+  pgrep -u "$UID" -x '\.swaybg-wrapped' || true
+} | sort -u)
+pids=()
+for pid in "${candidates[@]}"; do
+  [[ -r /proc/$pid/environ ]] || continue
+  if tr '\0' '\n' < "/proc/$pid/environ" |
+      grep -Fx "HYPRLAND_INSTANCE_SIGNATURE=$HYPRLAND_INSTANCE_SIGNATURE" >/dev/null; then
+    pids+=("$pid")
+  fi
+done
+((${#pids[@]})) || exit 0
+
+pid=${pids[0]}
+[[ -r /proc/$pid/cmdline ]] || exit 0
+mapfile -d '' -t args < "/proc/$pid/cmdline"
+((${#args[@]})) || exit 0
+case "${args[0]##*/}" in swaybg|.swaybg-wrapped) ;; *) exit 0 ;; esac
+exe=$(readlink -f "/proc/$pid/exe") || exit 0
+# The Nix wrapper sets up the environment for .swaybg-wrapped. Reuse that
+# wrapper rather than invoking its underlying executable directly.
+if [[ ${exe##*/} == .swaybg-wrapped && -x ${exe%/*}/swaybg ]]; then
+  args[0]=${exe%/*}/swaybg
+else
+  args[0]=$exe
+fi
+[[ -x ${args[0]} ]] || exit 0
+
+kill "${pids[@]}" 2>/dev/null || true
+for pid in "${pids[@]}"; do
+  # A disconnected output can leave swaybg stuck (or a zombie). Do not wait
+  # forever; emergency display restoration must never depend on this process.
+  for ((attempt = 0; attempt < 50; attempt++)); do
+    if ! kill -0 "$pid" 2>/dev/null || [[ $(ps -o stat= -p "$pid" 2>/dev/null) == Z* ]]; then
+      break
+    fi
+    sleep 0.02
+  done
+  if [[ -r /proc/$pid/comm ]]; then
+    read -r comm < "/proc/$pid/comm"
+    case "$comm" in
+      swaybg|.swaybg-wrapped) kill -KILL "$pid" 2>/dev/null || true ;;
+    esac
+  fi
+done
+
+nohup "${args[@]}" 9>&- >"${XDG_RUNTIME_DIR:-/tmp}/swaybg.log" 2>&1 &

@@ -78,13 +78,13 @@ if hl.plugin.hyprgrass then
     -- Swipe up from bottom edge toggles the on-screen keyboard.
     hl.plugin.hyprgrass.bind({
         pattern = { kind = "edge", origin = "down", direction = "up" },
-        action = hl.dsp.exec_cmd(os.getenv("HOME") .. "/.config/nixos/hosts/nixos/scripts/desktop/tablet-osk toggle"),
+        action = hl.dsp.exec_cmd(os.getenv("HOME") .. "/.config/nixos/hosts/kirax1/scripts/desktop/tablet-osk toggle"),
     })
 
     -- 3-finger swipe down hides it quickly if it is in the way.
     hl.plugin.hyprgrass.bind({
         pattern = { kind = "swipe", fingers = 3, direction = "down" },
-        action = hl.dsp.exec_cmd(os.getenv("HOME") .. "/.config/nixos/hosts/nixos/scripts/desktop/tablet-osk hide"),
+        action = hl.dsp.exec_cmd(os.getenv("HOME") .. "/.config/nixos/hosts/kirax1/scripts/desktop/tablet-osk hide"),
     })
 end
 

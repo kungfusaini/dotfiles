@@ -8,6 +8,7 @@ local menu          = "wofi --show drun"
 local commsWorkspace   = "name:comms"
 local browserClient    = "vivaldi"
 local browserWorkspace = "name:browser"
+local musicWorkspace   = "name:music"
 local mainMod          = "SUPER"
 
 hl.bind(mainMod .. " + Q", hl.dsp.exec_cmd(terminal))
@@ -24,6 +25,11 @@ hl.bind(mainMod .. " + SHIFT + B", hl.dsp.window.move({ workspace = browserWorks
 hl.bind(mainMod .. " + C", hl.dsp.focus({ workspace = commsWorkspace }))
 hl.bind(mainMod .. " + C", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.config/hypr/scripts/hypr-comms-workspace-launch"))
 hl.bind(mainMod .. " + SHIFT + C", hl.dsp.window.move({ workspace = commsWorkspace }))
+
+-- Music workspace: Super+M jumps to music and starts Spotify if needed.
+hl.bind(mainMod .. " + M", hl.dsp.focus({ workspace = musicWorkspace }))
+hl.bind(mainMod .. " + M", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.config/hypr/scripts/hypr-music-workspace-launch"))
+hl.bind(mainMod .. " + SHIFT + M", hl.dsp.window.move({ workspace = musicWorkspace }))
 
 -- Group/tab controls. In the comms workspace this cycles Mail/Slack/WhatsApp/Teams.
 hl.bind(mainMod .. " + G", hl.dsp.group.toggle())
@@ -42,6 +48,9 @@ hl.bind(mainMod .. " + SPACE", hl.dsp.exec_cmd(menu))
 -- Voxtype dictation push-to-talk; keyd makes the Copilot key plain F23.
 hl.bind("F23", hl.dsp.exec_cmd("voxtype record start"))
 hl.bind("F23", hl.dsp.exec_cmd("voxtype record stop"), { release = true })
+
+-- Toggle long-running dictation with AltGr + Copilot/F23.
+hl.bind("MOD5 + F23", hl.dsp.exec_cmd("voxtype record toggle"))
 
 -- Open Pi agent in a terminal with Super + Copilot/F23.
 hl.bind(mainMod .. " + F23", hl.dsp.exec_cmd(terminal .. " -e pi"))
@@ -79,7 +88,6 @@ hl.bind(mainMod .. " + mouse:273", hl.dsp.window.resize(), { mouse = true })
 hl.bind("XF86AudioRaiseVolume", hl.dsp.exec_cmd("wpctl set-volume -l 1 @DEFAULT_AUDIO_SINK@ 5%+"), { locked = true, repeating = true })
 hl.bind("XF86AudioLowerVolume", hl.dsp.exec_cmd("wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-"),      { locked = true, repeating = true })
 hl.bind("XF86AudioMute",        hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"),     { locked = true, repeating = true })
-hl.bind("XF86AudioMicMute",     hl.dsp.exec_cmd("wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle"),   { locked = true, repeating = true })
 hl.bind("XF86MonBrightnessUp",  hl.dsp.exec_cmd("brightnessctl set 10%+"),                        { locked = true, repeating = true })
 hl.bind("XF86MonBrightnessDown",hl.dsp.exec_cmd("brightnessctl set 10%-"),                        { locked = true, repeating = true })
 

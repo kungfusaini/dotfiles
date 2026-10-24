@@ -62,6 +62,13 @@ hl.window_rule({
 })
 
 hl.window_rule({
+    name  = "spotify-music-workspace",
+    match = { class = "^(spotify|Spotify)$" },
+
+    workspace = "name:music",
+})
+
+hl.window_rule({
     name  = "fix-xwayland-drags",
     match = {
         class      = "^$",

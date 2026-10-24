@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+
+workspace="music"
+
+# Only avoid launching when there is already a Spotify window on the music workspace.
+has_music_window=$(hyprctl clients -j 2>/dev/null | node -e '
+let input = "";
+process.stdin.on("data", chunk => input += chunk);
+process.stdin.on("end", () => {
+  try {
+    const clients = JSON.parse(input);
+    const found = clients.some(c =>
+      c.workspace &&
+      c.workspace.name === "music" &&
+      /spotify/i.test(String(c.class || ""))
+    );
+    process.exit(found ? 0 : 1);
+  } catch (_) {
+    process.exit(1);
+  }
+});
+' && echo yes || echo no)
+
+if [ "$has_music_window" = "yes" ]; then
+    exit 0
+fi
+
+spotify >/dev/null 2>&1 &

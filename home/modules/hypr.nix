@@ -1,4 +1,4 @@
-{ lib, pkgs, ... }:
+{ displayLayoutOpen, displayModeToggle, headlessMonitorWatch, lib, micMuteButton, pkgs, ... }:
 
 let
   # Keep this pinned to the same Hyprland-compatible hyprgrass build used by
@@ -13,13 +13,41 @@ let
     };
   });
 
-  tabletOsk = "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/tablet-osk";
-  micMuteKey = "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/mic-mute-key";
+  tabletOsk = "/home/sumeet/.config/nixos/hosts/kirax1/scripts/desktop/tablet-osk";
+
+  screenshotFull = pkgs.writeShellScript "hypr-screenshot-full" ''
+    set -eu
+    dir="$HOME/Pictures/Screenshots"
+    mkdir -p "$dir"
+    file="$dir/screenshot-$(date +%Y%m%d-%H%M%S).png"
+    ${pkgs.grim}/bin/grim "$file"
+    ${pkgs.wl-clipboard}/bin/wl-copy < "$file"
+    ${pkgs.libnotify}/bin/notify-send "Screenshot saved" "$file"
+  '';
+
+  screenshotSelection = pkgs.writeShellScript "hypr-screenshot-selection" ''
+    set -eu
+    dir="$HOME/Pictures/Screenshots"
+    mkdir -p "$dir"
+    file="$dir/screenshot-$(date +%Y%m%d-%H%M%S).png"
+    geometry="$(${pkgs.slurp}/bin/slurp)"
+    ${pkgs.grim}/bin/grim -g "$geometry" "$file"
+    ${pkgs.wl-clipboard}/bin/wl-copy < "$file"
+    ${pkgs.libnotify}/bin/notify-send "Screenshot saved" "$file"
+  '';
+
 in
 {
   wayland.windowManager.hyprland = {
     enable = true;
     configType = "hyprlang";
+
+    # Hyprland is launched through NixOS/UWSM. Do not let Home Manager inject
+    # its unconditional dbus-update-activation-environment exec-once: nested or
+    # test Hyprland instances also read this config and can poison the user
+    # systemd/dbus environment with a stale WAYLAND_DISPLAY, which breaks
+    # xdg-desktop-portal-hyprland screen sharing.
+    systemd.enable = false;
 
     # The NixOS module installs/launches Hyprland. Home Manager only owns the
     # user config.
@@ -27,17 +55,25 @@ in
     portalPackage = null;
     xwayland.enable = true;
 
-    plugins = [ hyprgrass ];
+    # Disabled for now: the current crash logs show Hyprland coredumping with
+    # libhyprgrass loaded. Hyprland plugins are ABI-sensitive, so keep this off
+    # until hyprgrass is known-good for this exact Hyprland build.
+    plugins = [ ];
 
     settings = {
       "$mod" = "SUPER";
-      "$terminal" = "kitty";
+      "$terminal" = "/home/sumeet/matrix/projects/project-object/bin/project-terminal";
       "$fileManager" = "dolphin";
       "$menu" = "wofi --show drun";
       "$browserWorkspace" = "name:browser";
       "$commsWorkspace" = "name:comms";
+      "$musicWorkspace" = "name:music";
 
       monitor = [ ", preferred, auto, 1.25" ];
+
+      # Avoid blurry XWayland apps at fractional monitor scale. XWayland apps
+      # may need their own scale flags if they become too small.
+      xwayland.force_zero_scaling = true;
 
       env = [
         "XCURSOR_SIZE,24"
@@ -45,9 +81,14 @@ in
       ];
 
       exec-once = [
-        "nix shell nixpkgs#swaybg -c swaybg -i /home/sumeet/Pictures/Wallpapers/Bliss.bmp -m fill"
+        "${pkgs.swaybg}/bin/swaybg -i /home/sumeet/Pictures/Wallpapers/Bliss-HD.png -m fill"
         "sleep 1; pgrep -x waybar >/dev/null || waybar"
         "${tabletOsk} daemon"
+        "${pkgs.blueman}/bin/blueman-applet"
+        # graphical-session.target is not active in this Hyprland/UWSM setup,
+        # so start the daemon from the compositor environment.
+        "systemctl --user start voxtype.service"
+        "${headlessMonitorWatch}/bin/headless-monitor-watch"
       ];
 
       general = {
@@ -139,6 +180,8 @@ in
       misc = {
         force_default_wallpaper = -1;
         disable_hyprland_logo = false;
+        # Keep app min/max size hints from fighting the tiling layout.
+        size_limits_tiled = false;
       };
 
       bind = [
@@ -154,6 +197,10 @@ in
         "$mod, C, exec, /home/sumeet/.config/hypr/scripts/hypr-comms-workspace-launch"
         "$mod SHIFT, C, movetoworkspace, $commsWorkspace"
 
+        "$mod, M, workspace, $musicWorkspace"
+        "$mod, M, exec, /home/sumeet/.config/hypr/scripts/hypr-music-workspace-launch"
+        "$mod SHIFT, M, movetoworkspace, $musicWorkspace"
+
         "$mod, G, togglegroup"
         "$mod, TAB, changegroupactive, f"
         "$mod SHIFT, TAB, changegroupactive, b"
@@ -166,13 +213,22 @@ in
         "$mod, V, togglefloating"
         "$mod, SPACE, exec, $menu"
 
+        # Screenshot keys: keyd reports Print Screen as sysrq and the selection key as f16.
+        # Hyprland/xkb usually exposes sysrq as Print.
+        ", Print, exec, ${screenshotFull}"
+        ", F16, exec, ${screenshotSelection}"
+
+        # Keep F7 on display switching until external-loss recovery passes an
+        # open-laptop test with the current safety watcher.
+        ", XF86Display, exec, ${displayModeToggle}/bin/display-mode-toggle"
+        "SHIFT, XF86Display, exec, ${displayLayoutOpen}/bin/display-layout-open"
+
         ", F23, exec, voxtype record start"
-        # Short press toggles mic mute; hold toggles laptop/headset mic source.
-        ", XF86AudioMicMute, exec, ${micMuteKey} press"
+        "MOD5, F23, exec, voxtype record toggle"
         "$mod, F23, exec, $terminal -e pi"
 
-        "$mod, P, pseudo"
-        "$mod, J, togglesplit"
+        "$mod, P, exec, /home/sumeet/matrix/projects/project-object/bin/project-picker"
+        "$mod, J, layoutmsg, togglesplit"
 
         "$mod, left, movefocus, l"
         "$mod, right, movefocus, r"
@@ -209,7 +265,6 @@ in
 
       bindr = [
         ", F23, exec, voxtype record stop"
-        ", XF86AudioMicMute, exec, ${micMuteKey} release"
       ];
 
       bindm = [
@@ -226,22 +281,44 @@ in
       ];
 
       bindl = [
+        # Single press toggles mute; double press switches laptop/headset source.
+        ", XF86AudioMicMute, exec, ${micMuteButton}/bin/mic-mute-button"
         ", XF86AudioNext, exec, playerctl next"
         ", XF86AudioPause, exec, playerctl play-pause"
         ", XF86AudioPlay, exec, playerctl play-pause"
         ", XF86AudioPrev, exec, playerctl previous"
       ];
 
-      windowrulev2 = [
-        "suppressevent maximize, class:.*"
-        "workspace name:comms, class:^(thunderbird|Thunderbird)$"
-        "workspace name:browser, class:^vivaldi.*$"
-        "workspace name:comms, class:^(slack|Slack)$"
-        "workspace name:comms, class:^com\\.rtosta\\.zapzap$"
-        "workspace name:comms, class:^teams-for-linux$"
-        "nofocus, class:^$, title:^$, xwayland:1, floating:1, fullscreen:0, pinned:0"
-        "move 20 monitor_h-120, class:^hyprland-run$"
-        "float, class:^hyprland-run$"
+      windowrule = [
+        "match:title ^Display Layout$, float on"
+        "match:title ^Display Layout$, center on"
+        "match:title ^Display Layout$, size 760 560"
+
+        "match:class ^project-picker$, float on"
+        "match:class ^project-picker$, center on"
+        "match:class ^project-picker$, size 900 650"
+
+        # Generic fix for small fixed-size dialogs/popups: don't force modal
+        # windows into the tiling layout.
+        "match:modal true, float on"
+        "match:modal true, center on"
+
+        "match:class .*, suppress_event maximize"
+        "match:class ^(thunderbird|Thunderbird)$, workspace name:comms"
+        "match:class ^vivaldi.*$, workspace name:browser"
+        "match:class ^(slack|Slack)$, workspace name:comms"
+        "match:class ^com\\.rtosta\\.zapzap$, workspace name:comms"
+        # Keep only the main Teams window eligible for the comms tab group.
+        # Auxiliary Teams windows such as the screen-sharing status window
+        # should not get swept into the group when switching workspaces.
+        "match:class ^teams-for-linux$, match:title ^Teams for Linux - .*, float on"
+        "match:class ^teams-for-linux$, match:title ^Teams for Linux - .*, center on"
+        "match:class ^teams-for-linux$, match:title ^Teams for Linux - .*, group barred"
+        "match:class ^teams-for-linux$, workspace name:comms"
+        "match:class ^(spotify|Spotify)$, workspace name:music"
+        "match:class ^$, match:title ^$, match:xwayland true, match:float true, match:fullscreen false, match:pin false, no_focus on"
+        "match:class ^hyprland-run$, move 20 monitor_h-120"
+        "match:class ^hyprland-run$, float on"
       ];
     };
 
@@ -261,12 +338,13 @@ in
       bezier = linear, 0, 0, 1, 1
       bezier = almostLinear, 0.5, 0.5, 0.75, 1
       bezier = quick, 0.15, 0, 0.1, 1
-      spring = easy, 1, 71.2633, 15.8273644
+      # Hyprland 0.55 reports spring-based animation names as missing beziers
+      # here, so use the equivalent bezier-backed curve names.
 
       animation = global, 1, 10, default
       animation = border, 1, 5.39, easeOutQuint
-      animation = windows, 1, 4.79, easy
-      animation = windowsIn, 1, 4.1, easy, popin 87%
+      animation = windows, 1, 4.79, easeOutQuint
+      animation = windowsIn, 1, 4.1, easeOutQuint, popin 87%
       animation = windowsOut, 1, 1.49, linear, popin 87%
       animation = fadeIn, 1, 1.73, almostLinear
       animation = fadeOut, 1, 1.46, almostLinear
@@ -284,12 +362,12 @@ in
       # Hyprland's built-in trackpad-style gesture.
       gesture = 3, horizontal, workspace
 
-      # Hyprgrass touchscreen gestures.
-      hyprgrass-gesture = swipe, 3, horizontal, scale:1.0, workspace
-      hyprgrass-bind = , tap:3, togglefloating
-      hyprgrass-bindm = , longpress:3, movewindow
-      hyprgrass-bind = , edge:d:u, exec, ${tabletOsk} toggle
-      hyprgrass-bind = , swipe:3:d, exec, ${tabletOsk} hide
+      # Hyprgrass touchscreen gestures disabled with the plugin above.
+      # hyprgrass-gesture = swipe, 3, horizontal, scale:1.0, workspace
+      # hyprgrass-bind = , tap:3, togglefloating
+      # hyprgrass-bindm = , longpress:3, movewindow
+      # hyprgrass-bind = , edge:d:u, exec, ${tabletOsk} toggle
+      # hyprgrass-bind = , swipe:3:d, exec, ${tabletOsk} hide
     '';
   };
 

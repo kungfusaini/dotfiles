@@ -1,0 +1,54 @@
+set -euo pipefail
+
+if ! hyprctl monitors all -j | python3 -c '
+import json, sys
+ms=json.load(sys.stdin)
+raise SystemExit(not any(m.get("name") != "eDP-1" and not m.get("disabled", False) for m in ms))
+'; then
+  hyprctl notify -1 3000 'rgb(ff5555)' 'No active external monitor' >/dev/null
+  exit 1
+fi
+
+hyprctl keyword windowrule 'match:title ^Display Layout$, float on' >/dev/null
+hyprctl keyword windowrule 'match:title ^Display Layout$, center on' >/dev/null
+hyprctl keyword windowrule 'match:title ^Display Layout$, size 760 560' >/dev/null
+
+mapfile -t geometry < <(
+  hyprctl monitors all -j | python3 -c '
+import json, sys
+ms = json.load(sys.stdin)
+i = next((m for m in ms if m.get("name") == "eDP-1" and not m.get("disabled", False)), None)
+e = next((m for m in ms if m.get("name") != "eDP-1" and not m.get("disabled", False)), None)
+if not i or not e:
+    raise SystemExit(1)
+def geom(m):
+    s = float(m.get("scale") or 1)
+    return float(m["x"]), float(m["y"]), m["width"]/s, m["height"]/s
+ix, iy, iw, ih = geom(i)
+ex, ey, ew, eh = geom(e)
+# Keep the laptop centred and reserve enough room for the external display to
+# travel fully around every side rather than trapping it at a canvas boundary.
+factor = max((iw + 2*ew + 80)/690, (ih + 2*eh + 80)/370, 1)
+iuw, iuh = iw/factor, ih/factor
+euw, euh = ew/factor, eh/factor
+uix, uiy = (690-iuw)/2, (370-iuh)/2
+uex = max(0, min(690-euw, uix + (ex-ix)/factor))
+uey = max(0, min(370-euh, uiy + (ey-iy)/factor))
+for value in (factor, uix, uiy, iuw, iuh, uex, uey, euw, euh, e["name"]):
+    print(value)
+'
+)
+
+export LAYOUT_FACTOR=${geometry[0]}
+export LAYOUT_INTERNAL_X=${geometry[1]}
+export LAYOUT_INTERNAL_Y=${geometry[2]}
+export LAYOUT_INTERNAL_W=${geometry[3]}
+export LAYOUT_INTERNAL_H=${geometry[4]}
+export LAYOUT_EXTERNAL_X=${geometry[5]}
+export LAYOUT_EXTERNAL_Y=${geometry[6]}
+export LAYOUT_EXTERNAL_W=${geometry[7]}
+export LAYOUT_EXTERNAL_H=${geometry[8]}
+export LAYOUT_EXTERNAL_NAME=${geometry[9]}
+export DISPLAY_LAYOUT_APPLY=display-layout-apply
+
+exec quickshell --no-duplicate --path "${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/display-layout"

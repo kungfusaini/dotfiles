@@ -6,7 +6,7 @@
 
   "modules-left": ["custom/current-workspace", "custom/workspace-tabs"],
   "modules-center": ["clock"],
-  "modules-right": ["custom/tablet-mode", "custom/platform-profile", "custom/wshowkeys", "custom/dnd", "custom/mic-source", "tray", "backlight", "pulseaudio", "network", "custom/battery"],
+  "modules-right": ["custom/tablet-mode", "custom/platform-profile", "custom/wshowkeys", "custom/dnd", "custom/mic-status", "tray", "backlight", "pulseaudio", "network", "custom/battery"],
 
   "custom/current-workspace": {
     "exec": "/home/sumeet/.config/hypr/scripts/waybar-current-workspace",
@@ -21,13 +21,13 @@
   },
 
   "custom/tablet-mode": {
-    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/thinkpad-tablet-mode-waybar",
+    "exec": "/home/sumeet/.config/nixos/hosts/kirax1/scripts/desktop/thinkpad-tablet-mode-waybar",
     "return-type": "json",
     "interval": 1
   },
 
   "custom/platform-profile": {
-    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/platform-profile-waybar",
+    "exec": "@platformProfileWaybar@",
     "return-type": "json",
     "signal": 8,
     "interval": 60
@@ -35,28 +35,26 @@
 
   "custom/wshowkeys": {
     "exec-if": "pgrep -x wshowkeys >/dev/null",
-    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/wshowkeys-waybar",
+    "exec": "/home/sumeet/.config/nixos/hosts/kirax1/scripts/desktop/wshowkeys-waybar",
     "return-type": "json",
     "interval": 1,
-    "on-click": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/wshowkeys-waybar toggle"
+    "on-click": "/home/sumeet/.config/nixos/hosts/kirax1/scripts/desktop/wshowkeys-waybar toggle"
   },
 
   "custom/dnd": {
-    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/dnd-waybar",
+    "exec": "/home/sumeet/.config/nixos/hosts/kirax1/scripts/desktop/dnd-waybar",
     "return-type": "json",
     "signal": 9,
     "interval": 30,
-    "on-click": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/dnd-waybar toggle",
+    "on-click": "/home/sumeet/.config/nixos/hosts/kirax1/scripts/desktop/dnd-waybar toggle",
     "tooltip": true
   },
 
-  "custom/mic-source": {
-    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/mic-source-waybar",
+  "custom/mic-status": {
+    "exec": "@micStatusWaybar@",
     "return-type": "json",
     "signal": 10,
-    "interval": 1,
-    "on-click": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/mic-source-waybar toggle",
-    "on-click-right": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/mic-source-waybar mute-toggle",
+    "interval": 60,
     "tooltip": true
   },
 
@@ -81,14 +79,6 @@
     "format-icons": ["", "", ""]
   },
 
-  "custom/bluetooth": {
-    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/waybar-bluetooth",
-    "return-type": "json",
-    "interval": 5,
-    "on-click": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/waybar-bluetooth --menu",
-    "tooltip": true
-  },
-
   "network": {
     "format-wifi": " {essid}",
     "format-ethernet": "󰈀 wired",
@@ -97,7 +87,7 @@
   },
 
   "custom/battery": {
-    "exec": "/home/sumeet/.config/nixos/hosts/nixos/scripts/desktop/ac-battery-waybar",
+    "exec": "/home/sumeet/.config/nixos/hosts/kirax1/scripts/desktop/ac-battery-waybar",
     "return-type": "json",
     "interval": 2,
     "tooltip": true

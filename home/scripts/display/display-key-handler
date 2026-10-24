@@ -1,0 +1,56 @@
+set -euo pipefail
+
+state_dir=${XDG_RUNTIME_DIR:-/tmp}/display-key-handler
+state_file=$state_dir/pending-press
+lock_file=$state_dir/lock
+double_press_ms=650
+self=$(readlink -f "$0")
+mkdir -p "$state_dir"
+
+resolve_single() {
+  local expected_token=${1:?}
+  sleep 0.65
+
+  exec 9>"$lock_file"
+  flock 9
+
+  local _saved_ms saved_token
+  if [[ -r "$state_file" ]]; then
+    read -r _saved_ms saved_token < "$state_file" || true
+    if [[ ${saved_token:-} == "$expected_token" ]]; then
+      rm -f "$state_file"
+      # Do not let the long-lived wallpaper process inherit and permanently
+      # hold this lock through display-mode-toggle.
+      flock -u 9
+      exec 9>&-
+      # Never let a delayed single press alter outputs during a prime/active
+      # headless session.
+      if [[ $(headless-mode status 2>/dev/null || echo off) == off ]]; then
+        display-mode-toggle
+      fi
+    fi
+  fi
+}
+
+if [[ ${1:-} == resolve-single ]]; then
+  resolve_single "${2:-}"
+  exit 0
+fi
+
+exec 9>"$lock_file"
+flock 9
+now_ms=$(date +%s%3N)
+last_ms=0
+_last_token=""
+[[ -r "$state_file" ]] && read -r last_ms _last_token < "$state_file" || true
+
+if [[ $last_ms =~ ^[0-9]+$ ]] \
+    && (( now_ms-last_ms >= 0 && now_ms-last_ms <= double_press_ms )); then
+  rm -f "$state_file"
+  nohup headless-mode toggle 9>&- >"$state_dir/headless.log" 2>&1 &
+  exit 0
+fi
+
+token="$now_ms.$$.${RANDOM}"
+printf '%s %s\n' "$now_ms" "$token" > "$state_file"
+nohup "$self" resolve-single "$token" 9>&- >/dev/null 2>&1 &

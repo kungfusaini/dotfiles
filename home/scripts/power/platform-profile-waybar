@@ -1,0 +1,50 @@
+#!/usr/bin/env bash
+
+profile_file=""
+choices_file=""
+provider_name=""
+
+for provider in /sys/class/platform-profile/platform-profile-*; do
+  [[ -r "$provider/name" ]] || continue
+  if [[ "$(<"$provider/name")" == "thinkpad-acpi-profile" ]]; then
+    profile_file="$provider/profile"
+    choices_file="$provider/choices"
+    provider_name="ThinkPad"
+    break
+  fi
+done
+
+# Keep a fallback for kernels that only expose the legacy single-provider API.
+if [[ -z "$profile_file" && -r /sys/firmware/acpi/platform_profile ]]; then
+  profile_file=/sys/firmware/acpi/platform_profile
+  choices_file=/sys/firmware/acpi/platform_profile_choices
+  provider_name="ACPI"
+fi
+
+if [[ ! -r "$profile_file" ]]; then
+  printf '{"text":"profile ?","tooltip":"Platform profile unavailable","class":"unknown"}\n'
+  exit 0
+fi
+
+profile=$(cat "$profile_file" 2>/dev/null)
+choices=$(cat "$choices_file" 2>/dev/null || true)
+
+tooltip="$provider_name platform profile: $profile"
+if [[ -n "$choices" ]]; then
+  tooltip="$tooltip\\nChoices: $choices"
+fi
+
+case "$profile" in
+  low-power)
+    printf '{"text":"󰌪","tooltip":"%s","class":"low-power"}\n' "$tooltip"
+    ;;
+  balanced)
+    printf '{"text":"󰾅","tooltip":"%s","class":"balanced"}\n' "$tooltip"
+    ;;
+  performance)
+    printf '{"text":"󰓅","tooltip":"%s","class":"performance"}\n' "$tooltip"
+    ;;
+  *)
+    printf '{"text":"Profile %s","tooltip":"%s","class":"unknown"}\n' "$profile" "$tooltip"
+    ;;
+esac

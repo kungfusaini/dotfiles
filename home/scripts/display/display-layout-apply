@@ -1,0 +1,56 @@
+set -euo pipefail
+
+mode=${1:-}
+[[ "$mode" == custom ]] || exit 2
+dx=${2:-0}
+dy=${3:-0}
+factor=${4:-1}
+
+monitors=$(hyprctl monitors all -j)
+mapfile -t config < <(
+  printf '%s' "$monitors" | python3 -c '
+import json, sys
+monitors = json.load(sys.stdin)
+dx = round(float(sys.argv[1]) * float(sys.argv[3]))
+dy = round(float(sys.argv[2]) * float(sys.argv[3]))
+internal = next((m for m in monitors if m.get("name") == "eDP-1"), None)
+external = next((m for m in monitors if m.get("name") != "eDP-1" and not m.get("disabled", False)), None)
+if not internal or not external:
+    raise SystemExit(1)
+origin_x = min(0, dx)
+origin_y = min(0, dy)
+ipos = (-origin_x, -origin_y)
+epos = (dx-origin_x, dy-origin_y)
+print(external["name"])
+print(f"{ipos[0]},{ipos[1]}")
+print(f"{epos[0]},{epos[1]}")
+print(internal.get("scale") or 1)
+print(external.get("scale") or 1)
+print(dx)
+print(dy)
+' "$dx" "$dy" "$factor"
+)
+
+external=${config[0]}
+internal_pos=${config[1]}
+external_pos=${config[2]}
+internal_scale=${config[3]}
+external_scale=${config[4]}
+logical_dx=${config[5]}
+logical_dy=${config[6]}
+
+# wlr-output-management submits one complete configuration to Hyprland. Unlike
+# sequential `hyprctl keyword monitor` calls, a side swap has no intermediate
+# frame in which the old and new monitor rectangles overlap.
+wlr-randr \
+  --output eDP-1 --on --preferred --pos "$internal_pos" --scale "$internal_scale" \
+  --output "$external" --on --preferred --pos "$external_pos" --scale "$external_scale"
+
+mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}"
+printf '%s %s\n' "$logical_dx" "$logical_dy" \
+  > "${XDG_STATE_HOME:-$HOME/.local/state}/external-display-position"
+
+display-wallpaper-refresh
+if [[ "${DISPLAY_LAYOUT_SILENT:-0}" != 1 ]]; then
+  hyprctl notify -1 2200 'rgb(00ff99)' 'Display layout applied' >/dev/null
+fi

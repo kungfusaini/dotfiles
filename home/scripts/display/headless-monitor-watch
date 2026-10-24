@@ -1,0 +1,48 @@
+set -u
+
+runtime=${XDG_RUNTIME_DIR:-/run/user/$(id -u)}
+control=/run/current-system/sw/bin/headless-mode-control
+sudo=/run/wrappers/bin/sudo
+socket="$runtime/hypr/${HYPRLAND_INSTANCE_SIGNATURE:?}/.socket2.sock"
+mkdir -p "$runtime/headless-mode"
+printf '%s\n' "$$" > "$runtime/headless-mode/watcher.pid"
+trap 'rm -f "$runtime/headless-mode/watcher.pid"' EXIT
+
+external_active() {
+  hyprctl monitors all -j | python3 -c '
+import json, sys
+raise SystemExit(not any(m.get("name") != "eDP-1" and not m.get("disabled", False) for m in json.load(sys.stdin)))
+' 2>/dev/null
+}
+
+check_recovery() {
+  local state
+  state=off
+  if [[ -r /run/headless-mode/state ]]; then
+    state=$(</run/headless-mode/state)
+  fi
+  if [[ $state == active || $state == primed || $state == priming ]]; then
+    if ! external_active || { [[ $state == active ]] && ! timeout 8 "$sudo" -n "$control" probe-external; }; then
+      printf '%s External monitor lost; requesting emergency restoration\n' "$(date --iso-8601=seconds)" >> "$runtime/headless-monitor-watch.log"
+      # A hotplug burst may deliver multiple events before ISH reload finishes.
+      # Never queue another restore (or another notification) behind the first.
+      nohup flock -n "$runtime/headless-mode/emergency.lock" headless-mode restore \
+        >>"$runtime/headless-emergency-restore.log" 2>&1 </dev/null &
+    fi
+  fi
+}
+
+# Socket events provide immediate restoration. While active, a bounded DRM
+# detect probe also catches a disconnected sink whose Type-C adapter remains
+# attached and whose connector is incorrectly reported as still connected.
+while true; do
+  if [[ -S "$socket" ]]; then
+    while IFS= read -r event; do
+      case "$event" in
+        monitorremoved*|monitoradded*) check_recovery ;;
+      esac
+    done < <(socat -T 2 -u "UNIX-CONNECT:$socket" - 2>/dev/null)
+  fi
+  check_recovery
+  sleep 1
+done

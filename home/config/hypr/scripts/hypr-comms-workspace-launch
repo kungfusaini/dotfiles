@@ -2,7 +2,7 @@
 set -euo pipefail
 
 workspace="comms"
-hyprctl dispatch "hl.dsp.focus({ workspace = \"name:${workspace}\" })" >/dev/null 2>&1 || true
+hyprctl dispatch workspace "name:${workspace}" >/dev/null 2>&1 || true
 
 node <<'NODE'
 const { execFileSync, spawn } = require("node:child_process");
@@ -26,8 +26,8 @@ function hypr(args) {
   }
 }
 
-function dispatch(lua) {
-  hypr(["dispatch", lua]);
+function dispatch(...args) {
+  hypr(["dispatch", ...args]);
 }
 
 function sleep(ms) {
@@ -83,21 +83,21 @@ for (let attempt = 0; attempt < 32; attempt++) {
 // Collect existing comms windows if one somehow ended up on another workspace.
 for (const { client } of findApps()) {
   if (client?.address && client.workspace?.name !== workspace) {
-    dispatch(`hl.dsp.focus({ window = "address:${client.address}" })`);
-    dispatch(`hl.dsp.window.move({ workspace = "name:${workspace}" })`);
+    dispatch("focuswindow", `address:${client.address}`);
+    dispatch("movetoworkspacesilent", `name:${workspace}`);
   }
 }
 
-dispatch(`hl.dsp.focus({ workspace = "name:${workspace}" })`);
+dispatch("workspace", `name:${workspace}`);
 sleep(100);
 
 let found = findApps().filter(item => item.client);
 if (found.length === 0) process.exit(0);
 
-// Normal Super+C path: the complete group already exists, so leave it alone.
-// Focusing the workspace is enough; explicitly focusing found[0] would switch
-// the active group tab back to the first comms app every time Super+C is used.
+// Normal Super+C path: preserve the active tab, but keep the group itself
+// tiled so ordinary auxiliary windows can appear beside it instead of behind it.
 if (sameGroup(found) && found.length === apps.length) {
+  dispatch("settiled", `address:${found[0].client.address}`);
   process.exit(0);
 }
 
@@ -109,16 +109,16 @@ let anchor = found
 // If no group exists yet, create one from the first available comms window.
 if (!anchor) {
   anchor = found[0];
-  dispatch(`hl.dsp.focus({ window = "address:${anchor.client.address}" })`);
-  dispatch("hl.dsp.group.toggle()");
+  dispatch("focuswindow", `address:${anchor.client.address}`);
+  dispatch("togglegroup");
   sleep(100);
 }
 
 const anchorAddress = anchor.client.address;
 
 // Unlock deterministically. "disable" means disable the active-group lock.
-dispatch(`hl.dsp.focus({ window = "address:${anchorAddress}" })`);
-dispatch('hl.dsp.group.lock_active({ action = "disable" })');
+dispatch("focuswindow", `address:${anchorAddress}`);
+dispatch("lockactivegroup", "disable");
 
 // Add only windows which are not already members of the existing group.
 found = findApps().filter(item => item.client);
@@ -131,25 +131,27 @@ for (let index = 0; index < found.length; index++) {
   for (let offset = 1; offset <= found.length; offset++) {
     const predecessor = found[(index - offset + found.length) % found.length].client;
     if (groupContains(predecessor.address, anchorAddress)) {
-      dispatch(`hl.dsp.focus({ window = "address:${predecessor.address}" })`);
-      dispatch('hl.dsp.group.lock_active({ action = "disable" })');
+      dispatch("focuswindow", `address:${predecessor.address}`);
+      dispatch("lockactivegroup", "disable");
       break;
     }
   }
 
-  dispatch(`hl.dsp.focus({ window = "address:${address}" })`);
-  for (const direction of ["left", "right", "up", "down"]) {
-    dispatch(`hl.dsp.window.move({ into_group = "${direction}" })`);
+  dispatch("focuswindow", `address:${address}`);
+  for (const direction of ["l", "r", "u", "d"]) {
+    dispatch("moveintogroup", direction);
     sleep(100);
     if (groupContains(address, anchorAddress)) break;
   }
 }
 
-// Lock the completed group and show WhatsApp first.
-dispatch(`hl.dsp.focus({ window = "address:${anchorAddress}" })`);
-dispatch('hl.dsp.group.lock_active({ action = "enable" })');
+// Keep the completed tab group as one tiled layout node. Only its active member
+// is shown; auxiliary windows remain separate tiles beside the group.
+dispatch("focuswindow", `address:${anchorAddress}`);
+dispatch("lockactivegroup", "enable");
+dispatch("settiled", `address:${anchorAddress}`);
 const whatsapp = findApps()[0]?.client;
 if (whatsapp?.address) {
-  dispatch(`hl.dsp.focus({ window = "address:${whatsapp.address}" })`);
+  dispatch("focuswindow", `address:${whatsapp.address}`);
 }
 NODE
