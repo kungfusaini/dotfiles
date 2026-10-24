@@ -114,6 +114,8 @@ class PickerApplication(Adw.Application):
         self.registry = None
         self.session = None
         self.rows = []
+        self.search_mode = False
+        self.pending_g = False
 
     def do_startup(self):
         Adw.Application.do_startup(self)
@@ -124,7 +126,7 @@ class PickerApplication(Adw.Application):
     def do_activate(self):
         if self.window:
             self.window.present()
-            self.search.grab_focus()
+            self.focus_normal_mode()
             return
         try:
             backend.ensure_directory(backend.DATA_ROOT)
@@ -139,7 +141,7 @@ class PickerApplication(Adw.Application):
             return
         self.build_window()
         self.window.present()
-        self.search.grab_focus()
+        self.focus_normal_mode()
 
     def build_window(self):
         self.window = Adw.ApplicationWindow(application=self)
@@ -176,7 +178,7 @@ class PickerApplication(Adw.Application):
         header.append(shortcut)
         page.append(header)
 
-        self.search = Gtk.SearchEntry(placeholder_text="Search projects…")
+        self.search = Gtk.SearchEntry(placeholder_text="Press / to search projects…")
         self.search.add_css_class("search")
         self.search.connect("search-changed", lambda _entry: self.refresh_rows())
         self.search.connect("activate", lambda _entry: self.open_selected())
@@ -191,7 +193,7 @@ class PickerApplication(Adw.Application):
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
         footer.add_css_class("footer")
-        for label in ("↑↓  Navigate", "Enter  Open", "Ctrl N  New project", "Esc  Close"):
+        for label in ("j/k  Navigate", "gg/G  First/last", "/  Search", "Enter  Open", "Ctrl N  New", "Esc  Close"):
             item = Gtk.Label(label=label)
             item.add_css_class("footer-key")
             footer.append(item)
@@ -282,6 +284,20 @@ class PickerApplication(Adw.Application):
         index = max(0, min(len(self.rows) - 1, index + delta))
         self.listbox.select_row(self.rows[index])
 
+    def select_edge(self, last=False):
+        if self.rows:
+            self.listbox.select_row(self.rows[-1 if last else 0])
+
+    def focus_normal_mode(self):
+        self.search_mode = False
+        self.pending_g = False
+        self.listbox.grab_focus()
+
+    def enter_search_mode(self):
+        self.search_mode = True
+        self.pending_g = False
+        self.search.grab_focus()
+
     def open_selected(self):
         row = self.listbox.get_selected_row()
         if not row:
@@ -300,7 +316,7 @@ class PickerApplication(Adw.Application):
 
     def show_list(self):
         self.stack.set_visible_child_name("list")
-        self.search.grab_focus()
+        self.focus_normal_mode()
 
     def choose_directory(self, _button):
         dialog = Gtk.FileDialog(title="Choose main directory")
@@ -329,6 +345,9 @@ class PickerApplication(Adw.Application):
         if keyval == Gdk.KEY_Escape:
             if self.stack.get_visible_child_name() == "create":
                 self.show_list()
+            elif self.search_mode:
+                self.search.set_text("")
+                self.focus_normal_mode()
             else:
                 self.window.close()
             return True
@@ -337,12 +356,39 @@ class PickerApplication(Adw.Application):
             return True
         if self.stack.get_visible_child_name() != "list":
             return False
-        if keyval in (Gdk.KEY_Down, Gdk.KEY_j) and (keyval == Gdk.KEY_Down or control):
+
+        if self.search_mode:
+            if keyval == Gdk.KEY_Down or (control and keyval == Gdk.KEY_j):
+                self.move_selection(1)
+                return True
+            if keyval == Gdk.KEY_Up or (control and keyval == Gdk.KEY_k):
+                self.move_selection(-1)
+                return True
+            return False
+
+        if keyval in (Gdk.KEY_slash, Gdk.KEY_KP_Divide):
+            self.enter_search_mode()
+            return True
+        if keyval in (Gdk.KEY_j, Gdk.KEY_Down):
             self.move_selection(1)
+            self.pending_g = False
             return True
-        if keyval in (Gdk.KEY_Up, Gdk.KEY_k) and (keyval == Gdk.KEY_Up or control):
+        if keyval in (Gdk.KEY_k, Gdk.KEY_Up):
             self.move_selection(-1)
+            self.pending_g = False
             return True
+        if keyval == Gdk.KEY_G:
+            self.select_edge(last=True)
+            self.pending_g = False
+            return True
+        if keyval == Gdk.KEY_g:
+            if self.pending_g:
+                self.select_edge(last=False)
+                self.pending_g = False
+            else:
+                self.pending_g = True
+            return True
+        self.pending_g = False
         return False
 
 
