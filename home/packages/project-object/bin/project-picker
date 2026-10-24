@@ -188,6 +188,10 @@ class PickerApplication(Adw.Application):
         self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE, activate_on_single_click=False)
         self.listbox.add_css_class("project-list")
         self.listbox.connect("row-activated", lambda _box, _row: self.open_selected())
+        vim_keys = Gtk.EventControllerKey()
+        vim_keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        vim_keys.connect("key-pressed", self.on_normal_key_pressed)
+        self.listbox.add_controller(vim_keys)
         scroll.set_child(self.listbox)
         page.append(scroll)
 
@@ -340,6 +344,34 @@ class PickerApplication(Adw.Application):
             return
         self.window.close()
 
+    def on_normal_key_pressed(self, _controller, keyval, _keycode, _state):
+        if self.search_mode or self.stack.get_visible_child_name() != "list":
+            return False
+        if keyval in (Gdk.KEY_slash, Gdk.KEY_KP_Divide):
+            self.enter_search_mode()
+            return True
+        if keyval in (Gdk.KEY_j, Gdk.KEY_Down):
+            self.move_selection(1)
+            self.pending_g = False
+            return True
+        if keyval in (Gdk.KEY_k, Gdk.KEY_Up):
+            self.move_selection(-1)
+            self.pending_g = False
+            return True
+        if keyval == Gdk.KEY_G:
+            self.select_edge(last=True)
+            self.pending_g = False
+            return True
+        if keyval == Gdk.KEY_g:
+            if self.pending_g:
+                self.select_edge(last=False)
+                self.pending_g = False
+            else:
+                self.pending_g = True
+            return True
+        self.pending_g = False
+        return False
+
     def on_key_pressed(self, _controller, keyval, _keycode, state):
         control = bool(state & Gdk.ModifierType.CONTROL_MASK)
         if keyval == Gdk.KEY_Escape:
@@ -366,29 +398,6 @@ class PickerApplication(Adw.Application):
                 return True
             return False
 
-        if keyval in (Gdk.KEY_slash, Gdk.KEY_KP_Divide):
-            self.enter_search_mode()
-            return True
-        if keyval in (Gdk.KEY_j, Gdk.KEY_Down):
-            self.move_selection(1)
-            self.pending_g = False
-            return True
-        if keyval in (Gdk.KEY_k, Gdk.KEY_Up):
-            self.move_selection(-1)
-            self.pending_g = False
-            return True
-        if keyval == Gdk.KEY_G:
-            self.select_edge(last=True)
-            self.pending_g = False
-            return True
-        if keyval == Gdk.KEY_g:
-            if self.pending_g:
-                self.select_edge(last=False)
-                self.pending_g = False
-            else:
-                self.pending_g = True
-            return True
-        self.pending_g = False
         return False
 
 
