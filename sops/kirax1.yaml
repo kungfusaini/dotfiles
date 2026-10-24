@@ -1,0 +1,17 @@
+restic-kirax1-password: ENC[AES256_GCM,data:Y1NzfjUhsz58Ak1LszBbUYHseyKkOGQckQOicIH2FJEXsYDiJNzN7ErBGy4pftooScs572glVdoeIli7VskYxg==,iv:NeubQ0KXdE4yElFoyeLXTTTO1t0TcrFsyPj96pByUko=,tag:GZQsonbfSCTUC27yDNRJjg==,type:str]
+nanogpt-api-key: ENC[AES256_GCM,data:iLjJ195y3msC1YIVetSbxVxjyVc4yGhiVj2yjJcw2SAm5lRRH61pQC7NqgE=,iv:x9LSGWnBtRqOkjpW0+P6ktwlDl1VaTEonHOQtLQvsDI=,tag:kNmNTmhviSabAE3nQaSyVw==,type:str]
+sops:
+    age:
+        - enc: |
+            -----BEGIN AGE ENCRYPTED FILE-----
+            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSBsY3B6Z0dmNHFxWFBRbm9x
+            cnl5ZWZSaGc0YVR2N0MweXJ2bmtVQlVKeDA0CkM0RDkwVnUyR0JXdlMzZmIzUFly
+            djA5YU90dzVtamR0eUZkdFNPUDRXYk0KLS0tIE9lZVJuMGhFWjgyWDRqMXJHbFp6
+            RWRqY2ZoZGYyMitob2w3ajRmaXVyRUEKtJOt5qXobEsDKBkGI6+vHvTrVoe3i/wC
+            55VyjsilEPsYDXfIA/0N+KBZNtXUrMdv9Id9xwicSrX7GiUeyMaDjQ==
+            -----END AGE ENCRYPTED FILE-----
+          recipient: age190fs689ltwz2dl5fc27u0hcm0a8hf9ypxmayazjx0tjyecd9ufaq6xqfvm
+    lastmodified: "2026-10-24T11:01:39Z"
+    mac: ENC[AES256_GCM,data:VpxInrHPPL/2LfOWfT7ac6J1BoRUS5Nc86+i26GEymtvSUXVB6J5FrUEgyjT1LhmOINjZigZZ2bn0P+EHIQy0ABW1DJJAdYvoAnUWZEd2MDVBXGDPpLAZrFhNEMFM+Q0CrcooTL7ze0gfEiEsy47HXig/dKYtVsrUCfvng2wOMI=,iv:rlGy6OaGm7l3bRc+K8ncrICNxgEtBVVtZaj6mIE4yQQ=,tag:6ZFWj6iMnC9XWq7xPJbAJA==,type:str]
+    unencrypted_suffix: _unencrypted
+    version: 3.13.3

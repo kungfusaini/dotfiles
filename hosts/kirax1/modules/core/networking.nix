@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ pkgs, unstable, ... }:
 
 let
   captivePortalWatcher = pkgs.writeShellApplication {
@@ -57,10 +57,11 @@ let
   };
 in
 {
-  networking.hostName = "nixos";
+  networking.hostName = "kirax1";
 
   networking.networkmanager = {
     enable = true;
+    dns = "systemd-resolved";
     settings.connectivity = {
       enabled = true;
       uri = "http://nmcheck.gnome.org/check_network_status.txt";
@@ -68,6 +69,16 @@ in
       interval = 30;
     };
   };
+
+  services.resolved.enable = true;
+
+  services.nordvpn = {
+    enable = true;
+    package = unstable.nordvpn;
+  };
+
+  # Required for VPN traffic when the firewall is enabled.
+  networking.firewall.checkReversePath = "loose";
 
   services.tailscale.enable = true;
 

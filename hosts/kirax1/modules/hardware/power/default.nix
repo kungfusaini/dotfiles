@@ -8,6 +8,7 @@ let
     #include <errno.h>
     #include <fcntl.h>
     #include <glob.h>
+    #include <limits.h>
     #include <poll.h>
     #include <signal.h>
     #include <stdio.h>
@@ -16,13 +17,8 @@ let
     #include <sys/types.h>
     #include <unistd.h>
 
-    static const char *profile_paths[] = {
-      "/sys/firmware/acpi/platform_profile",
-      "/sys/class/platform-profile/platform-profile-0/profile",
-      "/sys/class/platform-profile/platform-profile-1/profile",
-      "/sys/class/platform-profile/platform-profile-2/profile",
-      "/sys/class/platform-profile/platform-profile-3/profile",
-    };
+    static char thinkpad_profile[PATH_MAX];
+    static char soc_profile[PATH_MAX];
 
     static void trim(char *s) {
       size_t len = strlen(s);
@@ -43,11 +39,35 @@ let
       return 0;
     }
 
-    static int read_profile(char *profile, size_t len) {
-      for (size_t i = 0; i < sizeof(profile_paths) / sizeof(profile_paths[0]); i++) {
-        if (read_file(profile_paths[i], profile, len) == 0) return 0;
+    static int discover_profiles(void) {
+      glob_t profiles;
+      if (glob("/sys/class/platform-profile/platform-profile-*", 0, NULL, &profiles) != 0) {
+        return -1;
       }
-      return -1;
+
+      for (size_t i = 0; i < profiles.gl_pathc; i++) {
+        char name_path[PATH_MAX];
+        char name[128];
+        snprintf(name_path, sizeof(name_path), "%s/name", profiles.gl_pathv[i]);
+        if (read_file(name_path, name, sizeof(name)) != 0) continue;
+
+        if (strcmp(name, "thinkpad-acpi-profile") == 0) {
+          snprintf(thinkpad_profile, sizeof(thinkpad_profile), "%s/profile", profiles.gl_pathv[i]);
+        } else if (strcmp(name, "SoC Power Slider") == 0) {
+          snprintf(soc_profile, sizeof(soc_profile), "%s/profile", profiles.gl_pathv[i]);
+        }
+      }
+
+      globfree(&profiles);
+      return thinkpad_profile[0] == '\0' ? -1 : 0;
+    }
+
+    static int write_profile(const char *path, const char *profile) {
+      int fd = open(path, O_WRONLY | O_CLOEXEC);
+      if (fd < 0) return -1;
+      int rc = dprintf(fd, "%s\n", profile) < 0 ? -1 : 0;
+      close(fd);
+      return rc;
     }
 
     static void signal_waybar(void) {
@@ -76,8 +96,8 @@ let
 
     static void apply_profile(void) {
       char profile[64];
-      if (read_profile(profile, sizeof(profile)) != 0) {
-        fprintf(stderr, "No platform profile support found; nothing to sync.\n");
+      if (read_file(thinkpad_profile, profile, sizeof(profile)) != 0) {
+        fprintf(stderr, "Could not read the ThinkPad platform profile.\n");
         return;
       }
 
@@ -89,8 +109,17 @@ let
       } else if (strcmp(profile, "performance") == 0) {
         epp = "performance";
       } else {
-        fprintf(stderr, "Unknown platform profile: %s\n", profile);
+        fprintf(stderr, "Unknown ThinkPad platform profile: %s\n", profile);
         return;
+      }
+
+      if (soc_profile[0] != '\0') {
+        char current[64];
+        if (read_file(soc_profile, current, sizeof(current)) == 0 && strcmp(current, profile) != 0) {
+          if (write_profile(soc_profile, profile) != 0) {
+            fprintf(stderr, "Could not sync SoC Power Slider to %s: %s\n", profile, strerror(errno));
+          }
+        }
       }
 
       glob_t globbuf;
@@ -109,10 +138,17 @@ let
     }
 
     int main(void) {
-      struct pollfd fds[sizeof(profile_paths) / sizeof(profile_paths[0])];
+      if (discover_profiles() != 0) {
+        fprintf(stderr, "The thinkpad-acpi platform profile provider was not found.\n");
+        return 1;
+      }
+
+      const char *profile_paths[] = { thinkpad_profile, soc_profile };
+      struct pollfd fds[2];
       nfds_t nfds = 0;
 
       for (size_t i = 0; i < sizeof(profile_paths) / sizeof(profile_paths[0]); i++) {
+        if (profile_paths[i][0] == '\0') continue;
         int fd = open(profile_paths[i], O_RDONLY | O_CLOEXEC);
         if (fd < 0) continue;
 
@@ -127,7 +163,7 @@ let
 
       if (nfds == 0) {
         fprintf(stderr, "No platform profile files available to watch.\n");
-        return 0;
+        return 1;
       }
 
       apply_profile();
@@ -158,7 +194,7 @@ let
 
   syncProgram = pkgs.stdenv.mkDerivation {
     pname = "sync-lenovo-platform-profile-epp";
-    version = "1.0";
+    version = "2.0";
     src = syncSource;
     dontUnpack = true;
     installPhase = ''
@@ -173,11 +209,20 @@ let
     text = ''
       set -euo pipefail
 
-      profile_file=/sys/firmware/acpi/platform_profile
-      choices_file=/sys/firmware/acpi/platform_profile_choices
+      profile_file=""
+      choices_file=""
       state_file=/run/lenovo-platform-profile-before-ac
 
-      if [[ ! -w "$profile_file" ]]; then
+      for provider in /sys/class/platform-profile/platform-profile-*; do
+        [[ -r "$provider/name" ]] || continue
+        if [[ "$(<"$provider/name")" == "thinkpad-acpi-profile" ]]; then
+          profile_file="$provider/profile"
+          choices_file="$provider/choices"
+          break
+        fi
+      done
+
+      if [[ -z "$profile_file" || ! -w "$profile_file" ]]; then
         exit 0
       fi
 
@@ -230,20 +275,21 @@ let
   };
 in
 {
-  # The Lenovo/Firmware platform profile is the source of truth. The ThinkPad
-  # power-mode button cycles /sys/firmware/acpi/platform_profile through:
-  # low-power, balanced, performance.
+  # The thinkpad-acpi profile is the source of truth because the ThinkPad
+  # power-mode button changes that provider. Keep the separate Intel SoC Power
+  # Slider provider aligned so the kernel's aggregate profile never becomes
+  # "custom".
   #
-  # Keep Intel's Energy Performance Preference aligned with that hardware mode:
+  # Also keep Intel's Energy Performance Preference aligned with that mode:
   #   low-power   -> power
   #   balanced    -> balance_performance
   #   performance -> performance
   #
-  # This is event-driven: the daemon blocks in poll(2) on the kernel platform
-  # profile sysfs attributes and only wakes when the platform profile changes.
-  # It also signals Waybar's custom/platform-profile module immediately.
+  # This is event-driven: the daemon blocks in poll(2) on both provider profile
+  # attributes, reasserts the ThinkPad profile if either changes, and signals
+  # Waybar's custom/platform-profile module immediately.
   systemd.services.lenovo-platform-profile-epp-sync = {
-    description = "Sync Intel EPP from Lenovo platform profile";
+    description = "Sync Intel platform profile and EPP from ThinkPad profile";
     wantedBy = [ "multi-user.target" ];
     after = [ "multi-user.target" ];
     serviceConfig = {

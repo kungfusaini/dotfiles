@@ -15,12 +15,17 @@
     ./modules/desktop/apps.nix
     ./modules/desktop/audio.nix
     ./modules/desktop/hyprland.nix
+    ./modules/desktop/spicetify.nix
     ./modules/desktop/vivaldi.nix
 
     ./modules/programs/mewtion.nix
+    ./modules/services/backup.nix
+    ./modules/services/pi-secrets.nix
 
+    ./modules/hardware/headless-mode.nix
+    ./modules/hardware/input.nix
     ./modules/hardware/peripherals.nix
-    ./modules/hardware/power-profile-sync.nix
+    ./modules/hardware/power
 
     ./modules/users/sumeet.nix
     ./modules/users/xdg-compliance.nix

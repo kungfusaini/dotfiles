@@ -99,7 +99,13 @@ daemon() {
   while true; do
     tablet=$(tr -d '[:space:]' < "$TABLET_FILE" 2>/dev/null || echo 0)
 
-    if [[ "$tablet" == "1" ]]; then
+    # Folding for headless use can still set thinkpad_acpi's tablet flag.
+    # Suppress only the OSK; the keyboard and all base pointing devices stay on.
+    if [[ -r /run/headless-mode/state ]] &&
+       [[ $(</run/headless-mode/state) == primed || $(</run/headless-mode/state) == active ]]; then
+      stop_osk
+      last="headless"
+    elif [[ "$tablet" == "1" ]]; then
       if [[ -e "$DISABLED_FILE" ]]; then
         [[ "$last" == "disabled" ]] || echo "tablet-osk: tablet mode on; OSK manually hidden"
         stop_osk

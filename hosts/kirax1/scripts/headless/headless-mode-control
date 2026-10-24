@@ -1,0 +1,238 @@
+set -euo pipefail
+
+state_dir=/run/headless-mode
+state_file=$state_dir/state
+input_state=$state_dir/input-state
+mkdir -p "$state_dir"
+chmod 0755 "$state_dir"
+
+# The folded laptop base is the user's keyboard and pointing device. Never
+# inhibit its keys, TrackPoint, touchpad, or buttons.
+matches_tablet_device() {
+  case "$1" in
+    'Wacom HID 5430 Pen'|'Wacom HID 5430 Finger') return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+set_inhibition() {
+  local scope=${1:?} value=${2:?} device name
+  for device in /sys/class/input/input*; do
+    [[ -w "$device/inhibited" && -r "$device/name" ]] || continue
+    name=$(<"$device/name")
+    if [[ $scope == all ]] && matches_tablet_device "$name"; then
+      printf '%s' "$value" > "$device/inhibited"
+    fi
+  done
+}
+
+save_input_state() {
+  : > "$input_state"
+  local device name value
+  for device in /sys/class/input/input*; do
+    [[ -w "$device/inhibited" && -r "$device/name" ]] || continue
+    name=$(<"$device/name")
+    if matches_tablet_device "$name"; then
+      value=$(<"$device/inhibited")
+      printf '%s\t%s\n' "$name" "$value" >> "$input_state"
+    fi
+  done
+}
+
+restore_input_state() {
+  local device name saved_name saved_value restored=0
+  for device in /sys/class/input/input*; do
+    [[ -w "$device/inhibited" && -r "$device/name" ]] || continue
+    name=$(<"$device/name")
+    if matches_tablet_device "$name"; then
+      saved_value=0
+      if [[ -r "$input_state" ]]; then
+        while IFS=$'\t' read -r saved_name value; do
+          if [[ $saved_name == "$name" ]]; then
+            saved_value=$value
+            break
+          fi
+        done < "$input_state"
+      fi
+      printf '%s' "$saved_value" > "$device/inhibited"
+      restored=1
+    fi
+  done
+  return $((! restored))
+}
+
+hinge_present() {
+  grep -qlx hinge /sys/bus/iio/devices/iio:device*/name 2>/dev/null
+}
+
+hinge_readable() {
+  local d
+  for d in /sys/bus/iio/devices/iio:device*; do
+    if [[ -r "$d/name" && $(<"$d/name") == hinge ]]; then
+      timeout 2 cat "$d/in_angl0_raw" >/dev/null 2>&1 && return 0
+    fi
+  done
+  return 1
+}
+
+# The Intel custom-sensor probe can run before ISH is ready to answer feature
+# requests. It then binds the generic driver without creating the hinge child.
+# Find that *one* generic collection by its live feature reports; instance
+# numbers (.14.auto etc.) are not stable across boots or re-enumeration.
+find_hinge_collection() {
+  timeout 3 python3 - <<'PY'
+import glob
+import os
+import sys
+
+
+def feature_string(path):
+    with open(path) as f:
+        return ''.join(chr(int(n)) for n in f.read().split() if 0 < int(n) < 128)
+
+matches = []
+for path in glob.glob('/sys/bus/platform/devices/HID-SENSOR-2000e1.*'):
+    resolved = os.path.realpath(path)
+    if not resolved.startswith('/sys/devices/pci0000:00/0000:00:12.0/') or '/001F:8087:0AC2.' not in resolved:
+        continue
+    serial = path + '/feature-7-200307/feature-7-200307-value'
+    maker = path + '/feature-9-200305/feature-9-200305-value'
+    if not os.path.isfile(serial) or not os.path.isfile(maker):
+        continue
+    try:
+        if feature_string(serial) == 'LUID:020B000000000000' and feature_string(maker) == 'INTEL':
+            if os.path.realpath(path + '/driver') != '/sys/bus/platform/drivers/hid_sensor_custom':
+                sys.exit('Intel hinge collection has an unexpected driver')
+            matches.append(os.path.basename(path))
+    except OSError:
+        continue
+if len(matches) != 1:
+    sys.exit(f'Expected one Intel hinge collection; found {len(matches)}')
+print(matches[0])
+PY
+}
+
+recover_hinge() {
+  local device="" driver=/sys/bus/platform/drivers/hid_sensor_custom attempt
+  for attempt in {1..6}; do
+    device=$(find_hinge_collection 2>/dev/null) && break
+    sleep 0.3
+  done
+  [[ -n "$device" ]] || { echo 'Intel hinge collection was not found' >&2; return 1; }
+  echo "Reprobing Intel hinge collection $device" >&2
+  printf '%s' "$device" > "$driver/unbind" || return 1
+  if ! printf '%s' "$device" > "$driver/bind"; then
+    # Never leave the collection unbound if the first rebind failed.
+    printf '%s' "$device" > "$driver/bind" || true
+    return 1
+  fi
+  for attempt in {1..30}; do
+    hinge_present && return 0
+    sleep 0.1
+  done
+  return 1
+}
+
+restore_modules() {
+  local attempt hubs=() d
+  modprobe intel_ish_ipc || return 1
+  # Firmware enumeration is asynchronous. A first HID insertion can return
+  # ENODEV even though the HID clients appear a few seconds later.
+  for ((attempt = 0; attempt < 50; attempt++)); do
+    modprobe intel_ishtp_hid >/dev/null 2>&1 || true
+    hubs=()
+    for d in /sys/bus/hid/devices/001F:8087:0AC2.*; do
+      [[ -e "$d" && -L "$d/driver" ]] && hubs+=("$d")
+    done
+    ((${#hubs[@]} == 2)) && break
+    sleep 0.2
+  done
+  if ((${#hubs[@]} != 2)); then
+    echo 'ISH HID devices did not enumerate after firmware reload' >&2
+    return 1
+  fi
+  udevadm settle --timeout=5 || true
+  if ! hinge_present; then
+    recover_hinge || {
+      echo 'Intel hinge did not return after its scoped collection re-probe' >&2
+      return 1
+    }
+  fi
+  hinge_readable || { echo 'Hinge registered but angle readings failed' >&2; return 1; }
+}
+
+case "${1:-}" in
+  prime)
+    if [[ -r "$state_file" && $(<"$state_file") != off ]]; then
+      echo "Headless mode is already primed or active" >&2
+      exit 1
+    fi
+    if ! hinge_readable; then
+      echo "Hinge sensor is unavailable; refusing to prime until ISH recovers" >&2
+      exit 1
+    fi
+    save_input_state
+    echo priming > "$state_file"
+    # Remove the hinge-driven hardware keyboard lock before folding, without
+    # filtering the keyboard or any base input during the countdown.
+    if ! modprobe -r intel_ishtp_hid intel_ish_ipc; then
+      restore_input_state || true
+      if restore_modules; then echo off > "$state_file"; else echo restore-failed > "$state_file"; fi
+      exit 1
+    fi
+    echo primed > "$state_file"
+    ;;
+
+  deploy)
+    [[ -r "$state_file" && $(<"$state_file") == primed ]] || {
+      echo "Headless mode is not primed" >&2
+      exit 1
+    }
+    set_inhibition all 1
+    echo active > "$state_file"
+    ;;
+
+  begin-restore)
+    # Stop the emergency watcher probing DRM while the user's compositor
+    # brings the laptop panel back. This step never waits for ISH firmware.
+    echo restoring > "$state_file"
+    restore_input_state || true
+    ;;
+
+  restore)
+    # Mark cancellation immediately, before module reload can take several
+    # seconds. The countdown worker must never deploy during restoration.
+    echo restoring > "$state_file"
+    restore_input_state || true
+    if restore_modules; then
+      echo off > "$state_file"
+      rm -f "$input_state"
+    else
+      echo restore-failed > "$state_file"
+      exit 1
+    fi
+    ;;
+
+  probe-external)
+    # A USB-C sink can vanish while DRM/Hyprland still claim DP-1 is present.
+    # Probing the fixed set of external connectors is the only reliable way
+    # we've found to refresh that stale kernel state without a driver reset.
+    [[ -r "$state_file" && $(<"$state_file") == active ]] || exit 1
+    found=0
+    for connector in /sys/class/drm/card*-DP-*/status /sys/class/drm/card*-HDMI-*/status; do
+      [[ -w "$connector" ]] || continue
+      printf 'detect' > "$connector" || exit 1
+      if [[ $(<"$connector") == connected ]]; then found=1; fi
+    done
+    (( found == 1 ))
+    ;;
+
+  status)
+    if [[ -r "$state_file" ]]; then cat "$state_file"; else echo off; fi
+    ;;
+
+  *)
+    echo "usage: headless-mode-control {prime|deploy|begin-restore|restore|probe-external|status}" >&2
+    exit 2
+    ;;
+esac

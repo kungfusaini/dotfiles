@@ -1,0 +1,8 @@
+keys:
+  - &kirax1 age190fs689ltwz2dl5fc27u0hcm0a8hf9ypxmayazjx0tjyecd9ufaq6xqfvm
+
+creation_rules:
+  - path_regex: sops/kirax1\.yaml$
+    key_groups:
+      - age:
+          - *kirax1
