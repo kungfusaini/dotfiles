@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from project_object import (  # noqa: E402
+    RegistryError,
+    ensure_private_directory,
+    find_project,
+    project_home,
+    project_session_directory,
+    read_registry,
+)
+
+HOME = Path.home()
+DATA_ROOT = Path(os.environ.get("PROJECT_OBJECT_DATA_DIR", Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "project-object"))
+STATE_ROOT = Path(os.environ.get("PROJECT_OBJECT_STATE_DIR", Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "project-object"))
+REGISTRY_PATH = DATA_ROOT / "projects.json"
+KITTY = os.environ.get("PROJECT_PICKER_KITTY", "kitty")
+HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
+
+
+def active_workspace_name():
+    result = subprocess.run([HYPRCTL, "activeworkspace", "-j"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
+    if result.returncode != 0:
+        return None
+    try:
+        return str(json.loads(result.stdout).get("name", ""))
+    except json.JSONDecodeError:
+        return None
+
+
+def resolve_project(project_id):
+    try:
+        registry, _changed = read_registry(REGISTRY_PATH, DATA_ROOT)
+        return find_project(registry, project_id=project_id) if project_id else find_project(registry, workspace=active_workspace_name())
+    except RegistryError as error:
+        if project_id:
+            raise
+        print(f"project-terminal: ignoring invalid registry: {error}", file=sys.stderr)
+        return None
+
+
+def has_directory_argument(arguments):
+    return any(argument in ("-d", "--directory", "--working-directory") or argument.startswith("--directory=") or argument.startswith("--working-directory=") for argument in arguments)
+
+
+def main():
+    arguments = sys.argv[1:]
+    requested_project_id = None
+    if arguments and arguments[0] == "--project-id":
+        if len(arguments) < 2:
+            raise SystemExit("project-terminal: --project-id requires a UUID")
+        requested_project_id = arguments[1]
+        arguments = arguments[2:]
+
+    try:
+        project = resolve_project(requested_project_id)
+    except RegistryError as error:
+        raise SystemExit(f"project-terminal: {error}") from error
+    if requested_project_id and not project:
+        raise SystemExit(f"project-terminal: active project not found: {requested_project_id}")
+
+    environment = os.environ.copy()
+    kitty_arguments = [KITTY]
+
+    if project:
+        project_id = project["id"]
+        home = project_home(DATA_ROOT, project_id)
+        session_directory = project_session_directory(STATE_ROOT, project_id)
+        for directory in (
+            DATA_ROOT,
+            DATA_ROOT / "projects",
+            home,
+            STATE_ROOT,
+            STATE_ROOT / "projects",
+            STATE_ROOT / "projects" / project_id,
+            session_directory,
+        ):
+            ensure_private_directory(directory)
+
+        environment.update({
+            "PROJECT_OBJECT_ID": project_id,
+            "PROJECT_OBJECT_NAME": project["name"],
+            "PROJECT_OBJECT_HOME": str(home),
+            "PROJECT_OBJECT_MAIN_DIRECTORY": project["mainDirectory"],
+            "PI_CODING_AGENT_SESSION_DIR": str(session_directory),
+        })
+        if not has_directory_argument(arguments):
+            kitty_arguments.extend(["--directory", project["mainDirectory"]])
+
+    kitty_arguments.extend(arguments)
+    os.execvpe(KITTY, kitty_arguments, environment)
+
+
+if __name__ == "__main__":
+    main()

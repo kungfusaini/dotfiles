@@ -1,0 +1,633 @@
+#!/usr/bin/env python3
+
+import curses
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import time
+import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from project_object import (  # noqa: E402
+    RegistryError,
+    ensure_private_directory,
+    ensure_private_file,
+    project_home as canonical_project_home,
+    read_registry,
+    validate_project_name,
+    write_json_atomic,
+)
+
+APP_NAME = "Project picker"
+HOME = Path.home()
+DATA_ROOT = Path(os.environ.get("PROJECT_OBJECT_DATA_DIR", Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "project-object"))
+RUNTIME_ROOT = Path(os.environ.get("PROJECT_OBJECT_RUNTIME_DIR", Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/project-object-{os.getuid()}")) / "project-object"))
+REGISTRY_PATH = DATA_ROOT / "projects.json"
+SESSION_PATH = RUNTIME_ROOT / "session.json"
+LOCK_PATH = RUNTIME_ROOT / "picker.lock"
+HYPRLAND_INSTANCE = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE", "unknown")
+SCRIPT_PATH = Path(__file__).resolve()
+
+HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
+KITTY = os.environ.get("PROJECT_PICKER_KITTY", "kitty")
+NOTIFY = os.environ.get("PROJECT_PICKER_NOTIFY", "notify-send")
+PROJECT_TERMINAL = os.environ.get("PROJECT_OBJECT_TERMINAL", str(SCRIPT_PATH.with_name("project-terminal")))
+
+def notify_error(message):
+    subprocess.run([NOTIFY, APP_NAME, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def ensure_directory(directory):
+    ensure_private_directory(directory)
+
+
+def read_json(file, fallback):
+    if not file.exists():
+        return fallback
+    try:
+        return json.loads(file.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"Cannot read {file}: {error}") from error
+
+
+def project_home(project):
+    return canonical_project_home(DATA_ROOT, project["id"])
+
+
+def initialize_project_home(project, home=None):
+    home = home or project_home(project)
+    ensure_directory(home)
+    ensure_directory(home / "plans")
+    ensure_directory(home / "worklogs")
+
+    files = {
+        "AGENTS.md": f"""# Project agent guide
+
+You are working within the **{project['name']}** project object.
+
+- Project home: `{home}`
+- Main working directory: `{project['mainDirectory']}`
+
+Project-owned artifacts:
+
+- `CONTEXT.md` — project background, goals, and constraints.
+- `NOTES.md` — durable informal notes.
+- `TODO.md` — project-level tasks and next actions.
+- `plans/` — detailed plans.
+- `worklogs/` — durable records of work, decisions, blockers, and outcomes.
+
+These artifacts may be sparse or empty. Inspect the relevant files when useful rather than assuming they contain information. Keep project-level material in the project home unless the user explicitly asks for it to live in a repository.
+
+Repository-local `AGENTS.md` files govern repository-specific build, testing, and implementation rules. This project guide governs project-wide context and artifacts.
+""",
+        "CONTEXT.md": "# Context\n",
+        "NOTES.md": "# Notes\n",
+        "TODO.md": "# Todo\n",
+    }
+    for name, content in files.items():
+        target = home / name
+        if not target.exists():
+            target.write_text(content)
+        ensure_private_file(target)
+
+
+
+def load_registry():
+    registry, changed = read_registry(REGISTRY_PATH, DATA_ROOT)
+    for project in registry["projects"]:
+        initialize_project_home(project)
+    if changed:
+        write_json_atomic(REGISTRY_PATH, registry)
+    return registry
+
+
+def load_session():
+    empty = {"version": 1, "hyprlandInstance": HYPRLAND_INSTANCE, "openProjectIds": []}
+    session = read_json(SESSION_PATH, empty)
+    if (
+        session.get("version") != 1
+        or session.get("hyprlandInstance") != HYPRLAND_INSTANCE
+        or not isinstance(session.get("openProjectIds"), list)
+    ):
+        return empty
+    return session
+
+
+def acquire_lock():
+    ensure_directory(RUNTIME_ROOT)
+    for _ in range(2):
+        try:
+            LOCK_PATH.mkdir(mode=0o700)
+            pid_file = LOCK_PATH / "pid"
+            pid_file.write_text(f"{os.getpid()}\n")
+            pid_file.chmod(0o600)
+            return True
+        except FileExistsError:
+            active = True
+            try:
+                pid = int((LOCK_PATH / "pid").read_text().strip())
+                os.kill(pid, 0)
+            except (OSError, ValueError):
+                active = False
+            if active:
+                return False
+            for child in LOCK_PATH.iterdir():
+                child.unlink(missing_ok=True)
+            LOCK_PATH.rmdir()
+    return False
+
+
+def release_lock():
+    if not LOCK_PATH.exists():
+        return
+    for child in LOCK_PATH.iterdir():
+        child.unlink(missing_ok=True)
+    LOCK_PATH.rmdir()
+
+
+def run(command):
+    return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
+
+
+def hypr_json(subject):
+    result = run([HYPRCTL, subject, "-j"])
+    if result.returncode != 0:
+        raise RuntimeError(f"hyprctl {subject} failed")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError(f"hyprctl {subject} returned invalid JSON") from error
+
+
+def active_workspace_name():
+    return str(hypr_json("activeworkspace").get("name", ""))
+
+
+def workspace_name(project):
+    return project["name"]
+
+
+def live_workspace_exists(name):
+    workspaces = hypr_json("workspaces")
+    return any(str(workspace.get("name", "")) == name for workspace in workspaces)
+
+
+def normalized_name(name):
+    return name.strip().casefold()
+
+
+def validate_name(name, projects):
+    trimmed = name.strip()
+    try:
+        validate_project_name(trimmed)
+    except RegistryError as error:
+        raise ValueError(str(error)) from error
+    if any(normalized_name(project["name"]) == normalized_name(trimmed) for project in projects):
+        raise ValueError(f"A project named ‘{trimmed}’ already exists")
+    return trimmed
+
+
+def validate_directory(value):
+    directory = Path(value).expanduser()
+    if not directory.is_absolute():
+        raise ValueError("The main directory must be an absolute path")
+    if not directory.exists():
+        raise ValueError(f"Directory does not exist: {directory}")
+    if not directory.is_dir():
+        raise ValueError(f"Not a directory: {directory}")
+    return str(directory.resolve())
+
+
+def focus_existing_picker():
+    try:
+        clients = hypr_json("clients")
+    except RuntimeError:
+        return False
+    for client in clients:
+        classes = (str(client.get("class", "")), str(client.get("initialClass", "")))
+        if "project-picker" in classes and client.get("address"):
+            run([HYPRCTL, "dispatch", "focuswindow", f"address:{client['address']}"])
+            return True
+    return False
+
+
+def launch_tui():
+    if focus_existing_picker():
+        return
+    command = [
+        KITTY,
+        "--class", "project-picker",
+        "--title", "Projects",
+        "-e", str(SCRIPT_PATH), "--tui",
+    ]
+    subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def enter_project(project, session, launch_terminal):
+    name = workspace_name(project)
+    if launch_terminal and live_workspace_exists(name):
+        raise RuntimeError(f"A live Hyprland workspace named ‘{name}’ already exists")
+
+    previous_workspace = active_workspace_name()
+    previous_ids = list(session["openProjectIds"])
+    if project["id"] not in session["openProjectIds"]:
+        session["openProjectIds"].append(project["id"])
+    write_json_atomic(SESSION_PATH, session)
+
+    result = run([HYPRCTL, "dispatch", "workspace", f"name:{name}"])
+    if result.returncode != 0:
+        session["openProjectIds"] = previous_ids
+        write_json_atomic(SESSION_PATH, session)
+        raise RuntimeError(f"Could not enter project workspace for {project['name']}")
+
+    if launch_terminal:
+        try:
+            subprocess.Popen(
+                [PROJECT_TERMINAL, "--project-id", project["id"]],
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError:
+            session["openProjectIds"] = previous_ids
+            write_json_atomic(SESSION_PATH, session)
+            if previous_workspace:
+                run([HYPRCTL, "dispatch", "workspace", f"name:{previous_workspace}"])
+            raise
+
+
+def add_text(screen, y, x, text, style=0):
+    height, width = screen.getmaxyx()
+    if y < 0 or y >= height or x >= width:
+        return
+    available = max(0, width - x - 1)
+    try:
+        screen.addstr(y, x, str(text)[:available], style)
+    except curses.error:
+        pass
+
+
+def draw_box(screen, top, left, bottom, right, style=0):
+    if bottom <= top or right <= left:
+        return
+    add_text(screen, top, left, "┌" + "─" * max(0, right - left - 1) + "┐", style)
+    for y in range(top + 1, bottom):
+        add_text(screen, y, left, "│", style)
+        add_text(screen, y, right, "│", style)
+    add_text(screen, bottom, left, "└" + "─" * max(0, right - left - 1) + "┘", style)
+
+
+class PickerUI:
+    def __init__(self, screen, registry, session):
+        self.screen = screen
+        self.registry = registry
+        self.session = session
+        self.current_workspace = active_workspace_name()
+        self.open_ids = set(session["openProjectIds"])
+        self.mode = "list"
+        self.query = ""
+        self.selected = 0
+        self.create_focus = 0
+        self.create_name = ""
+        self.create_directory = ""
+        self.browse_directory = HOME
+        self.directory_query = ""
+        self.directory_selected = 0
+        self.message = ""
+        self.result = None
+
+    def projects(self):
+        rank = {"current": 0, "open": 1, "closed": 2}
+        items = []
+        for project in self.registry["projects"]:
+            if project.get("archivedAt"):
+                continue
+            if self.query.casefold() not in project["name"].casefold():
+                continue
+            state = "current" if workspace_name(project) == self.current_workspace else "open" if project["id"] in self.open_ids else "closed"
+            items.append((project, state))
+        return sorted(items, key=lambda item: (rank[item[1]], item[0]["name"].casefold()))
+
+    def setup_colors(self):
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_CYAN, -1)
+        curses.init_pair(2, curses.COLOR_BLACK, curses.COLOR_CYAN)
+        curses.init_pair(3, curses.COLOR_GREEN, -1)
+        curses.init_pair(4, curses.COLOR_YELLOW, -1)
+        curses.init_pair(5, curses.COLOR_RED, -1)
+        curses.curs_set(0)
+        self.screen.keypad(True)
+
+    def run(self):
+        self.setup_colors()
+        while self.result is None:
+            if self.mode == "list":
+                self.draw_list()
+            elif self.mode == "create":
+                self.draw_create()
+            else:
+                self.draw_directory_browser()
+            try:
+                key = self.screen.get_wch()
+            except curses.error:
+                continue
+            if self.mode == "list":
+                self.handle_list_key(key)
+            elif self.mode == "create":
+                self.handle_create_key(key)
+            else:
+                self.handle_directory_key(key)
+        return self.result
+
+    def draw_shell(self, title):
+        self.screen.erase()
+        height, width = self.screen.getmaxyx()
+        draw_box(self.screen, 0, 0, height - 1, width - 1, curses.color_pair(1))
+        add_text(self.screen, 1, 3, title, curses.A_BOLD | curses.color_pair(1))
+        return height, width
+
+    def draw_list(self):
+        height, width = self.draw_shell("Projects")
+        add_text(self.screen, 3, 3, "Search:", curses.A_BOLD)
+        add_text(self.screen, 3, 11, self.query or "type to filter…", 0 if self.query else curses.A_DIM)
+        add_text(self.screen, 5, 3, "STATE", curses.A_DIM)
+        add_text(self.screen, 5, 13, "PROJECT", curses.A_DIM)
+
+        projects = self.projects()
+        if projects:
+            self.selected = min(self.selected, len(projects) - 1)
+        else:
+            self.selected = 0
+
+        visible_rows = max(1, height - 10)
+        start = max(0, self.selected - visible_rows + 1)
+        for row, (project, state) in enumerate(projects[start:start + visible_rows], start=6):
+            index = start + row - 6
+            selected = index == self.selected
+            style = curses.color_pair(2) if selected else 0
+            state_label = {"current": "● current", "open": "○ open", "closed": "· closed"}[state]
+            add_text(self.screen, row, 3, f"{state_label:<9}", style)
+            add_text(self.screen, row, 13, project["name"], style | (curses.A_BOLD if selected else 0))
+
+        if not projects:
+            message = "No matching projects" if self.query else "No projects yet — press Ctrl+N to create one"
+            add_text(self.screen, 7, 3, message, curses.A_DIM)
+
+        if self.message:
+            add_text(self.screen, height - 4, 3, self.message, curses.color_pair(5))
+        add_text(self.screen, height - 2, 3, "↑↓ navigate   Enter open   Ctrl+N new project   Esc close", curses.A_DIM)
+        self.screen.refresh()
+
+    def handle_list_key(self, key):
+        projects = self.projects()
+        if key == curses.KEY_UP:
+            self.selected = max(0, self.selected - 1)
+        elif key == curses.KEY_DOWN:
+            self.selected = min(max(0, len(projects) - 1), self.selected + 1)
+        elif key in ("\n", "\r", curses.KEY_ENTER):
+            if projects:
+                project, state = projects[self.selected]
+                self.result = (project, state == "closed")
+        elif key == "\x0e":
+            self.mode = "create"
+            self.create_focus = 0
+            self.create_name = ""
+            self.create_directory = ""
+            self.message = ""
+        elif key in ("\x1b",):
+            if self.query:
+                self.query = ""
+                self.selected = 0
+            else:
+                self.result = False
+        elif key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+            self.query = self.query[:-1]
+            self.selected = 0
+        elif isinstance(key, str) and key.isprintable():
+            self.query += key
+            self.selected = 0
+
+    def draw_create(self):
+        height, width = self.draw_shell("Create project")
+        add_text(self.screen, 3, 3, "Define the project. Nothing is written until you choose Create.", curses.A_DIM)
+
+        labels = ["Project name", "Main directory"]
+        values = [self.create_name, self.create_directory or "Press Enter to browse directories"]
+        for index, (label, value) in enumerate(zip(labels, values)):
+            row = 6 + index * 4
+            add_text(self.screen, row, 5, f"{label}:", curses.A_BOLD)
+            selected = self.create_focus == index
+            style = curses.color_pair(2) if selected else 0
+            shown = value or " "
+            add_text(self.screen, row + 1, 5, " " + shown.ljust(max(1, width - 12)) + " ", style)
+
+        create_style = curses.color_pair(2) if self.create_focus == 2 else curses.A_BOLD
+        cancel_style = curses.color_pair(2) if self.create_focus == 3 else 0
+        add_text(self.screen, 15, 5, "[ Create project ]", create_style)
+        add_text(self.screen, 15, 26, "[ Cancel ]", cancel_style)
+
+        add_text(self.screen, height - 5, 3, "Directory: Enter opens the built-in directory browser.", curses.A_DIM)
+        if self.message:
+            add_text(self.screen, height - 4, 3, self.message, curses.color_pair(5))
+        add_text(self.screen, height - 2, 3, "Tab/↑↓ move   Enter select   Esc cancel", curses.A_DIM)
+        self.screen.refresh()
+
+    def handle_create_key(self, key):
+        self.message = ""
+        if key == "\x1b":
+            self.mode = "list"
+            return
+        if key in ("\t", curses.KEY_DOWN):
+            self.create_focus = (self.create_focus + 1) % 4
+            return
+        if key == curses.KEY_UP:
+            self.create_focus = (self.create_focus - 1) % 4
+            return
+        if key == curses.KEY_BTAB:
+            self.create_focus = (self.create_focus - 1) % 4
+            return
+
+        if self.create_focus == 0:
+            if key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+                self.create_name = self.create_name[:-1]
+            elif key in ("\n", "\r", curses.KEY_ENTER):
+                self.create_focus = 1
+            elif isinstance(key, str) and key.isprintable():
+                self.create_name += key
+            return
+
+        if key not in ("\n", "\r", curses.KEY_ENTER):
+            return
+        if self.create_focus == 1:
+            self.open_directory_browser()
+        elif self.create_focus == 2:
+            self.submit_create()
+        else:
+            self.mode = "list"
+
+    def open_directory_browser(self):
+        start = Path(self.create_directory) if self.create_directory else HOME / "matrix/projects"
+        if not start.is_dir():
+            start = HOME
+        self.browse_directory = start.resolve()
+        self.directory_query = ""
+        self.directory_selected = 0
+        self.message = ""
+        self.mode = "directory"
+
+    def directory_entries(self):
+        try:
+            directories = [entry for entry in self.browse_directory.iterdir() if entry.is_dir()]
+        except OSError as error:
+            self.message = str(error)
+            directories = []
+        query = self.directory_query.casefold()
+        if query:
+            directories = [entry for entry in directories if query in entry.name.casefold()]
+        return sorted(directories, key=lambda entry: entry.name.casefold())
+
+    def draw_directory_browser(self):
+        height, width = self.draw_shell("Choose main directory")
+        add_text(self.screen, 3, 3, "Location:", curses.A_BOLD)
+        add_text(self.screen, 3, 13, str(self.browse_directory), curses.color_pair(1))
+        add_text(self.screen, 4, 3, "Filter:", curses.A_BOLD)
+        add_text(self.screen, 4, 13, self.directory_query or "type to filter directories…", 0 if self.directory_query else curses.A_DIM)
+
+        entries = self.directory_entries()
+        rows = [None] + entries
+        self.directory_selected = min(self.directory_selected, len(rows) - 1)
+        visible_rows = max(1, height - 10)
+        start = max(0, self.directory_selected - visible_rows + 1)
+        for row, entry in enumerate(rows[start:start + visible_rows], start=6):
+            index = start + row - 6
+            selected = index == self.directory_selected
+            style = curses.color_pair(2) if selected else 0
+            label = "✓  Use this directory" if entry is None else f"▸  {entry.name}/"
+            add_text(self.screen, row, 3, label, style | (curses.A_BOLD if selected else 0))
+
+        if self.message:
+            add_text(self.screen, height - 4, 3, self.message, curses.color_pair(5))
+        add_text(self.screen, height - 2, 3, "↑↓ select   → enter folder   ← parent   Enter choose   Esc cancel", curses.A_DIM)
+        self.screen.refresh()
+
+    def handle_directory_key(self, key):
+        entries = self.directory_entries()
+        rows = [None] + entries
+        if key == "\x1b":
+            self.mode = "create"
+        elif key == curses.KEY_UP:
+            self.directory_selected = max(0, self.directory_selected - 1)
+        elif key == curses.KEY_DOWN:
+            self.directory_selected = min(len(rows) - 1, self.directory_selected + 1)
+        elif key == curses.KEY_LEFT:
+            parent = self.browse_directory.parent
+            if parent != self.browse_directory:
+                self.browse_directory = parent
+                self.directory_query = ""
+                self.directory_selected = 0
+                self.message = ""
+        elif key == curses.KEY_RIGHT:
+            if self.directory_selected > 0 and self.directory_selected < len(rows):
+                self.browse_directory = rows[self.directory_selected].resolve()
+                self.directory_query = ""
+                self.directory_selected = 0
+                self.message = ""
+        elif key in ("\n", "\r", curses.KEY_ENTER):
+            selected = self.browse_directory if self.directory_selected == 0 else rows[self.directory_selected]
+            self.create_directory = validate_directory(str(selected))
+            self.create_focus = 2
+            self.mode = "create"
+            self.message = ""
+        elif key in (curses.KEY_BACKSPACE, "\b", "\x7f"):
+            self.directory_query = self.directory_query[:-1]
+            self.directory_selected = 0
+        elif isinstance(key, str) and key.isprintable():
+            self.directory_query += key
+            self.directory_selected = 0
+
+    def submit_create(self):
+        try:
+            name = validate_name(self.create_name, self.registry["projects"])
+            directory = validate_directory(self.create_directory)
+            if live_workspace_exists(name):
+                raise ValueError(f"A live Hyprland workspace named ‘{name}’ already exists")
+        except ValueError as error:
+            self.message = str(error)
+            return
+
+        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        project = {
+            "id": str(uuid.uuid4()),
+            "name": name,
+            "mainDirectory": directory,
+            "archivedAt": None,
+            "createdAt": now,
+            "updatedAt": now,
+        }
+        final_home = project_home(project)
+        ensure_directory(final_home.parent)
+        staging_home = final_home.with_name(f".{project['id']}.creating-{os.getpid()}-{time.time_ns()}")
+        if final_home.exists() or final_home.is_symlink():
+            self.message = f"Project home already exists: {final_home}"
+            return
+
+        registry_before = list(self.registry["projects"])
+        try:
+            initialize_project_home(project, staging_home)
+            staging_home.replace(final_home)
+            self.registry["projects"].append(project)
+            write_json_atomic(REGISTRY_PATH, self.registry)
+        except Exception as error:
+            committed = False
+            try:
+                persisted, _changed = read_registry(REGISTRY_PATH, DATA_ROOT)
+                committed = any(item["id"] == project["id"] for item in persisted["projects"])
+            except Exception:
+                pass
+            if committed:
+                self.result = (project, True)
+                return
+            self.registry["projects"] = registry_before
+            shutil.rmtree(staging_home, ignore_errors=True)
+            shutil.rmtree(final_home, ignore_errors=True)
+            self.message = f"Could not create project: {error}"
+            return
+        self.result = (project, True)
+
+
+def run_tui():
+    if not acquire_lock():
+        return
+    try:
+        ensure_directory(DATA_ROOT)
+        ensure_directory(DATA_ROOT / "projects")
+        ensure_directory(RUNTIME_ROOT)
+        registry = load_registry()
+        session = load_session()
+        result = curses.wrapper(lambda screen: PickerUI(screen, registry, session).run())
+        if result:
+            project, launch_terminal = result
+            enter_project(project, session, launch_terminal)
+    finally:
+        release_lock()
+
+
+def main():
+    try:
+        if "--tui" in sys.argv:
+            run_tui()
+        else:
+            launch_tui()
+    except Exception as error:
+        print(f"{APP_NAME}: {error}", file=sys.stderr)
+        notify_error(str(error))
+        raise SystemExit(1) from error
+
+
+if __name__ == "__main__":
+    main()

@@ -28,6 +28,7 @@ in
     ./modules/mewtion.nix
     ./modules/microphone.nix
     ./modules/pi.nix
+    ./modules/project-object.nix
     ./modules/power-status.nix
     ./modules/vim.nix
     ./modules/voxtype.nix

@@ -62,7 +62,7 @@ in
 
     settings = {
       "$mod" = "SUPER";
-      "$terminal" = "/home/sumeet/matrix/projects/project-object/bin/project-terminal";
+      "$terminal" = "kitty";
       "$fileManager" = "dolphin";
       "$menu" = "wofi --show drun";
       "$browserWorkspace" = "name:browser";
@@ -227,7 +227,6 @@ in
         "MOD5, F23, exec, voxtype record toggle"
         "$mod, F23, exec, $terminal -e pi"
 
-        "$mod, P, exec, /home/sumeet/matrix/projects/project-object/bin/project-picker"
         "$mod, J, layoutmsg, togglesplit"
 
         "$mod, left, movefocus, l"
