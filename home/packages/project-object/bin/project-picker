@@ -3,21 +3,21 @@
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
+import sys
 
+HOME = Path.home()
+RUNTIME_ROOT = Path(os.environ.get("PROJECT_OBJECT_RUNTIME_DIR", Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/project-object-{os.getuid()}")) / "project-object"))
+PID_PATH = RUNTIME_ROOT / "picker-gui.json"
 GUI = Path(__file__).resolve().with_name("project-picker-gui")
+PACKAGED_GUI_SOURCE = GUI.with_name(".project-picker-gui-wrapped")
 HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
 PICKER_CLASSES = {"dev.project_object.Picker", "project-picker"}
 
 
 def focus_existing_picker():
-    result = subprocess.run(
-        [HYPRCTL, "clients", "-j"],
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )
+    result = subprocess.run([HYPRCTL, "clients", "-j"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
     if result.returncode != 0:
         return False
     try:
@@ -27,15 +27,46 @@ def focus_existing_picker():
     for client in clients:
         classes = {str(client.get("class", "")), str(client.get("initialClass", ""))}
         if classes & PICKER_CLASSES and client.get("address"):
-            subprocess.run(
-                [HYPRCTL, "dispatch", "focuswindow", f"address:{client['address']}"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                check=False,
-            )
+            subprocess.run([HYPRCTL, "dispatch", "focuswindow", f"address:{client['address']}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
             return True
     return False
 
 
-if not focus_existing_picker():
-    os.execv(str(GUI), [str(GUI)])
+def running_daemon():
+    try:
+        record = json.loads(PID_PATH.read_text())
+        pid = int(record["pid"])
+        command = Path(record["command"])
+        os.kill(pid, 0)
+        if command not in (GUI, PACKAGED_GUI_SOURCE):
+            os.kill(pid, signal.SIGTERM)
+            return None
+        return pid
+    except (OSError, ValueError, KeyError, TypeError, json.JSONDecodeError):
+        PID_PATH.unlink(missing_ok=True)
+        return None
+
+
+def start_daemon(show):
+    RUNTIME_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
+    RUNTIME_ROOT.chmod(0o700)
+    arguments = [str(GUI), "--daemon"]
+    if show:
+        arguments.append("--show")
+    subprocess.Popen(arguments, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+
+
+def main():
+    preload = "--preload" in sys.argv[1:]
+    if not preload and focus_existing_picker():
+        return
+    pid = running_daemon()
+    if pid:
+        if not preload:
+            os.kill(pid, signal.SIGUSR1)
+        return
+    start_daemon(show=not preload)
+
+
+if __name__ == "__main__":
+    main()

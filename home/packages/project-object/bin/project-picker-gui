@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import importlib.util
+import json
 from importlib.machinery import SourceFileLoader
 import os
 from pathlib import Path
+import signal
 import sys
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -19,7 +21,7 @@ try:
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw, Gdk, Gio, Gtk
+    from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 except (ImportError, ValueError) as error:
     print(f"Project picker: GTK interface unavailable: {error}", file=sys.stderr)
     os.execv(str(BACKEND_COMMAND), [str(BACKEND_COMMAND)])
@@ -108,8 +110,10 @@ class ProjectRow(Gtk.ListBoxRow):
 
 
 class PickerApplication(Adw.Application):
-    def __init__(self):
+    def __init__(self, persistent=False, start_hidden=False):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
+        self.persistent = persistent
+        self.start_hidden = start_hidden
         self.window = None
         self.registry = None
         self.session = None
@@ -126,8 +130,8 @@ class PickerApplication(Adw.Application):
 
     def do_activate(self):
         if self.window:
-            self.window.present()
-            self.focus_normal_mode()
+            if not self.start_hidden:
+                self.show_window()
             return
         try:
             backend.ensure_directory(backend.DATA_ROOT)
@@ -141,14 +145,15 @@ class PickerApplication(Adw.Application):
             self.quit()
             return
         self.build_window()
-        self.window.present()
-        self.focus_normal_mode()
+        if not self.start_hidden:
+            self.show_window()
 
     def build_window(self):
         self.window = Adw.ApplicationWindow(application=self)
         self.window.set_title("Projects")
         self.window.set_default_size(760, 570)
         self.window.set_decorated(False)
+        self.window.connect("close-request", self.on_close_request)
 
         shell = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         shell.add_css_class("picker-shell")
@@ -310,7 +315,7 @@ class PickerApplication(Adw.Application):
         except Exception as error:
             backend.notify_error(str(error))
             return
-        self.window.close()
+        self.dismiss_window()
 
     def show_create(self):
         self.create_error.set_visible(False)
@@ -341,7 +346,7 @@ class PickerApplication(Adw.Application):
             self.create_error.set_text(str(error))
             self.create_error.set_visible(True)
             return
-        self.window.close()
+        self.dismiss_window()
 
     def install_actions(self):
         self.normal_actions = {}
@@ -371,6 +376,35 @@ class PickerApplication(Adw.Application):
         else:
             self.pending_g = True
 
+    def dismiss_window(self):
+        if self.persistent:
+            self.window.hide()
+        else:
+            self.window.close()
+
+    def on_close_request(self, _window):
+        if not self.persistent:
+            return False
+        self.window.hide()
+        return True
+
+    def show_window(self):
+        try:
+            self.registry = backend.load_registry()
+            self.session = backend.load_session()
+            self.current_workspace = backend.active_workspace_name()
+            if hasattr(self, "listbox"):
+                self.refresh_rows()
+        except Exception as error:
+            backend.notify_error(str(error))
+            return True
+        self.start_hidden = False
+        self.stack.set_visible_child_name("list")
+        self.search.set_text("")
+        self.focus_normal_mode()
+        self.window.present()
+        return True
+
     def on_key_pressed(self, _controller, keyval, _keycode, state):
         control = bool(state & Gdk.ModifierType.CONTROL_MASK)
         if keyval == Gdk.KEY_Escape:
@@ -380,7 +414,7 @@ class PickerApplication(Adw.Application):
                 self.search.set_text("")
                 self.focus_normal_mode()
             else:
-                self.window.close()
+                self.dismiss_window()
             return True
         if control and keyval in (Gdk.KEY_n, Gdk.KEY_N):
             self.show_create()
@@ -400,7 +434,32 @@ class PickerApplication(Adw.Application):
         return False
 
 
+def run_daemon(show_initially):
+    backend.ensure_directory(backend.RUNTIME_ROOT)
+    pid_path = backend.RUNTIME_ROOT / "picker-gui.json"
+    application = PickerApplication(persistent=True, start_hidden=not show_initially)
+    application.register(None)
+    application.activate()
+    loop = GLib.MainLoop()
+
+    def stop():
+        loop.quit()
+        return GLib.SOURCE_CONTINUE
+
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, application.show_window)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, stop)
+    pid_path.write_text(json.dumps({"pid": os.getpid(), "command": str(Path(sys.argv[0]).resolve())}) + "\n")
+    pid_path.chmod(0o600)
+    try:
+        loop.run()
+    finally:
+        pid_path.unlink(missing_ok=True)
+
+
 def main():
+    if "--daemon" in sys.argv:
+        run_daemon(show_initially="--show" in sys.argv)
+        return
     application = PickerApplication()
     raise SystemExit(application.run([sys.argv[0]]))
 

@@ -14,5 +14,8 @@ in
     bind = lib.mkAfter [
       "$mod, P, exec, ${projectObject}/bin/project-picker"
     ];
+    exec-once = lib.mkAfter [
+      "${projectObject}/bin/project-picker --preload"
+    ];
   };
 }
