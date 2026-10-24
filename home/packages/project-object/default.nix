@@ -19,7 +19,7 @@ stdenvNoCC.mkDerivation {
         || relative == "integrations" || lib.hasPrefix "integrations/" relative;
   };
 
-  nativeBuildInputs = [ makeWrapper ];
+  nativeBuildInputs = [ makeWrapper python3 ];
 
   installPhase = ''
     runHook preInstall

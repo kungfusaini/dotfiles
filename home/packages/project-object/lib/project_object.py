@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import time
+import unicodedata
 import uuid
 
 REGISTRY_VERSION = 1
@@ -13,6 +14,12 @@ FILE_MODE = 0o600
 
 class RegistryError(RuntimeError):
     pass
+
+
+class AtomicWriteCommittedError(RuntimeError):
+    """The replacement is visible, but a post-commit durability check failed."""
+
+    committed = True
 
 
 def ensure_private_directory(directory: Path) -> None:
@@ -42,7 +49,7 @@ def canonical_uuid(value: object) -> str:
 
 
 def normalized_name(name: str) -> str:
-    return name.strip().casefold()
+    return unicodedata.normalize("NFKC", name.strip()).lower()
 
 
 def validate_project_name(value: object) -> str:
@@ -73,6 +80,8 @@ def project_home(data_root: Path, project_id: str) -> Path:
     project_id = canonical_uuid(project_id)
     projects_root = data_root / "projects"
     candidate = projects_root / project_id
+    if projects_root.is_symlink() or candidate.is_symlink():
+        raise RegistryError(f"Project home contains a symlinked managed component: {candidate}")
     resolved_root = projects_root.resolve(strict=False)
     resolved_candidate = candidate.resolve(strict=False)
     if not resolved_candidate.is_relative_to(resolved_root):
@@ -84,6 +93,9 @@ def project_session_directory(state_root: Path, project_id: str) -> Path:
     project_id = canonical_uuid(project_id)
     projects_root = state_root / "projects"
     candidate = projects_root / project_id / "pi-sessions"
+    project_root = projects_root / project_id
+    if projects_root.is_symlink() or project_root.is_symlink() or candidate.is_symlink():
+        raise RegistryError(f"Project session path contains a symlinked managed component: {candidate}")
     resolved_root = projects_root.resolve(strict=False)
     resolved_candidate = candidate.resolve(strict=False)
     if not resolved_candidate.is_relative_to(resolved_root):
@@ -151,6 +163,7 @@ def write_json_atomic(file: Path, value: object) -> None:
     temporary = file.with_name(f".{file.name}.tmp-{os.getpid()}-{time.time_ns()}")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     descriptor = os.open(temporary, flags, FILE_MODE)
+    committed = False
     try:
         with os.fdopen(descriptor, "w") as stream:
             json.dump(value, stream, indent=2)
@@ -158,13 +171,15 @@ def write_json_atomic(file: Path, value: object) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, file)
-        ensure_private_file(file)
+        committed = True
         directory_descriptor = os.open(file.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
         try:
             os.fsync(directory_descriptor)
         finally:
             os.close(directory_descriptor)
-    except Exception:
+    except Exception as error:
+        if committed:
+            raise AtomicWriteCommittedError(f"{file} was replaced, but durability confirmation failed: {error}") from error
         temporary.unlink(missing_ok=True)
         raise
 

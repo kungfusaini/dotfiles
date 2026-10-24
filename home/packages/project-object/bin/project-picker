@@ -12,13 +12,15 @@ import uuid
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from project_object import (  # noqa: E402
+    AtomicWriteCommittedError,
     RegistryError,
     ensure_private_directory,
     ensure_private_file,
+    normalized_name as canonical_normalized_name,
     project_home as canonical_project_home,
     read_registry,
     validate_project_name,
-    write_json_atomic,
+    write_json_atomic as durable_write_json_atomic,
 )
 
 APP_NAME = "Project picker"
@@ -51,6 +53,15 @@ def read_json(file, fallback):
         return json.loads(file.read_text())
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(f"Cannot read {file}: {error}") from error
+
+
+def write_json_atomic(file, value):
+    try:
+        durable_write_json_atomic(file, value)
+    except AtomicWriteCommittedError:
+        # The new state is already visible. Continuing is more coherent than
+        # attempting a rollback that could orphan the committed record.
+        pass
 
 
 def project_home(project):
@@ -176,7 +187,7 @@ def live_workspace_exists(name):
 
 
 def normalized_name(name):
-    return name.strip().casefold()
+    return canonical_normalized_name(name)
 
 
 def validate_name(name, projects):
@@ -583,15 +594,6 @@ class PickerUI:
             self.registry["projects"].append(project)
             write_json_atomic(REGISTRY_PATH, self.registry)
         except Exception as error:
-            committed = False
-            try:
-                persisted, _changed = read_registry(REGISTRY_PATH, DATA_ROOT)
-                committed = any(item["id"] == project["id"] for item in persisted["projects"])
-            except Exception:
-                pass
-            if committed:
-                self.result = (project, True)
-                return
             self.registry["projects"] = registry_before
             shutil.rmtree(staging_home, ignore_errors=True)
             shutil.rmtree(final_home, ignore_errors=True)

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { lstatSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -44,7 +44,7 @@ function validateRegistry(parsed: unknown): ProjectRecord[] {
     if (typeof record.mainDirectory !== "string" || !isAbsolute(record.mainDirectory) || resolve(record.mainDirectory) !== record.mainDirectory) throw new Error(`project ${record.id} has an invalid mainDirectory`);
     if (record.archivedAt !== undefined && record.archivedAt !== null && typeof record.archivedAt !== "string") throw new Error(`project ${record.id} has an invalid archivedAt`);
     if (record.projectHome !== undefined && record.projectHome !== canonicalProjectHome(record.id)) throw new Error(`project ${record.id} has an unsafe projectHome`);
-    const normalizedName = record.name.trim().toLocaleLowerCase();
+    const normalizedName = record.name.trim().normalize("NFKC").toLowerCase();
     if (ids.has(record.id)) throw new Error(`duplicate project ID: ${record.id}`);
     if (names.has(normalizedName)) throw new Error(`duplicate normalized project name: ${record.name}`);
     ids.add(record.id);
@@ -100,25 +100,57 @@ export function resolveProject(): Resolution {
   }
 }
 
-export function readAgentInstructions(project: ProjectContext): string {
-  let metadata;
+export function readAgentInstructions(project: ProjectContext, afterProjectDirectoryOpened?: () => void): string {
+  let directoryDescriptor: number;
   try {
-    metadata = lstatSync(project.agentsFile);
+    directoryDescriptor = openSync(project.projectHome, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return `Project: ${project.name}\nProject home: ${project.projectHome}\nThe project AGENTS.md file is missing.`;
-    throw new Error(`cannot inspect AGENTS.md: ${(error as Error).message}`);
+    throw new Error(`cannot open project home safely: ${(error as Error).message}`);
   }
-  if (!metadata.isFile() || metadata.isSymbolicLink()) throw new Error("AGENTS.md must be a regular, non-symlink file");
-  if (metadata.size > MAX_AGENTS_BYTES) throw new Error(`AGENTS.md exceeds the ${MAX_AGENTS_BYTES}-byte limit`);
 
-  const projectsRoot = realpathSync(join(dataRoot(), "projects"));
-  const resolvedFile = realpathSync(project.agentsFile);
-  const pathFromRoot = relative(projectsRoot, resolvedFile);
-  if (pathFromRoot.startsWith("..") || isAbsolute(pathFromRoot)) throw new Error("AGENTS.md escapes the project data root");
   try {
-    return readFileSync(project.agentsFile, "utf8").trim();
-  } catch (error) {
-    throw new Error(`cannot read AGENTS.md: ${(error as Error).message}`);
+    const expectedHome = join(realpathSync(dataRoot()), "projects", project.id);
+    const openedHome = realpathSync(`/proc/self/fd/${directoryDescriptor}`);
+    if (openedHome !== expectedHome) throw new Error("opened project home does not match the canonical UUID path");
+
+    afterProjectDirectoryOpened?.();
+
+    let descriptor: number;
+    try {
+      descriptor = openSync(`/proc/self/fd/${directoryDescriptor}/AGENTS.md`, constants.O_RDONLY | constants.O_NOFOLLOW);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return `Project: ${project.name}\nProject home: ${project.projectHome}\nThe project AGENTS.md file is missing.`;
+      throw new Error(`cannot open AGENTS.md safely: ${(error as Error).message}`);
+    }
+
+    try {
+      const metadata = fstatSync(descriptor);
+      if (!metadata.isFile()) throw new Error("AGENTS.md must be a regular file");
+      if (metadata.size > MAX_AGENTS_BYTES) throw new Error(`AGENTS.md exceeds the ${MAX_AGENTS_BYTES}-byte limit`);
+
+      const resolvedFile = realpathSync(`/proc/self/fd/${descriptor}`);
+      const openedHome = realpathSync(`/proc/self/fd/${directoryDescriptor}`);
+      if (relative(openedHome, resolvedFile) !== "AGENTS.md") throw new Error("AGENTS.md does not belong to the pinned project directory");
+
+      const chunks: Buffer[] = [];
+      let total = 0;
+      while (total <= MAX_AGENTS_BYTES) {
+        const chunk = Buffer.alloc(Math.min(8192, MAX_AGENTS_BYTES + 1 - total));
+        const count = readSync(descriptor, chunk, 0, chunk.length, null);
+        if (count === 0) break;
+        chunks.push(chunk.subarray(0, count));
+        total += count;
+      }
+      if (total > MAX_AGENTS_BYTES) throw new Error(`AGENTS.md exceeds the ${MAX_AGENTS_BYTES}-byte limit`);
+      return Buffer.concat(chunks).toString("utf8").trim();
+    } catch (error) {
+      throw new Error(`cannot read AGENTS.md: ${(error as Error).message}`);
+    } finally {
+      closeSync(descriptor);
+    }
+  } finally {
+    closeSync(directoryDescriptor);
   }
 }
 
