@@ -68,6 +68,16 @@ def main():
     environment = os.environ.copy()
     kitty_arguments = [KITTY]
 
+    if not project:
+        for variable in (
+            "PROJECT_OBJECT_ID",
+            "PROJECT_OBJECT_NAME",
+            "PROJECT_OBJECT_HOME",
+            "PROJECT_OBJECT_MAIN_DIRECTORY",
+            "PI_CODING_AGENT_SESSION_DIR",
+        ):
+            environment.pop(variable, None)
+
     if project:
         project_id = project["id"]
         home = project_home(DATA_ROOT, project_id)
