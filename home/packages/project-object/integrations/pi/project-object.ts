@@ -1,12 +1,45 @@
 import { execFileSync } from "node:child_process";
-import { closeSync, constants, fstatSync, openSync, readFileSync, readSync, realpathSync, statSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_AGENTS_BYTES = 64 * 1024;
+const MAX_WORKLOG_BYTES = 32 * 1024 * 1024;
+const MAX_WORKLOG_ENTRY_BYTES = 16 * 1024;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const WORKLOG_TYPES = ["start", "progress", "decision", "mistake", "stuck", "finish", "next", "note"] as const;
+const WORKLOG_TYPE_SET = new Set<string>(WORKLOG_TYPES);
+
+const WorklogParameters = {
+  type: "object",
+  additionalProperties: false,
+  required: ["type", "summary"],
+  properties: {
+    type: { type: "string", enum: WORKLOG_TYPES },
+    summary: { type: "string", minLength: 1, maxLength: 2000 },
+    task: { type: "string", minLength: 1, maxLength: 2000 },
+    next: { type: "string", minLength: 1, maxLength: 4000 },
+    reason: { type: "string", minLength: 1, maxLength: 4000 },
+    lesson: { type: "string", minLength: 1, maxLength: 4000 },
+    blocker: { type: "string", minLength: 1, maxLength: 4000 },
+    result: { type: "string", minLength: 1, maxLength: 4000 },
+    files: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 4096 } },
+  },
+} as const;
+
+type WorklogParametersValue = {
+  type: string;
+  summary: string;
+  task?: string;
+  next?: string;
+  reason?: string;
+  lesson?: string;
+  blocker?: string;
+  result?: string;
+  files?: string[];
+};
 
 type ProjectRecord = {
   id: string;
@@ -100,6 +133,114 @@ export function resolveProject(): Resolution {
   }
 }
 
+function trimmedField(value: string | undefined, name: string, maximum: number): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  const trimmed = value.trim();
+  if (!trimmed) throw new Error(`${name} must not be empty`);
+  if (trimmed.length > maximum) throw new Error(`${name} exceeds ${maximum} characters`);
+  return trimmed;
+}
+
+function validateWorklogParameters(parameters: WorklogParametersValue): WorklogParametersValue {
+  if (!WORKLOG_TYPE_SET.has(parameters.type)) throw new Error(`invalid worklog type: ${parameters.type}`);
+  const validated: WorklogParametersValue = {
+    type: parameters.type,
+    summary: trimmedField(parameters.summary, "summary", 2000)!,
+    task: trimmedField(parameters.task, "task", 2000),
+    next: trimmedField(parameters.next, "next", 4000),
+    reason: trimmedField(parameters.reason, "reason", 4000),
+    lesson: trimmedField(parameters.lesson, "lesson", 4000),
+    blocker: trimmedField(parameters.blocker, "blocker", 4000),
+    result: trimmedField(parameters.result, "result", 4000),
+  };
+  if (parameters.files !== undefined) {
+    if (!Array.isArray(parameters.files) || parameters.files.length > 32) throw new Error("files must contain at most 32 paths");
+    validated.files = parameters.files.map((file, index) => trimmedField(file, `files[${index}]`, 4096)!);
+  }
+  if (validated.type === "decision" && !validated.reason) throw new Error("decision entries require reason");
+  if (validated.type === "mistake" && !validated.lesson) throw new Error("mistake entries require lesson");
+  if (validated.type === "stuck" && !validated.blocker) throw new Error("stuck entries require blocker");
+  return validated;
+}
+
+export function appendProjectWorklogEntry(project: ProjectContext, parameters: WorklogParametersValue, sessionId: string): string {
+  const validated = validateWorklogParameters(parameters);
+  let projectDescriptor: number;
+  try {
+    projectDescriptor = openSync(project.projectHome, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch (error) {
+    throw new Error(`cannot open project home safely: ${(error as Error).message}`);
+  }
+
+  try {
+    const expectedHome = join(realpathSync(dataRoot()), "projects", project.id);
+    const openedHome = realpathSync(`/proc/self/fd/${projectDescriptor}`);
+    if (openedHome !== expectedHome) throw new Error("opened project home does not match the canonical UUID path");
+
+    const worklogsPath = `/proc/self/fd/${projectDescriptor}/worklogs`;
+    try {
+      mkdirSync(worklogsPath, { mode: 0o700 });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+
+    let worklogsDescriptor: number;
+    try {
+      worklogsDescriptor = openSync(worklogsPath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    } catch (error) {
+      throw new Error(`cannot open worklogs directory safely: ${(error as Error).message}`);
+    }
+
+    try {
+      const worklogsMetadata = fstatSync(worklogsDescriptor);
+      if (!worklogsMetadata.isDirectory()) throw new Error("worklogs must be a directory");
+      if (realpathSync(`/proc/self/fd/${worklogsDescriptor}`) !== join(openedHome, "worklogs")) throw new Error("worklogs directory escapes project home");
+      fchmodSync(worklogsDescriptor, 0o700);
+
+      const entry = {
+        v: 1,
+        time: new Date().toISOString(),
+        project: project.id,
+        session: sessionId,
+        ...validated,
+      };
+      const serialized = `${JSON.stringify(entry)}\n`;
+      const entryBytes = Buffer.byteLength(serialized);
+      if (entryBytes > MAX_WORKLOG_ENTRY_BYTES) throw new Error(`worklog entry exceeds ${MAX_WORKLOG_ENTRY_BYTES} bytes`);
+
+      let worklogDescriptor: number;
+      try {
+        worklogDescriptor = openSync(
+          `/proc/self/fd/${worklogsDescriptor}/events.jsonl`,
+          constants.O_WRONLY | constants.O_APPEND | constants.O_CREAT | constants.O_NOFOLLOW,
+          0o600,
+        );
+      } catch (error) {
+        throw new Error(`cannot open worklog safely: ${(error as Error).message}`);
+      }
+
+      try {
+        const metadata = fstatSync(worklogDescriptor);
+        if (!metadata.isFile() || metadata.nlink !== 1) throw new Error("worklog must be a regular, singly linked file");
+        if (metadata.size + entryBytes > MAX_WORKLOG_BYTES) throw new Error(`worklog exceeds ${MAX_WORKLOG_BYTES} bytes`);
+        fchmodSync(worklogDescriptor, 0o600);
+        const written = writeSync(worklogDescriptor, serialized);
+        if (written !== entryBytes) throw new Error("short write while appending worklog entry");
+        fsyncSync(worklogDescriptor);
+        fsyncSync(worklogsDescriptor);
+      } finally {
+        closeSync(worklogDescriptor);
+      }
+      return join(project.projectHome, "worklogs", "events.jsonl");
+    } finally {
+      closeSync(worklogsDescriptor);
+    }
+  } finally {
+    closeSync(projectDescriptor);
+  }
+}
+
 export function readAgentInstructions(project: ProjectContext, afterProjectDirectoryOpened?: () => void): string {
   let directoryDescriptor: number;
   try {
@@ -184,11 +325,30 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       delete event.systemPromptOptions.sections.project_object;
       return;
     }
+    const worklogGuidance = "For meaningful progress, decisions, mistakes, blockers, completed work, or a concrete next step, append one concise durable entry with project_worklog_append before wrapping up. Never put credentials, tokens, private keys, or other secrets in a worklog.";
     try {
-      event.systemPromptOptions.sections.project_object = readAgentInstructions(project);
+      event.systemPromptOptions.sections.project_object = `${readAgentInstructions(project)}\n\n${worklogGuidance}`;
     } catch (error) {
-      event.systemPromptOptions.sections.project_object = `Project: ${project.name}\nProject home: ${project.projectHome}\nProject AGENTS.md was not loaded: ${(error as Error).message}`;
+      event.systemPromptOptions.sections.project_object = `Project: ${project.name}\nProject home: ${project.projectHome}\nProject AGENTS.md was not loaded: ${(error as Error).message}\n\n${worklogGuidance}`;
     }
+  });
+
+  pi.registerTool({
+    name: "project_worklog_append",
+    label: "Project worklog",
+    description: "Append one concise durable event to the attached Project Object worklog. Use only for meaningful continuity: starts, progress, decisions, mistakes, blockers, finishes, next actions, or notes. Never include credentials, tokens, private keys, or other secrets.",
+    parameters: WorklogParameters,
+    async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
+      if (!resolution.project && !resolution.error) resolution = resolveProject();
+      if (resolution.error) throw new Error(`Project context error: ${resolution.error}`);
+      const project = resolution.project;
+      if (!project) throw new Error("No project object is attached to this Pi session");
+      const worklog = appendProjectWorklogEntry(project, parameters as WorklogParametersValue, ctx.sessionManager.getSessionId());
+      return {
+        content: [{ type: "text", text: `${parameters.type}: ${parameters.summary}` }],
+        details: { projectId: project.id, worklog, type: parameters.type },
+      };
+    },
   });
 
   pi.registerCommand("catchup", {
@@ -213,7 +373,8 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       pi.sendUserMessage([
         `Catch me up on where we left off in the ${project.name} project and what I should do next.`,
         "Do not introduce or explain the project to me. Assume I remember what the project is.",
-        "Use tools to inspect the newest relevant worklogs first, then TODO.md and NOTES.md in the project home, plus uncommitted Git changes and recent commits in the main directory when it is a Git repository.",
+        "Use tools to inspect the newest relevant worklog entries first, then TODO.md and NOTES.md in the project home, plus uncommitted Git changes and recent commits in the main directory when it is a Git repository.",
+        `Worklog: ${join(project.projectHome, "worklogs", "events.jsonl")}`,
         `Project home: ${project.projectHome}`,
         `Main directory: ${project.mainDirectory}`,
         "Reply concisely under exactly these headings: What we were doing; Where we left off; What's next.",
