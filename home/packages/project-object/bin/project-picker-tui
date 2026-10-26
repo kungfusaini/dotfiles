@@ -72,6 +72,7 @@ def initialize_project_home(project, home=None):
     home = home or project_home(project)
     ensure_directory(home)
     ensure_directory(home / "plans")
+    ensure_directory(home / "snapshots")
     ensure_directory(home / "worklogs")
 
     files = {
@@ -88,6 +89,7 @@ Project-owned artifacts:
 - `NOTES.md` — durable informal notes.
 - `TODO.md` — project-level tasks and next actions.
 - `plans/` — detailed plans.
+- `snapshots/` — retained workspace and application restoration state.
 - `worklogs/` — durable records of work, decisions, blockers, and outcomes.
 
 These artifacts may be sparse or empty. Inspect the relevant files when useful rather than assuming they contain information. Keep project-level material in the project home unless the user explicitly asks for it to live in a repository.

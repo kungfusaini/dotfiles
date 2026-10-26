@@ -1,0 +1,230 @@
+#!/usr/bin/env python3
+
+import argparse
+from datetime import datetime, timezone
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from project_object import (  # noqa: E402
+    RegistryError,
+    ensure_private_directory,
+    find_project,
+    project_home,
+    read_registry,
+    write_json_atomic,
+)
+
+HOME = Path.home()
+DATA_ROOT = Path(os.environ.get("PROJECT_OBJECT_DATA_DIR", Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "project-object"))
+REGISTRY_PATH = DATA_ROOT / "projects.json"
+HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
+MAX_HYPRCTL_BYTES = 8 * 1024 * 1024
+SNAPSHOT_VERSION = 1
+
+
+class SnapshotError(RuntimeError):
+    pass
+
+
+def hypr_json(subject):
+    try:
+        result = subprocess.run(
+            [HYPRCTL, subject, "-j"],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=2,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise SnapshotError(f"Cannot query Hyprland {subject}: {error}") from error
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"exit status {result.returncode}"
+        raise SnapshotError(f"hyprctl {subject} failed: {detail}")
+    if len(result.stdout.encode()) > MAX_HYPRCTL_BYTES:
+        raise SnapshotError(f"hyprctl {subject} output exceeds {MAX_HYPRCTL_BYTES} bytes")
+    try:
+        return json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise SnapshotError(f"hyprctl {subject} returned invalid JSON") from error
+
+
+def text(value, field, *, optional=False):
+    if value is None and optional:
+        return None
+    if not isinstance(value, str):
+        raise SnapshotError(f"Hyprland field {field} must be a string")
+    if len(value) > 16384:
+        raise SnapshotError(f"Hyprland field {field} is too large")
+    return value
+
+
+def integer(value, field, *, optional=False):
+    if value is None and optional:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise SnapshotError(f"Hyprland field {field} must be an integer")
+    return value
+
+
+def boolean(value, field, *, optional=False):
+    if value is None and optional:
+        return None
+    if not isinstance(value, bool):
+        raise SnapshotError(f"Hyprland field {field} must be a boolean")
+    return value
+
+
+def number_pair(value, field):
+    if not isinstance(value, list) or len(value) != 2 or any(isinstance(item, bool) or not isinstance(item, (int, float)) for item in value):
+        raise SnapshotError(f"Hyprland field {field} must contain two numbers")
+    return value
+
+
+def string_list(value, field):
+    if value is None:
+        return []
+    if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+        raise SnapshotError(f"Hyprland field {field} must be a string list")
+    return [text(item, field) for item in value]
+
+
+def workspace_reference(value, field):
+    if not isinstance(value, dict):
+        raise SnapshotError(f"Hyprland field {field} must be an object")
+    return {
+        "id": integer(value.get("id"), f"{field}.id"),
+        "name": text(value.get("name"), f"{field}.name"),
+    }
+
+
+def normalize_workspace(workspace):
+    if not isinstance(workspace, dict):
+        raise SnapshotError("Hyprland workspace record must be an object")
+    return {
+        "id": integer(workspace.get("id"), "workspace.id"),
+        "name": text(workspace.get("name"), "workspace.name"),
+        "monitor": text(workspace.get("monitor"), "workspace.monitor"),
+        "monitorID": integer(workspace.get("monitorID"), "workspace.monitorID"),
+        "windows": integer(workspace.get("windows"), "workspace.windows"),
+        "hasFullscreen": boolean(workspace.get("hasfullscreen"), "workspace.hasfullscreen"),
+        "lastWindow": text(workspace.get("lastwindow"), "workspace.lastwindow"),
+        "lastWindowTitle": text(workspace.get("lastwindowtitle"), "workspace.lastwindowtitle"),
+    }
+
+
+def normalize_window(client, order):
+    if not isinstance(client, dict):
+        raise SnapshotError("Hyprland client record must be an object")
+    return {
+        "order": order,
+        "address": text(client.get("address"), "client.address"),
+        "class": text(client.get("class"), "client.class"),
+        "initialClass": text(client.get("initialClass"), "client.initialClass"),
+        "title": text(client.get("title"), "client.title"),
+        "initialTitle": text(client.get("initialTitle"), "client.initialTitle"),
+        "pid": integer(client.get("pid"), "client.pid"),
+        "workspace": workspace_reference(client.get("workspace"), "client.workspace"),
+        "monitor": integer(client.get("monitor"), "client.monitor"),
+        "position": number_pair(client.get("at"), "client.at"),
+        "size": number_pair(client.get("size"), "client.size"),
+        "floating": boolean(client.get("floating"), "client.floating"),
+        "pseudo": boolean(client.get("pseudo"), "client.pseudo"),
+        "pinned": boolean(client.get("pinned"), "client.pinned"),
+        "fullscreen": integer(client.get("fullscreen"), "client.fullscreen"),
+        "grouped": string_list(client.get("grouped"), "client.grouped"),
+        "swallowing": text(client.get("swallowing"), "client.swallowing", optional=True),
+        "focusHistoryID": integer(client.get("focusHistoryID"), "client.focusHistoryID"),
+        "xwayland": boolean(client.get("xwayland"), "client.xwayland"),
+    }
+
+
+def resolve_active_project(project_id):
+    try:
+        registry, _changed = read_registry(REGISTRY_PATH, DATA_ROOT)
+        if project_id:
+            project = find_project(registry, project_id=project_id)
+        else:
+            active = hypr_json("activeworkspace")
+            if not isinstance(active, dict):
+                raise SnapshotError("hyprctl activeworkspace must return an object")
+            project = find_project(registry, workspace=text(active.get("name"), "activeworkspace.name"))
+    except RegistryError as error:
+        raise SnapshotError(str(error)) from error
+    if not project:
+        target = project_id or "the active workspace"
+        raise SnapshotError(f"No active project found for {target}")
+    return project
+
+
+def capture_project(project):
+    workspaces = hypr_json("workspaces")
+    clients = hypr_json("clients")
+    active_workspace = hypr_json("activeworkspace")
+    active_window = hypr_json("activewindow")
+    if not isinstance(workspaces, list):
+        raise SnapshotError("hyprctl workspaces must return a list")
+    if not isinstance(clients, list):
+        raise SnapshotError("hyprctl clients must return a list")
+    if not isinstance(active_workspace, dict) or not isinstance(active_window, dict):
+        raise SnapshotError("Hyprland active state must be an object")
+
+    matches = [workspace for workspace in workspaces if isinstance(workspace, dict) and workspace.get("name") == project["name"]]
+    if len(matches) != 1:
+        raise SnapshotError(f"Expected one live workspace named {project['name']!r}, found {len(matches)}")
+
+    project_clients = []
+    for client in clients:
+        if not isinstance(client, dict):
+            raise SnapshotError("Hyprland client record must be an object")
+        workspace = client.get("workspace")
+        if isinstance(workspace, dict) and workspace.get("name") == project["name"]:
+            project_clients.append(normalize_window(client, len(project_clients)))
+
+    return {
+        "version": SNAPSHOT_VERSION,
+        "capturedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "hyprlandInstance": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"),
+        "projectId": project["id"],
+        "projectName": project["name"],
+        "workspace": normalize_workspace(matches[0]),
+        "activeWorkspace": workspace_reference(active_workspace, "activeworkspace"),
+        "activeWindowAddress": text(active_window.get("address"), "activewindow.address", optional=True),
+        "windows": project_clients,
+    }
+
+
+def save_snapshot(project, snapshot):
+    home = project_home(DATA_ROOT, project["id"])
+    if not home.exists():
+        raise SnapshotError(f"Project home does not exist: {home}")
+    try:
+        ensure_private_directory(home)
+        snapshots = home / "snapshots"
+        ensure_private_directory(snapshots)
+        target = snapshots / "workspace.json"
+        write_json_atomic(target, snapshot)
+        return target
+    except (OSError, RegistryError) as error:
+        raise SnapshotError(f"Cannot save project snapshot: {error}") from error
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Capture a read-only snapshot of a Project Object workspace")
+    parser.add_argument("--project-id", help="canonical project UUID; defaults to PROJECT_OBJECT_ID or the active workspace")
+    arguments = parser.parse_args()
+    project_id = arguments.project_id or os.environ.get("PROJECT_OBJECT_ID")
+    try:
+        project = resolve_active_project(project_id)
+        target = save_snapshot(project, capture_project(project))
+    except SnapshotError as error:
+        raise SystemExit(f"project-snapshot: {error}") from error
+    print(target)
+
+
+if __name__ == "__main__":
+    main()
