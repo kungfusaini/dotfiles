@@ -133,7 +133,7 @@ def normalize_window(client, order):
         "position": number_pair(client.get("at"), "client.at"),
         "size": number_pair(client.get("size"), "client.size"),
         "floating": boolean(client.get("floating"), "client.floating"),
-        "pseudo": boolean(client.get("pseudo"), "client.pseudo"),
+        "pseudo": boolean(client.get("pseudo"), "client.pseudo", optional=True),
         "pinned": boolean(client.get("pinned"), "client.pinned"),
         "fullscreen": integer(client.get("fullscreen"), "client.fullscreen"),
         "grouped": string_list(client.get("grouped"), "client.grouped"),
