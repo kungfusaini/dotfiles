@@ -54,6 +54,92 @@ def normalized_name(name: str) -> str:
     return unicodedata.normalize("NFKC", name.strip()).lower()
 
 
+def _subsequence_cost(needle: str, haystack: str) -> int | None:
+    position = -1
+    cost = 0
+    for character in needle:
+        next_position = haystack.find(character, position + 1)
+        if next_position < 0:
+            return None
+        cost += next_position - position - 1
+        if next_position == 0 or haystack[next_position - 1] in "/._- ":
+            cost -= 2
+        position = next_position
+    return cost + position
+
+
+def fuzzy_directory_score(query: str, candidate: str, *, home: Path | None = None) -> int | None:
+    """Return a lower-is-better fuzzy path score, or None when it does not match."""
+    raw_query = unicodedata.normalize("NFKC", query.strip()).casefold()
+    normalized_candidate = unicodedata.normalize("NFKC", candidate).casefold()
+    if not raw_query:
+        return 0
+
+    home = home or Path.home()
+    expanded_query = raw_query
+    if raw_query == "~" or raw_query.startswith("~/"):
+        expanded_query = str(home).casefold() + raw_query[1:]
+
+    if normalized_candidate == expanded_query:
+        return -10_000
+
+    basename = Path(candidate).name.casefold()
+    if basename == raw_query:
+        return -8_000 + len(candidate)
+    if basename.startswith(raw_query):
+        return -6_000 + len(basename)
+
+    direct_position = normalized_candidate.find(expanded_query)
+    if direct_position >= 0:
+        return -4_000 + direct_position * 4 + len(candidate)
+
+    token_query = raw_query
+    for separator in ("/", "\\", "_", "-", "."):
+        token_query = token_query.replace(separator, " ")
+    tokens = [token for token in token_query.split() if token and token != "~"]
+    if not tokens:
+        return None
+
+    total = len(candidate)
+    cursor = 0
+    for token in tokens:
+        position = normalized_candidate.find(token, cursor)
+        if position < 0:
+            position = normalized_candidate.find(token)
+        if position >= 0:
+            total += position * 3
+            if position == 0 or normalized_candidate[position - 1] in "/._- ":
+                total -= 12
+            cursor = position + len(token)
+            continue
+        subsequence = _subsequence_cost(token, normalized_candidate)
+        if subsequence is None:
+            return None
+        total += 200 + subsequence * 4
+    return total
+
+
+def fuzzy_directory_matches(
+    query: str,
+    candidates: list[str],
+    *,
+    limit: int = 8,
+    home: Path | None = None,
+) -> list[str]:
+    """Rank unique directory candidates while preserving discovery order for an empty query."""
+    ranked: list[tuple[int, int, str]] = []
+    seen: set[str] = set()
+    for index, candidate in enumerate(candidates):
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        score = fuzzy_directory_score(query, candidate, home=home)
+        if score is not None:
+            ranked.append((score, index, candidate))
+    ranked.sort(key=lambda item: (item[0], item[1]))
+    return [candidate for _score, _index, candidate in ranked[:limit]]
+
+
 def validate_project_name(value: object) -> str:
     if not isinstance(value, str):
         raise RegistryError("Project name must be a string")

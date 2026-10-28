@@ -17,6 +17,7 @@ from project_object import (  # noqa: E402
     RegistryError,
     ensure_private_directory,
     ensure_private_file,
+    fuzzy_directory_matches,
     normalized_name as canonical_normalized_name,
     project_home as canonical_project_home,
     read_registry,

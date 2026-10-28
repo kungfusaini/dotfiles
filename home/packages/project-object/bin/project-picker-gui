@@ -6,6 +6,7 @@ from importlib.machinery import SourceFileLoader
 import os
 from pathlib import Path
 import signal
+import subprocess
 import sys
 import threading
 
@@ -65,6 +66,11 @@ window { background: transparent; }
 .section-copy { color: #8d93a5; margin-bottom: 18px; }
 .field-label { color: #b4bac8; font-size: 12px; font-weight: 650; margin-top: 10px; }
 .create-entry { min-height: 42px; border-radius: 10px; }
+.directory-suggestions { background: #171a23; border: 1px solid rgba(255,255,255,0.09); border-radius: 10px; }
+.directory-suggestion { padding: 8px 11px; border-radius: 7px; }
+.directory-suggestion:selected { background: #2b3142; }
+.directory-path { color: #d9deea; font-size: 12px; }
+.directory-hint { color: #777f93; font-size: 11px; }
 .primary-button { background: #7c9cff; color: #0d1020; font-weight: 750; border-radius: 10px; min-height: 40px; }
 .secondary-button { border-radius: 10px; min-height: 40px; }
 .error { color: #ff8f9b; font-size: 12px; }
@@ -134,6 +140,22 @@ class StreamRow(Gtk.ListBoxRow):
         self.set_child(content)
 
 
+class DirectorySuggestionRow(Gtk.ListBoxRow):
+    def __init__(self, path):
+        super().__init__()
+        self.path = path
+        self.add_css_class("directory-suggestion")
+        display_path = path
+        home = str(Path.home())
+        if path == home:
+            display_path = "~"
+        elif path.startswith(home + os.sep):
+            display_path = "~" + path[len(home):]
+        label = Gtk.Label(label=display_path, xalign=0, ellipsize=3)
+        label.add_css_class("directory-path")
+        self.set_child(label)
+
+
 class PickerApplication(Adw.Application):
     def __init__(self, persistent=False, start_hidden=False):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.NON_UNIQUE)
@@ -150,6 +172,10 @@ class PickerApplication(Adw.Application):
         self.stream_registry = None
         self.search_mode = False
         self.pending_g = False
+        self.directory_candidates = []
+        self.directory_candidates_loaded = False
+        self.directory_candidates_loading = False
+        self.directory_selected_path = None
 
     def do_startup(self):
         Adw.Application.do_startup(self)
@@ -263,16 +289,29 @@ class PickerApplication(Adw.Application):
         label = Gtk.Label(label="MAIN DIRECTORY", xalign=0)
         label.add_css_class("field-label")
         page.append(label)
-        directory_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        self.directory_entry = Gtk.Entry(placeholder_text="/home/you/projects/project", hexpand=True)
+        self.directory_entry = Gtk.Entry(placeholder_text="Type a path or fuzzy fragments…", hexpand=True)
         self.directory_entry.add_css_class("create-entry")
-        self.directory_entry.connect("activate", lambda _entry: self.create_project())
-        browse = Gtk.Button(label="Browse…")
-        browse.add_css_class("secondary-button")
-        browse.connect("clicked", self.choose_directory)
-        directory_row.append(self.directory_entry)
-        directory_row.append(browse)
-        page.append(directory_row)
+        self.directory_entry.connect("changed", self.on_directory_changed)
+        self.directory_entry.connect("activate", lambda _entry: self.activate_directory_entry())
+        directory_focus = Gtk.EventControllerFocus()
+        directory_focus.connect("enter", lambda *_args: self.refresh_directory_suggestions())
+        self.directory_entry.add_controller(directory_focus)
+        page.append(self.directory_entry)
+
+        self.directory_suggestions = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE, activate_on_single_click=True)
+        self.directory_suggestions.add_css_class("directory-suggestions")
+        self.directory_suggestions.connect("row-activated", lambda _box, row: self.select_directory_suggestion(row))
+        self.directory_suggestions_scroll = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+        self.directory_suggestions_scroll.set_max_content_height(170)
+        self.directory_suggestions_scroll.set_propagate_natural_height(True)
+        self.directory_suggestions_scroll.set_child(self.directory_suggestions)
+        self.directory_suggestions_scroll.set_visible(False)
+        page.append(self.directory_suggestions_scroll)
+
+        self.directory_hint = Gtk.Label(label="Loading directories…", xalign=0)
+        self.directory_hint.add_css_class("directory-hint")
+        self.directory_hint.set_visible(False)
+        page.append(self.directory_hint)
 
         self.create_error = Gtk.Label(xalign=0, wrap=True)
         self.create_error.add_css_class("error")
@@ -285,11 +324,11 @@ class PickerApplication(Adw.Application):
         cancel = Gtk.Button(label="Cancel")
         cancel.add_css_class("secondary-button")
         cancel.connect("clicked", lambda _button: self.show_list())
-        create = Gtk.Button(label="Create project")
-        create.add_css_class("primary-button")
-        create.connect("clicked", lambda _button: self.create_project())
+        self.create_button = Gtk.Button(label="Create project")
+        self.create_button.add_css_class("primary-button")
+        self.create_button.connect("clicked", lambda _button: self.create_project())
         actions.append(cancel)
-        actions.append(create)
+        actions.append(self.create_button)
         page.append(actions)
         return page
 
@@ -797,8 +836,12 @@ class PickerApplication(Adw.Application):
 
     def show_create(self):
         self.create_error.set_visible(False)
+        self.directory_selected_path = None
+        self.directory_suggestions_scroll.set_visible(False)
+        self.directory_hint.set_visible(False)
         self.set_normal_actions_enabled(False)
         self.stack.set_visible_child_name("create")
+        self.load_directory_candidates()
         self.name_entry.grab_focus()
 
     def show_list(self):
@@ -839,21 +882,138 @@ class PickerApplication(Adw.Application):
             return
         self.dismiss_window()
 
-    def choose_directory(self, _button):
-        dialog = Gtk.FileDialog(title="Choose main directory")
-        dialog.select_folder(self.window, None, self.directory_chosen)
+    def load_directory_candidates(self):
+        if self.directory_candidates_loaded or self.directory_candidates_loading:
+            self.refresh_directory_suggestions()
+            return
+        self.directory_candidates_loading = True
+        self.refresh_directory_suggestions()
 
-    def directory_chosen(self, dialog, result):
-        try:
-            folder = dialog.select_folder_finish(result)
-            if folder and folder.get_path():
-                self.directory_entry.set_text(folder.get_path())
-        except Exception:
-            pass
+        known = []
+        for project in self.registry.get("projects", []):
+            directory = project.get("mainDirectory")
+            if isinstance(directory, str) and directory not in known:
+                known.append(directory)
+        home = Path.home()
+        for common in (home / "matrix", home / "projects", home / "Projects", home):
+            if common.is_dir() and str(common) not in known:
+                known.append(str(common))
+
+        def discover():
+            candidates = list(known)
+            seen = set(candidates)
+            command = [
+                os.environ.get("PROJECT_PICKER_FD", "fd"),
+                "--type", "d",
+                "--absolute-path",
+                "--hidden",
+                "--max-depth", "7",
+                "--max-results", "12000",
+            ]
+            for excluded in (".git", ".cache", ".local", "node_modules", "target", ".venv", "__pycache__"):
+                command.extend(("--exclude", excluded))
+            command.extend((".", str(home)))
+            try:
+                result = subprocess.run(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
+                    text=True,
+                    timeout=8,
+                    check=False,
+                )
+                if result.returncode == 0:
+                    for line in result.stdout.splitlines():
+                        directory = line.rstrip(os.sep) or os.sep
+                        if directory.startswith(os.sep) and directory not in seen:
+                            candidates.append(directory)
+                            seen.add(directory)
+            except (OSError, subprocess.SubprocessError):
+                pass
+            GLib.idle_add(self.finish_directory_discovery, candidates)
+
+        threading.Thread(target=discover, name="directory-discovery", daemon=True).start()
+
+    def finish_directory_discovery(self, candidates):
+        self.directory_candidates = candidates
+        self.directory_candidates_loading = False
+        self.directory_candidates_loaded = True
+        self.refresh_directory_suggestions()
+        return GLib.SOURCE_REMOVE
+
+    def on_directory_changed(self, _entry):
+        if self.directory_entry.get_text() != self.directory_selected_path:
+            self.directory_selected_path = None
+        self.refresh_directory_suggestions()
+
+    def refresh_directory_suggestions(self):
+        if not hasattr(self, "directory_suggestions"):
+            return
+        while child := self.directory_suggestions.get_first_child():
+            self.directory_suggestions.remove(child)
+
+        if self.directory_selected_path == self.directory_entry.get_text():
+            self.directory_suggestions_scroll.set_visible(False)
+            self.directory_hint.set_text("Selected directory")
+            self.directory_hint.set_visible(True)
+            return
+
+        if self.directory_candidates_loading:
+            self.directory_suggestions_scroll.set_visible(False)
+            self.directory_hint.set_text("Loading directories…")
+            self.directory_hint.set_visible(self.directory_entry.has_focus())
+            return
+
+        matches = backend.fuzzy_directory_matches(
+            self.directory_entry.get_text(),
+            self.directory_candidates,
+            limit=7,
+            home=Path.home(),
+        )
+        for path in matches:
+            self.directory_suggestions.append(DirectorySuggestionRow(path))
+        self.directory_suggestions_scroll.set_visible(bool(matches))
+        self.directory_hint.set_text("No fuzzy matches — an exact existing path is still accepted.")
+        self.directory_hint.set_visible(not matches and self.directory_entry.has_focus())
+        if matches:
+            self.directory_suggestions.select_row(self.directory_suggestions.get_row_at_index(0))
+
+    def move_directory_suggestion(self, offset):
+        rows = []
+        child = self.directory_suggestions.get_first_child()
+        while child:
+            rows.append(child)
+            child = child.get_next_sibling()
+        if not rows:
+            return
+        selected = self.directory_suggestions.get_selected_row()
+        index = rows.index(selected) if selected in rows else 0
+        target = rows[max(0, min(len(rows) - 1, index + offset))]
+        self.directory_suggestions.select_row(target)
+
+    def select_directory_suggestion(self, row=None):
+        row = row or self.directory_suggestions.get_selected_row()
+        if not isinstance(row, DirectorySuggestionRow):
+            return False
+        self.directory_entry.set_text(row.path)
+        self.directory_selected_path = row.path
+        self.directory_suggestions_scroll.set_visible(False)
+        self.directory_hint.set_text("Selected directory")
+        self.directory_hint.set_visible(True)
+        self.create_button.grab_focus()
+        return True
+
+    def activate_directory_entry(self):
+        if self.directory_suggestions_scroll.get_visible() and self.select_directory_suggestion():
+            return
+        self.create_project()
 
     def create_project(self):
         try:
-            project = backend.create_project(self.registry, self.name_entry.get_text(), self.directory_entry.get_text())
+            raw_directory = self.directory_entry.get_text().strip()
+            directory = str(Path(os.path.expanduser(raw_directory)).resolve(strict=False)) if raw_directory else raw_directory
+            self.directory_entry.set_text(directory)
+            project = backend.create_project(self.registry, self.name_entry.get_text(), directory)
             self.selected_scope = {"kind": "project", "projectId": project["id"]}
             self.save_picker_state()
             backend.enter_project(project, self.session, True)
@@ -943,8 +1103,22 @@ class PickerApplication(Adw.Application):
     def on_key_pressed(self, _controller, keyval, _keycode, state):
         control = bool(state & Gdk.ModifierType.CONTROL_MASK)
         shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
+        page = self.stack.get_visible_child_name()
+        if page == "create" and self.directory_entry.has_focus():
+            suggestions_visible = self.directory_suggestions_scroll.get_visible()
+            if suggestions_visible and (keyval == Gdk.KEY_Down or (control and keyval == Gdk.KEY_j)):
+                self.move_directory_suggestion(1)
+                return True
+            if suggestions_visible and (keyval == Gdk.KEY_Up or (control and keyval == Gdk.KEY_k)):
+                self.move_directory_suggestion(-1)
+                return True
+            if suggestions_visible and keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+                self.select_directory_suggestion()
+                return True
+            if suggestions_visible and keyval == Gdk.KEY_Escape:
+                self.directory_suggestions_scroll.set_visible(False)
+                return True
         if keyval == Gdk.KEY_Escape:
-            page = self.stack.get_visible_child_name()
             if page in ("create", "create-stream"):
                 self.show_list()
             elif self.search_mode:

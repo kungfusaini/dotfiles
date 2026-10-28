@@ -9,6 +9,7 @@
 , kitty
 , hyprland
 , libnotify
+, fd
 }:
 
 let
@@ -44,7 +45,7 @@ stdenvNoCC.mkDerivation {
 
   postFixup = ''
     wrapGApp "$out/bin/project-picker-gui" \
-      --prefix PATH : ${lib.makeBinPath [ hyprland libnotify ]} \
+      --prefix PATH : ${lib.makeBinPath [ fd hyprland libnotify ]} \
       --set PROJECT_OBJECT_TERMINAL "$out/bin/project-terminal"
     wrapProgram "$out/bin/project-picker-tui" \
       --prefix PATH : ${lib.makeBinPath [ kitty hyprland libnotify ]} \
