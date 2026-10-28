@@ -58,11 +58,9 @@ def start_daemon(show):
 
 def main():
     preload = "--preload" in sys.argv[1:]
-    if not preload and focus_existing_picker():
-        return
     pid = running_daemon()
     if pid:
-        if not preload:
+        if not preload and not focus_existing_picker():
             os.kill(pid, signal.SIGUSR1)
         return
     start_daemon(show=not preload)
