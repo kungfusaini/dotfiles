@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, statSync, writeSync } from "node:fs";
+import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 const MAX_REGISTRY_BYTES = 1024 * 1024;
+const MAX_STREAM_REGISTRY_BYTES = 1024 * 1024;
 const MAX_AGENTS_BYTES = 64 * 1024;
 const MAX_WORKLOG_BYTES = 32 * 1024 * 1024;
 const MAX_WORKLOG_ENTRY_BYTES = 16 * 1024;
@@ -26,6 +27,7 @@ const WorklogParameters = {
     blocker: { type: "string", minLength: 1, maxLength: 4000 },
     result: { type: "string", minLength: 1, maxLength: 4000 },
     files: { type: "array", maxItems: 32, items: { type: "string", minLength: 1, maxLength: 4096 } },
+    projectAttention: { type: "boolean", description: "Request parent-project review without copying or promoting this stream event." },
   },
 } as const;
 
@@ -39,6 +41,7 @@ type WorklogParametersValue = {
   blocker?: string;
   result?: string;
   files?: string[];
+  projectAttention?: boolean;
 };
 
 type ProjectRecord = {
@@ -48,19 +51,94 @@ type ProjectRecord = {
   archivedAt?: string | null;
 };
 
+type StreamRecord = {
+  id: string;
+  name: string;
+  mainDirectory?: string | null;
+  archivedAt?: string | null;
+};
+
 type ProjectContext = ProjectRecord & {
   projectHome: string;
   agentsFile: string;
 };
 
-type Resolution = { project?: ProjectContext; error?: string };
+type StreamContext = StreamRecord & {
+  projectId: string;
+  streamHome: string;
+  agentsFile: string;
+  mainDirectory: string;
+};
+
+type Resolution = { project?: ProjectContext; stream?: StreamContext; error?: string };
 
 export function dataRoot(): string {
   return resolve(process.env.PROJECT_OBJECT_DATA_DIR || join(process.env.XDG_DATA_HOME || join(homedir(), ".local", "share"), "project-object"));
 }
 
+function runtimeRoot(): string {
+  return resolve(process.env.PROJECT_OBJECT_RUNTIME_DIR || join(process.env.XDG_RUNTIME_DIR || `/tmp/project-object-${process.getuid()}`, "project-object"));
+}
+
+function activityFile(): string {
+  return join(runtimeRoot(), "pi-activity", `${process.pid}.json`);
+}
+
+function writeActivity(resolution: Resolution, state: "working" | "idle"): void {
+  const project = resolution.project;
+  if (!project) return;
+  const directory = join(runtimeRoot(), "pi-activity");
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const directoryMetadata = lstatSync(directory);
+  if (directoryMetadata.isSymbolicLink() || !directoryMetadata.isDirectory()) throw new Error("Pi activity directory must be a regular non-symlink directory");
+  const target = activityFile();
+  const temporary = join(directory, `.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}.tmp`);
+  const payload = `${JSON.stringify({
+    version: 1,
+    pid: process.pid,
+    projectId: project.id,
+    streamId: resolution.stream?.id || null,
+    state,
+    updatedAt: new Date().toISOString(),
+  })}\n`;
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    fchmodSync(descriptor, 0o600);
+    writeSync(descriptor, payload);
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+    renameSync(temporary, target);
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+    try { unlinkSync(temporary); } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+  }
+}
+
+function removeActivity(): void {
+  try { unlinkSync(activityFile()); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function initSkillFile(): string {
+  const configRoot = process.env.XDG_CONFIG_HOME || join(homedir(), ".config");
+  return join(configRoot, "project-object", "init", "SKILL.md");
+}
+
 function canonicalProjectHome(id: string): string {
   return join(dataRoot(), "projects", id);
+}
+
+function canonicalStreamHome(projectId: string, streamId: string): string {
+  return join(canonicalProjectHome(projectId), "streams", streamId);
+}
+
+function streamWorkspaceName(projectName: string, streamName: string): string {
+  return `${projectName} · ${streamName}`;
 }
 
 function validateRegistry(parsed: unknown): ProjectRecord[] {
@@ -84,6 +162,46 @@ function validateRegistry(parsed: unknown): ProjectRecord[] {
     names.add(normalizedName);
     return { id: record.id, name: record.name, mainDirectory: record.mainDirectory, archivedAt: record.archivedAt as string | null | undefined };
   });
+}
+
+function validateStreams(parsed: unknown, project: ProjectRecord): StreamRecord[] {
+  if (!parsed || typeof parsed !== "object" || (parsed as { version?: unknown }).version !== 1 || !Array.isArray((parsed as { streams?: unknown }).streams)) {
+    throw new Error(`unsupported or malformed stream registry for project ${project.id}`);
+  }
+  const ids = new Set<string>();
+  const names = new Set<string>();
+  return (parsed as { streams: unknown[] }).streams.map((raw, index) => {
+    if (!raw || typeof raw !== "object") throw new Error(`stream record ${index} is not an object`);
+    const record = raw as Record<string, unknown>;
+    if (typeof record.id !== "string" || !UUID_PATTERN.test(record.id)) throw new Error(`stream record ${index} has an invalid UUID`);
+    if (typeof record.name !== "string" || record.name !== record.name.trim() || !record.name || /[\r\n\t]/.test(record.name)) throw new Error(`stream ${record.id} has an invalid name`);
+    if (record.mainDirectory !== undefined && record.mainDirectory !== null && (typeof record.mainDirectory !== "string" || !isAbsolute(record.mainDirectory) || resolve(record.mainDirectory) !== record.mainDirectory)) throw new Error(`stream ${record.id} has an invalid mainDirectory`);
+    if (record.archivedAt !== undefined && record.archivedAt !== null && typeof record.archivedAt !== "string") throw new Error(`stream ${record.id} has an invalid archivedAt`);
+    const normalizedName = record.name.trim().normalize("NFKC").toLowerCase();
+    if (ids.has(record.id)) throw new Error(`duplicate stream ID: ${record.id}`);
+    if (names.has(normalizedName)) throw new Error(`duplicate normalized stream name: ${record.name}`);
+    ids.add(record.id);
+    names.add(normalizedName);
+    return { id: record.id, name: record.name, mainDirectory: record.mainDirectory as string | null | undefined, archivedAt: record.archivedAt as string | null | undefined };
+  });
+}
+
+function loadStreams(project: ProjectRecord): StreamRecord[] {
+  const registry = join(canonicalProjectHome(project.id), "streams.json");
+  let metadata;
+  try {
+    metadata = lstatSync(registry);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw new Error(`cannot inspect stream registry: ${(error as Error).message}`);
+  }
+  if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error("stream registry must be a regular non-symlink file");
+  if (metadata.size > MAX_STREAM_REGISTRY_BYTES) throw new Error(`stream registry exceeds ${MAX_STREAM_REGISTRY_BYTES} bytes`);
+  try {
+    return validateStreams(JSON.parse(readFileSync(registry, "utf8")), project);
+  } catch (error) {
+    throw new Error(`cannot load stream registry: ${(error as Error).message}`);
+  }
 }
 
 export function loadProjects(): ProjectRecord[] {
@@ -120,14 +238,50 @@ export function resolveProject(): Resolution {
   try {
     const projects = loadProjects();
     const explicitId = process.env.PROJECT_OBJECT_ID;
+    const explicitStreamId = process.env.PROJECT_OBJECT_STREAM_ID;
     if (explicitId && !UUID_PATTERN.test(explicitId)) throw new Error("PROJECT_OBJECT_ID is not a canonical UUID");
+    if (explicitStreamId && !UUID_PATTERN.test(explicitStreamId)) throw new Error("PROJECT_OBJECT_STREAM_ID is not a canonical UUID");
+    if (explicitStreamId && !explicitId) throw new Error("PROJECT_OBJECT_STREAM_ID requires PROJECT_OBJECT_ID");
+
     const workspace = explicitId ? undefined : activeWorkspace();
-    const project = explicitId
-      ? projects.find((candidate) => candidate.id === explicitId && !candidate.archivedAt)
-      : projects.find((candidate) => !candidate.archivedAt && candidate.name === workspace);
+    let project = explicitId ? projects.find((candidate) => candidate.id === explicitId && !candidate.archivedAt) : undefined;
+    let stream: StreamRecord | undefined;
+
+    if (project && explicitStreamId) {
+      stream = loadStreams(project).find((candidate) => candidate.id === explicitStreamId && !candidate.archivedAt);
+      if (!stream) throw new Error(`attached stream not found: ${explicitStreamId}`);
+    } else if (!explicitId && workspace) {
+      const matches: Array<{ project: ProjectRecord; stream?: StreamRecord }> = [];
+      for (const candidate of projects.filter((item) => !item.archivedAt)) {
+        if (candidate.name === workspace) matches.push({ project: candidate });
+        for (const candidateStream of loadStreams(candidate)) {
+          if (!candidateStream.archivedAt && streamWorkspaceName(candidate.name, candidateStream.name) === workspace) {
+            matches.push({ project: candidate, stream: candidateStream });
+          }
+        }
+      }
+      if (matches.length > 1) throw new Error(`ambiguous project or stream workspace name: ${JSON.stringify(workspace)}`);
+      if (matches.length === 1) {
+        project = matches[0].project;
+        stream = matches[0].stream;
+      }
+    }
     if (!project) return {};
+
     const projectHome = canonicalProjectHome(project.id);
-    return { project: { ...project, projectHome, agentsFile: join(projectHome, "AGENTS.md") } };
+    const projectContext: ProjectContext = { ...project, projectHome, agentsFile: join(projectHome, "AGENTS.md") };
+    if (!stream) return { project: projectContext };
+    const streamHome = canonicalStreamHome(project.id, stream.id);
+    return {
+      project: projectContext,
+      stream: {
+        ...stream,
+        projectId: project.id,
+        streamHome,
+        agentsFile: join(streamHome, "AGENTS.md"),
+        mainDirectory: stream.mainDirectory || project.mainDirectory,
+      },
+    };
   } catch (error) {
     return { error: (error as Error).message };
   }
@@ -144,6 +298,7 @@ function trimmedField(value: string | undefined, name: string, maximum: number):
 
 function validateWorklogParameters(parameters: WorklogParametersValue): WorklogParametersValue {
   if (!WORKLOG_TYPE_SET.has(parameters.type)) throw new Error(`invalid worklog type: ${parameters.type}`);
+  if (parameters.projectAttention !== undefined && typeof parameters.projectAttention !== "boolean") throw new Error("projectAttention must be a boolean");
   const validated: WorklogParametersValue = {
     type: parameters.type,
     summary: trimmedField(parameters.summary, "summary", 2000)!,
@@ -153,6 +308,7 @@ function validateWorklogParameters(parameters: WorklogParametersValue): WorklogP
     lesson: trimmedField(parameters.lesson, "lesson", 4000),
     blocker: trimmedField(parameters.blocker, "blocker", 4000),
     result: trimmedField(parameters.result, "result", 4000),
+    projectAttention: parameters.projectAttention,
   };
   if (parameters.files !== undefined) {
     if (!Array.isArray(parameters.files) || parameters.files.length > 32) throw new Error("files must contain at most 32 paths");
@@ -164,19 +320,24 @@ function validateWorklogParameters(parameters: WorklogParametersValue): WorklogP
   return validated;
 }
 
-export function appendProjectWorklogEntry(project: ProjectContext, parameters: WorklogParametersValue, sessionId: string): string {
+export function appendProjectWorklogEntry(project: ProjectContext, parameters: WorklogParametersValue, sessionId: string, stream?: StreamContext): string {
   const validated = validateWorklogParameters(parameters);
+  if (validated.projectAttention && !stream) throw new Error("projectAttention is only valid for stream worklog entries");
+  const scopeHome = stream?.streamHome || project.projectHome;
+  const scopeLabel = stream ? "stream" : "project";
   let projectDescriptor: number;
   try {
-    projectDescriptor = openSync(project.projectHome, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    projectDescriptor = openSync(scopeHome, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   } catch (error) {
-    throw new Error(`cannot open project home safely: ${(error as Error).message}`);
+    throw new Error(`cannot open ${scopeLabel} home safely: ${(error as Error).message}`);
   }
 
   try {
-    const expectedHome = join(realpathSync(dataRoot()), "projects", project.id);
+    const expectedHome = stream
+      ? join(realpathSync(dataRoot()), "projects", project.id, "streams", stream.id)
+      : join(realpathSync(dataRoot()), "projects", project.id);
     const openedHome = realpathSync(`/proc/self/fd/${projectDescriptor}`);
-    if (openedHome !== expectedHome) throw new Error("opened project home does not match the canonical UUID path");
+    if (openedHome !== expectedHome) throw new Error(`opened ${scopeLabel} home does not match the canonical UUID path`);
 
     const worklogsPath = `/proc/self/fd/${projectDescriptor}/worklogs`;
     try {
@@ -202,6 +363,7 @@ export function appendProjectWorklogEntry(project: ProjectContext, parameters: W
         v: 1,
         time: new Date().toISOString(),
         project: project.id,
+        ...(stream ? { scope: "stream", stream: { id: stream.id, name: stream.name } } : { scope: "project" }),
         session: sessionId,
         ...validated,
       };
@@ -232,7 +394,7 @@ export function appendProjectWorklogEntry(project: ProjectContext, parameters: W
       } finally {
         closeSync(worklogDescriptor);
       }
-      return join(project.projectHome, "worklogs", "events.jsonl");
+      return join(scopeHome, "worklogs", "events.jsonl");
     } finally {
       closeSync(worklogsDescriptor);
     }
@@ -241,19 +403,24 @@ export function appendProjectWorklogEntry(project: ProjectContext, parameters: W
   }
 }
 
-export function readAgentInstructions(project: ProjectContext, afterProjectDirectoryOpened?: () => void): string {
+export function readAgentInstructions(project: ProjectContext, afterProjectDirectoryOpened?: () => void, stream?: StreamContext): string {
+  const scopeHome = stream?.streamHome || project.projectHome;
+  const scopeLabel = stream ? "Stream" : "Project";
+  const scopeName = stream?.name || project.name;
   let directoryDescriptor: number;
   try {
-    directoryDescriptor = openSync(project.projectHome, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    directoryDescriptor = openSync(scopeHome, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return `Project: ${project.name}\nProject home: ${project.projectHome}\nThe project AGENTS.md file is missing.`;
-    throw new Error(`cannot open project home safely: ${(error as Error).message}`);
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return `${scopeLabel}: ${scopeName}\n${scopeLabel} home: ${scopeHome}\nThe ${scopeLabel.toLowerCase()} AGENTS.md file is missing.`;
+    throw new Error(`cannot open ${scopeLabel.toLowerCase()} home safely: ${(error as Error).message}`);
   }
 
   try {
-    const expectedHome = join(realpathSync(dataRoot()), "projects", project.id);
+    const expectedHome = stream
+      ? join(realpathSync(dataRoot()), "projects", project.id, "streams", stream.id)
+      : join(realpathSync(dataRoot()), "projects", project.id);
     const openedHome = realpathSync(`/proc/self/fd/${directoryDescriptor}`);
-    if (openedHome !== expectedHome) throw new Error("opened project home does not match the canonical UUID path");
+    if (openedHome !== expectedHome) throw new Error(`opened ${scopeLabel.toLowerCase()} home does not match the canonical UUID path`);
 
     afterProjectDirectoryOpened?.();
 
@@ -261,7 +428,7 @@ export function readAgentInstructions(project: ProjectContext, afterProjectDirec
     try {
       descriptor = openSync(`/proc/self/fd/${directoryDescriptor}/AGENTS.md`, constants.O_RDONLY | constants.O_NOFOLLOW);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") return `Project: ${project.name}\nProject home: ${project.projectHome}\nThe project AGENTS.md file is missing.`;
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return `${scopeLabel}: ${scopeName}\n${scopeLabel} home: ${scopeHome}\nThe ${scopeLabel.toLowerCase()} AGENTS.md file is missing.`;
       throw new Error(`cannot open AGENTS.md safely: ${(error as Error).message}`);
     }
 
@@ -272,7 +439,7 @@ export function readAgentInstructions(project: ProjectContext, afterProjectDirec
 
       const resolvedFile = realpathSync(`/proc/self/fd/${descriptor}`);
       const openedHome = realpathSync(`/proc/self/fd/${directoryDescriptor}`);
-      if (relative(openedHome, resolvedFile) !== "AGENTS.md") throw new Error("AGENTS.md does not belong to the pinned project directory");
+      if (relative(openedHome, resolvedFile) !== "AGENTS.md") throw new Error(`AGENTS.md does not belong to the pinned ${scopeLabel.toLowerCase()} directory`);
 
       const chunks: Buffer[] = [];
       let total = 0;
@@ -299,6 +466,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   let resolution: Resolution = {};
 
   pi.on("session_start", async (_event, ctx) => {
+    try { removeActivity(); } catch { /* advisory */ }
     resolution = resolveProject();
     if (resolution.error) {
       ctx.ui.setStatus("project-object", ctx.ui.theme.fg("error", "Project context error"));
@@ -310,8 +478,23 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       ctx.ui.setStatus("project-object", undefined);
       return;
     }
-    ctx.ui.setStatus("project-object", ctx.ui.theme.fg("accent", `Project: ${project.name}`));
-    if (ctx.mode === "tui") ctx.ui.notify(`Project context loaded: ${project.name}`, "info");
+    const stream = resolution.stream;
+    const label = stream ? `Project: ${project.name} · Stream: ${stream.name}` : `Project: ${project.name}`;
+    ctx.ui.setStatus("project-object", ctx.ui.theme.fg("accent", label));
+    try { writeActivity(resolution, "idle"); } catch { /* Activity is advisory and must never block Pi. */ }
+    if (ctx.mode === "tui") ctx.ui.notify(`${label} context loaded`, "info");
+  });
+
+  pi.on("agent_start", () => {
+    try { writeActivity(resolution, "working"); } catch { /* advisory */ }
+  });
+
+  pi.on("agent_settled", () => {
+    try { writeActivity(resolution, "idle"); } catch { /* advisory */ }
+  });
+
+  pi.on("session_shutdown", () => {
+    try { removeActivity(); } catch { /* advisory */ }
   });
 
   pi.on("before_agent_start", (event) => {
@@ -325,34 +508,92 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       delete event.systemPromptOptions.sections.project_object;
       return;
     }
-    const worklogGuidance = "For meaningful progress, decisions, mistakes, blockers, completed work, or a concrete next step, append one concise durable entry with project_worklog_append before wrapping up. Never put credentials, tokens, private keys, or other secrets in a worklog.";
+    const stream = resolution.stream;
+    const worklogScope = stream ? `the ${stream.name} stream` : "the project";
+    const worklogGuidance = `For meaningful progress, decisions, mistakes, blockers, completed work, or a concrete next step, append one concise durable entry with project_worklog_append before wrapping up. It writes to ${worklogScope}; stream details must not be copied into project artifacts automatically. Never put credentials, tokens, private keys, or other secrets in a worklog.`;
+    const instructions: string[] = [];
     try {
-      event.systemPromptOptions.sections.project_object = `${readAgentInstructions(project)}\n\n${worklogGuidance}`;
+      instructions.push(readAgentInstructions(project));
     } catch (error) {
-      event.systemPromptOptions.sections.project_object = `Project: ${project.name}\nProject home: ${project.projectHome}\nProject AGENTS.md was not loaded: ${(error as Error).message}\n\n${worklogGuidance}`;
+      instructions.push(`Project: ${project.name}\nProject home: ${project.projectHome}\nProject AGENTS.md was not loaded: ${(error as Error).message}`);
     }
+    if (stream) {
+      try {
+        instructions.push(readAgentInstructions(project, undefined, stream));
+      } catch (error) {
+        instructions.push(`Stream: ${stream.name}\nStream home: ${stream.streamHome}\nStream AGENTS.md was not loaded: ${(error as Error).message}`);
+      }
+    }
+    instructions.push(worklogGuidance);
+    event.systemPromptOptions.sections.project_object = instructions.join("\n\n");
   });
 
   pi.registerTool({
     name: "project_worklog_append",
-    label: "Project worklog",
-    description: "Append one concise durable event to the attached Project Object worklog. Use only for meaningful continuity: starts, progress, decisions, mistakes, blockers, finishes, next actions, or notes. Never include credentials, tokens, private keys, or other secrets.",
+    label: "Project/stream worklog",
+    description: "Append one concise durable event to the attached scope worklog. Stream-scoped sessions write to the stream; project-scoped sessions write to the project. Set projectAttention only when parent-project review is genuinely needed; it requests review but does not copy or promote the event. Never include credentials or secrets.",
     parameters: WorklogParameters,
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
       if (!resolution.project && !resolution.error) resolution = resolveProject();
       if (resolution.error) throw new Error(`Project context error: ${resolution.error}`);
       const project = resolution.project;
       if (!project) throw new Error("No project object is attached to this Pi session");
-      const worklog = appendProjectWorklogEntry(project, parameters as WorklogParametersValue, ctx.sessionManager.getSessionId());
+      const stream = resolution.stream;
+      const worklog = appendProjectWorklogEntry(project, parameters as WorklogParametersValue, ctx.sessionManager.getSessionId(), stream);
       return {
         content: [{ type: "text", text: `${parameters.type}: ${parameters.summary}` }],
-        details: { projectId: project.id, worklog, type: parameters.type },
+        details: { projectId: project.id, streamId: stream?.id, scope: stream ? "stream" : "project", worklog, type: parameters.type },
       };
     },
   });
 
+  pi.registerCommand("init", {
+    description: "Initialize pristine artifacts for the attached stream once",
+    handler: async (args, ctx) => {
+      if (!ctx.isIdle()) {
+        ctx.ui.notify("Wait for the current response to finish before running /init", "warning");
+        return;
+      }
+      if (!resolution.project && !resolution.error) resolution = resolveProject();
+      if (resolution.error) {
+        ctx.ui.notify(`Project context error: ${resolution.error}`, "error");
+        return;
+      }
+      const project = resolution.project;
+      const stream = resolution.stream;
+      if (!project || !stream) {
+        ctx.ui.notify("/init requires a stream-attached Pi session", "warning");
+        return;
+      }
+      const marker = join(stream.streamHome, ".project-object-initialized.json");
+      try {
+        const metadata = lstatSync(marker);
+        if (metadata.isSymbolicLink() || !metadata.isFile()) {
+          ctx.ui.notify("Stream initialization marker is unsafe; refusing /init", "error");
+        } else {
+          ctx.ui.notify(`${stream.name} has already been initialized`, "warning");
+        }
+        return;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          ctx.ui.notify(`Cannot inspect stream initialization state: ${(error as Error).message}`, "error");
+          return;
+        }
+      }
+
+      const suppliedGoal = args.trim();
+      pi.sendUserMessage([
+        `Initialize the pristine ${stream.name} stream in the ${project.name} project.`,
+        `Before doing anything else, read and follow the complete one-time init skill at: ${initSkillFile()}`,
+        "The skill guard is authoritative. If it refuses, make no changes.",
+        "This is setup only: do not begin substantive investigation, SSH, implementation, deployment, or external actions.",
+        suppliedGoal ? `User-supplied goal or context: ${suppliedGoal}` : "Use the active conversation to infer the goal; ask one concise question only if it is genuinely unclear.",
+      ].join("\n"));
+    },
+  });
+
   pi.registerCommand("catchup", {
-    description: "Summarize where project work stopped and what to do next",
+    description: "Summarize where the attached project or stream work stopped",
     handler: async (args, ctx) => {
       if (!ctx.isIdle()) {
         ctx.ui.notify("Wait for the current response to finish before running /catchup", "warning");
@@ -370,13 +611,18 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       }
 
       const optionalFocus = args.trim();
+      const stream = resolution.stream;
+      const scopeHome = stream?.streamHome || project.projectHome;
+      const mainDirectory = stream?.mainDirectory || project.mainDirectory;
+      const scopeDescription = stream ? `${stream.name} stream in the ${project.name} project` : `${project.name} project`;
       pi.sendUserMessage([
-        `Catch me up on where we left off in the ${project.name} project and what I should do next.`,
-        "Do not introduce or explain the project to me. Assume I remember what the project is.",
-        "Use tools to inspect the newest relevant worklog entries first, then TODO.md and NOTES.md in the project home, plus uncommitted Git changes and recent commits in the main directory when it is a Git repository.",
-        `Worklog: ${join(project.projectHome, "worklogs", "events.jsonl")}`,
+        `Catch me up on where we left off in the ${scopeDescription} and what I should do next.`,
+        "Do not introduce or explain the project to me. Assume I remember what it is.",
+        `Use tools to inspect the newest relevant worklog entries first, then STATUS.md when present, TODO.md and NOTES.md in the attached scope home, plus uncommitted Git changes and recent commits in the working directory when it is a Git repository. ${stream ? "Use project-level context only as inherited background; keep detailed stream findings local." : "Include bounded stream status and unresolved projectAttention worklog entries when relevant, without copying stream detail into project artifacts."}`,
+        `Worklog: ${join(scopeHome, "worklogs", "events.jsonl")}`,
+        `Scope home: ${scopeHome}`,
         `Project home: ${project.projectHome}`,
-        `Main directory: ${project.mainDirectory}`,
+        `Main directory: ${mainDirectory}`,
         "Reply concisely under exactly these headings: What we were doing; Where we left off; What's next.",
         "Prefer concrete recent evidence. If the records are sparse, say what you inferred from Git rather than filling space with general project background.",
         optionalFocus ? `Pay particular attention to: ${optionalFocus}` : "",
@@ -397,11 +643,17 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
         ctx.ui.notify("No project object is attached to this Pi session", "warning");
         return;
       }
+      const stream = resolution.stream;
       ctx.ui.notify([
         `Project: ${project.name}`,
-        `Main directory: ${project.mainDirectory}`,
+        ...(stream ? [
+          `Stream: ${stream.name}`,
+          `Working directory: ${stream.mainDirectory}`,
+          `Stream home: ${stream.streamHome}`,
+          `Stream instructions: ${stream.agentsFile}`,
+        ] : [`Main directory: ${project.mainDirectory}`]),
         `Project home: ${project.projectHome}`,
-        `Agent instructions: ${project.agentsFile}`,
+        `Project instructions: ${project.agentsFile}`,
       ].join("\n"), "info");
     },
   });

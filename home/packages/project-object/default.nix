@@ -16,7 +16,7 @@ let
 in
 stdenvNoCC.mkDerivation {
   pname = "project-object";
-  version = "0.3.0";
+  version = "0.4.0";
   src = lib.cleanSourceWith {
     src = ./.;
     filter = path: type:
@@ -32,11 +32,12 @@ stdenvNoCC.mkDerivation {
 
   installPhase = ''
     runHook preInstall
-    mkdir -p "$out/bin" "$out/lib" "$out/share/project-object/pi"
+    mkdir -p "$out/bin" "$out/lib" "$out/share/project-object/pi/skills"
     cp bin/project-picker bin/project-picker-gui bin/project-picker-tui bin/project-snapshot bin/project-terminal "$out/bin/"
     cp lib/project_object.py "$out/lib/"
     cp integrations/pi/project-object.ts "$out/share/project-object/pi/"
-    chmod 0555 "$out/bin/project-picker" "$out/bin/project-picker-gui" "$out/bin/project-picker-tui" "$out/bin/project-snapshot" "$out/bin/project-terminal"
+    cp -R integrations/pi/skills/init "$out/share/project-object/pi/skills/"
+    chmod 0555 "$out/bin/project-picker" "$out/bin/project-picker-gui" "$out/bin/project-picker-tui" "$out/bin/project-snapshot" "$out/bin/project-terminal" "$out/share/project-object/pi/skills/init/scripts/guard.py"
     patchShebangs "$out/bin"
     runHook postInstall
   '';

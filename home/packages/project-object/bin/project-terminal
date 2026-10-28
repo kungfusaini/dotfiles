@@ -14,6 +14,11 @@ from project_object import (  # noqa: E402
     project_home,
     project_session_directory,
     read_registry,
+    read_stream_registry,
+    find_stream,
+    stream_home,
+    stream_session_directory,
+    stream_workspace_name,
 )
 
 HOME = Path.home()
@@ -34,15 +39,37 @@ def active_workspace_name():
         return None
 
 
-def resolve_project(project_id):
+def resolve_scope(project_id, stream_id):
     try:
         registry, _changed = read_registry(REGISTRY_PATH, DATA_ROOT)
-        return find_project(registry, project_id=project_id) if project_id else find_project(registry, workspace=active_workspace_name())
-    except RegistryError as error:
         if project_id:
+            project = find_project(registry, project_id=project_id)
+            if not project:
+                return None, None
+            if not stream_id:
+                return project, None
+            stream = find_stream(read_stream_registry(DATA_ROOT, project), stream_id=stream_id)
+            return project, stream
+
+        workspace = active_workspace_name()
+        matches = []
+        for candidate in registry["projects"]:
+            if candidate.get("archivedAt"):
+                continue
+            if candidate["name"] == workspace:
+                matches.append((candidate, None))
+            streams = read_stream_registry(DATA_ROOT, candidate)
+            for stream in streams["streams"]:
+                if not stream.get("archivedAt") and stream_workspace_name(candidate["name"], stream["name"]) == workspace:
+                    matches.append((candidate, stream))
+        if len(matches) > 1:
+            raise RegistryError(f"Ambiguous project or stream workspace name: {workspace!r}")
+        return matches[0] if matches else (None, None)
+    except RegistryError as error:
+        if project_id or stream_id:
             raise
         print(f"project-terminal: ignoring invalid registry: {error}", file=sys.stderr)
-        return None
+        return None, None
 
 
 def has_directory_argument(arguments):
@@ -52,18 +79,27 @@ def has_directory_argument(arguments):
 def main():
     arguments = sys.argv[1:]
     requested_project_id = None
-    if arguments and arguments[0] == "--project-id":
+    requested_stream_id = None
+    while len(arguments) >= 1 and arguments[0] in ("--project-id", "--stream-id"):
+        option = arguments[0]
         if len(arguments) < 2:
-            raise SystemExit("project-terminal: --project-id requires a UUID")
-        requested_project_id = arguments[1]
+            raise SystemExit(f"project-terminal: {option} requires a UUID")
+        if option == "--project-id":
+            requested_project_id = arguments[1]
+        else:
+            requested_stream_id = arguments[1]
         arguments = arguments[2:]
+    if requested_stream_id and not requested_project_id:
+        raise SystemExit("project-terminal: --stream-id requires --project-id")
 
     try:
-        project = resolve_project(requested_project_id)
+        project, stream = resolve_scope(requested_project_id, requested_stream_id)
     except RegistryError as error:
         raise SystemExit(f"project-terminal: {error}") from error
     if requested_project_id and not project:
         raise SystemExit(f"project-terminal: active project not found: {requested_project_id}")
+    if requested_stream_id and not stream:
+        raise SystemExit(f"project-terminal: active stream not found: {requested_stream_id}")
 
     environment = os.environ.copy()
     kitty_arguments = [KITTY]
@@ -74,6 +110,9 @@ def main():
             "PROJECT_OBJECT_NAME",
             "PROJECT_OBJECT_HOME",
             "PROJECT_OBJECT_MAIN_DIRECTORY",
+            "PROJECT_OBJECT_STREAM_ID",
+            "PROJECT_OBJECT_STREAM_NAME",
+            "PROJECT_OBJECT_STREAM_HOME",
             "PI_CODING_AGENT_SESSION_DIR",
         ):
             environment.pop(variable, None)
@@ -81,27 +120,44 @@ def main():
     if project:
         project_id = project["id"]
         home = project_home(DATA_ROOT, project_id)
+        working_directory = project["mainDirectory"]
         session_directory = project_session_directory(STATE_ROOT, project_id)
-        for directory in (
-            DATA_ROOT,
-            DATA_ROOT / "projects",
-            home,
-            STATE_ROOT,
-            STATE_ROOT / "projects",
-            STATE_ROOT / "projects" / project_id,
-            session_directory,
-        ):
+        directories = [DATA_ROOT, DATA_ROOT / "projects", home, STATE_ROOT, STATE_ROOT / "projects", STATE_ROOT / "projects" / project_id]
+        if stream:
+            stream_id = stream["id"]
+            stream_data_home = stream_home(DATA_ROOT, project_id, stream_id)
+            session_directory = stream_session_directory(STATE_ROOT, project_id, stream_id)
+            working_directory = stream.get("mainDirectory") or working_directory
+            directories.extend([
+                home / "streams",
+                stream_data_home,
+                STATE_ROOT / "projects" / project_id / "streams",
+                STATE_ROOT / "projects" / project_id / "streams" / stream_id,
+            ])
+            environment.update({
+                "PROJECT_OBJECT_STREAM_ID": stream_id,
+                "PROJECT_OBJECT_STREAM_NAME": stream["name"],
+                "PROJECT_OBJECT_STREAM_HOME": str(stream_data_home),
+            })
+        else:
+            for variable in ("PROJECT_OBJECT_STREAM_ID", "PROJECT_OBJECT_STREAM_NAME", "PROJECT_OBJECT_STREAM_HOME"):
+                environment.pop(variable, None)
+        directories.append(session_directory)
+        for directory in directories:
             ensure_private_directory(directory)
 
         environment.update({
             "PROJECT_OBJECT_ID": project_id,
             "PROJECT_OBJECT_NAME": project["name"],
             "PROJECT_OBJECT_HOME": str(home),
-            "PROJECT_OBJECT_MAIN_DIRECTORY": project["mainDirectory"],
+            "PROJECT_OBJECT_MAIN_DIRECTORY": working_directory,
             "PI_CODING_AGENT_SESSION_DIR": str(session_directory),
         })
         if not has_directory_argument(arguments):
-            kitty_arguments.extend(["--directory", project["mainDirectory"]])
+            kitty_arguments.extend(["--directory", working_directory])
+        # Project Object already asks for confirmation and snapshots the workspace.
+        # Suppress Kitty's redundant active-process prompt only for these terminals.
+        kitty_arguments.extend(["--override", "confirm_os_window_close=0"])
 
     kitty_arguments.extend(arguments)
     os.execvpe(KITTY, kitty_arguments, environment)

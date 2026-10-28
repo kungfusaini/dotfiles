@@ -15,6 +15,10 @@ from project_object import (  # noqa: E402
     find_project,
     project_home,
     read_registry,
+    read_stream_registry,
+    find_stream,
+    stream_home,
+    stream_workspace_name,
     write_json_atomic,
 )
 
@@ -161,7 +165,7 @@ def resolve_active_project(project_id):
     return project
 
 
-def capture_project(project):
+def capture_project(project, stream=None):
     workspaces = hypr_json("workspaces")
     clients = hypr_json("clients")
     active_workspace = hypr_json("activeworkspace")
@@ -173,16 +177,18 @@ def capture_project(project):
     if not isinstance(active_workspace, dict) or not isinstance(active_window, dict):
         raise SnapshotError("Hyprland active state must be an object")
 
-    matches = [workspace for workspace in workspaces if isinstance(workspace, dict) and workspace.get("name") == project["name"]]
+    workspace_name = stream_workspace_name(project["name"], stream["name"]) if stream else project["name"]
+    matches = [workspace for workspace in workspaces if isinstance(workspace, dict) and workspace.get("name") == workspace_name]
     if len(matches) != 1:
-        raise SnapshotError(f"Expected one live workspace named {project['name']!r}, found {len(matches)}")
+        raise SnapshotError(f"Expected one live workspace named {workspace_name!r}, found {len(matches)}")
 
     project_clients = []
     for client in clients:
         if not isinstance(client, dict):
             raise SnapshotError("Hyprland client record must be an object")
         workspace = client.get("workspace")
-        if isinstance(workspace, dict) and workspace.get("name") == project["name"]:
+        classes = {str(client.get("class", "")), str(client.get("initialClass", ""))}
+        if isinstance(workspace, dict) and workspace.get("name") == workspace_name and classes.isdisjoint({"project-picker", "dev.project_object.Picker"}):
             project_clients.append(normalize_window(client, len(project_clients)))
 
     return {
@@ -191,6 +197,7 @@ def capture_project(project):
         "hyprlandInstance": os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"),
         "projectId": project["id"],
         "projectName": project["name"],
+        **({"scope": "stream", "streamId": stream["id"], "streamName": stream["name"]} if stream else {"scope": "project"}),
         "workspace": normalize_workspace(matches[0]),
         "activeWorkspace": workspace_reference(active_workspace, "activeworkspace"),
         "activeWindowAddress": text(active_window.get("address"), "activewindow.address", optional=True),
@@ -198,10 +205,11 @@ def capture_project(project):
     }
 
 
-def save_snapshot(project, snapshot):
-    home = project_home(DATA_ROOT, project["id"])
+def save_snapshot(project, snapshot, stream=None):
+    home = stream_home(DATA_ROOT, project["id"], stream["id"]) if stream else project_home(DATA_ROOT, project["id"])
     if not home.exists():
-        raise SnapshotError(f"Project home does not exist: {home}")
+        label = "Stream" if stream else "Project"
+        raise SnapshotError(f"{label} home does not exist: {home}")
     try:
         ensure_private_directory(home)
         snapshots = home / "snapshots"
@@ -210,17 +218,27 @@ def save_snapshot(project, snapshot):
         write_json_atomic(target, snapshot)
         return target
     except (OSError, RegistryError) as error:
-        raise SnapshotError(f"Cannot save project snapshot: {error}") from error
+        raise SnapshotError(f"Cannot save workspace snapshot: {error}") from error
 
 
 def main():
     parser = argparse.ArgumentParser(description="Capture a read-only snapshot of a Project Object workspace")
     parser.add_argument("--project-id", help="canonical project UUID; defaults to PROJECT_OBJECT_ID or the active workspace")
+    parser.add_argument("--stream-id", help="canonical stream UUID; requires a resolved project")
     arguments = parser.parse_args()
     project_id = arguments.project_id or os.environ.get("PROJECT_OBJECT_ID")
+    stream_id = arguments.stream_id or os.environ.get("PROJECT_OBJECT_STREAM_ID")
     try:
         project = resolve_active_project(project_id)
-        target = save_snapshot(project, capture_project(project))
+        stream = None
+        if stream_id:
+            try:
+                stream = find_stream(read_stream_registry(DATA_ROOT, project), stream_id=stream_id)
+            except RegistryError as error:
+                raise SnapshotError(str(error)) from error
+            if not stream:
+                raise SnapshotError(f"No active stream found for {stream_id}")
+        target = save_snapshot(project, capture_project(project, stream), stream)
     except SnapshotError as error:
         raise SystemExit(f"project-snapshot: {error}") from error
     print(target)

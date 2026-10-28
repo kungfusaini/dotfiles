@@ -4,6 +4,7 @@ import curses
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -19,6 +20,9 @@ from project_object import (  # noqa: E402
     normalized_name as canonical_normalized_name,
     project_home as canonical_project_home,
     read_registry,
+    read_stream_registry as canonical_read_stream_registry,
+    stream_home as canonical_stream_home,
+    stream_workspace_name as canonical_stream_workspace_name,
     validate_project_name,
     write_json_atomic as durable_write_json_atomic,
 )
@@ -37,6 +41,7 @@ HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
 KITTY = os.environ.get("PROJECT_PICKER_KITTY", "kitty")
 NOTIFY = os.environ.get("PROJECT_PICKER_NOTIFY", "notify-send")
 PROJECT_TERMINAL = os.environ.get("PROJECT_OBJECT_TERMINAL", str(SCRIPT_PATH.with_name("project-terminal")))
+PROJECT_SNAPSHOT = os.environ.get("PROJECT_OBJECT_SNAPSHOT", str(SCRIPT_PATH.with_name("project-snapshot")))
 
 def notify_error(message):
     subprocess.run([NOTIFY, APP_NAME, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -68,8 +73,39 @@ def project_home(project):
     return canonical_project_home(DATA_ROOT, project["id"])
 
 
+def stream_home(project, stream):
+    return canonical_stream_home(DATA_ROOT, project["id"], stream["id"])
+
+
+def stream_workspace_name(project, stream):
+    return canonical_stream_workspace_name(project["name"], stream["name"])
+
+
+def stream_status_summary(project, stream):
+    status_file = stream_home(project, stream) / "STATUS.md"
+    try:
+        if status_file.is_symlink() or status_file.stat().st_size > 64 * 1024:
+            return None
+        lines = status_file.read_text().splitlines()
+    except OSError:
+        return None
+    for index, line in enumerate(lines):
+        if line.strip().casefold().startswith("current:"):
+            inline = line.split(":", 1)[1].strip()
+            if inline:
+                return inline
+            for candidate in lines[index + 1:]:
+                value = candidate.strip()
+                if value and not value.casefold().startswith(("next:", "blocked:")):
+                    return value.lstrip("- ")
+                if value.casefold().startswith(("next:", "blocked:")):
+                    break
+    return None
+
+
 def initialize_project_home(project, home=None):
-    home = home or project_home(project)
+    canonical_home = project_home(project)
+    home = home or canonical_home
     ensure_directory(home)
     ensure_directory(home / "plans")
     ensure_directory(home / "snapshots")
@@ -80,7 +116,7 @@ def initialize_project_home(project, home=None):
 
 You are working within the **{project['name']}** project object.
 
-- Project home: `{home}`
+- Project home: `{canonical_home}`
 - Main working directory: `{project['mainDirectory']}`
 
 Project-owned artifacts:
@@ -107,6 +143,34 @@ Repository-local `AGENTS.md` files govern repository-specific build, testing, an
         ensure_private_file(target)
 
 
+def initialize_stream_home(project, stream, home=None):
+    canonical_home = stream_home(project, stream)
+    home = home or canonical_home
+    main_directory = stream.get("mainDirectory") or project["mainDirectory"]
+    ensure_directory(home)
+    for directory in ("plans", "snapshots", "worklogs"):
+        ensure_directory(home / directory)
+    files = {
+        "AGENTS.md": f"""# Stream agent guide
+
+You are working within the **{stream['name']}** stream of the **{project['name']}** project object.
+
+- Stream home: `{canonical_home}`
+- Working directory: `{main_directory}`
+
+Project instructions are inherited and remain authoritative. Keep detailed stream context, notes, tasks, plans, and worklogs in this stream home. Do not copy stream detail into project artifacts automatically. When a development genuinely needs parent-project review, set `projectAttention: true` on the stream worklog entry; this requests review and does not promote it automatically.
+""",
+        "CONTEXT.md": "# Context\n",
+        "STATUS.md": "# Status\n\nCurrent:\n\nNext:\n\nBlocked:\n",
+        "NOTES.md": "# Notes\n",
+        "TODO.md": "# Todo\n",
+    }
+    for name, content in files.items():
+        target = home / name
+        if not target.exists():
+            target.write_text(content)
+        ensure_private_file(target)
+
 
 def load_registry():
     registry, changed = read_registry(REGISTRY_PATH, DATA_ROOT)
@@ -117,15 +181,99 @@ def load_registry():
     return registry
 
 
+def load_stream_registry(project):
+    registry = canonical_read_stream_registry(DATA_ROOT, project)
+    for stream in registry["streams"]:
+        initialize_stream_home(project, stream)
+    return registry
+
+
 def load_session():
-    empty = {"version": 1, "hyprlandInstance": HYPRLAND_INSTANCE, "openProjectIds": []}
+    empty = {"version": 2, "hyprlandInstance": HYPRLAND_INSTANCE, "openWorkspaces": []}
     session = read_json(SESSION_PATH, empty)
-    if (
-        session.get("version") != 1
-        or session.get("hyprlandInstance") != HYPRLAND_INSTANCE
-        or not isinstance(session.get("openProjectIds"), list)
-    ):
+    if session.get("hyprlandInstance") != HYPRLAND_INSTANCE:
         return empty
+    if session.get("version") == 1 and isinstance(session.get("openProjectIds"), list):
+        migrated = {
+            "version": 2,
+            "hyprlandInstance": HYPRLAND_INSTANCE,
+            "openWorkspaces": [
+                {"kind": "project", "projectId": project_id}
+                for project_id in session["openProjectIds"]
+                if isinstance(project_id, str)
+            ],
+        }
+        write_json_atomic(SESSION_PATH, migrated)
+        return migrated
+    if session.get("version") != 2 or not isinstance(session.get("openWorkspaces"), list):
+        return empty
+    for scope in session["openWorkspaces"]:
+        if not isinstance(scope, dict) or scope.get("kind") not in ("project", "stream") or not isinstance(scope.get("projectId"), str):
+            return empty
+        if scope["kind"] == "stream" and not isinstance(scope.get("streamId"), str):
+            return empty
+    return session
+
+
+def project_scope(project):
+    return {"kind": "project", "projectId": project["id"]}
+
+
+def stream_scope(project, stream):
+    return {"kind": "stream", "projectId": project["id"], "streamId": stream["id"]}
+
+
+def scope_is_open(session, scope):
+    return scope in session["openWorkspaces"]
+
+
+def project_picker_items(registry, session, current_workspace):
+    """Return visible projects in durable registry order, independent of runtime state."""
+    items = []
+    for project in registry["projects"]:
+        if project.get("archivedAt"):
+            continue
+        state = "current" if project["name"] == current_workspace else "open" if scope_is_open(session, project_scope(project)) else "closed"
+        items.append((project, state))
+    return items
+
+
+def stream_picker_items(project, registry, session, current_workspace):
+    """Return visible streams in durable registry order, independent of runtime state."""
+    items = []
+    for stream in registry["streams"]:
+        if stream.get("archivedAt"):
+            continue
+        workspace = stream_workspace_name(project, stream)
+        state = "current" if workspace == current_workspace else "open" if scope_is_open(session, stream_scope(project, stream)) else "closed"
+        items.append((stream, state))
+    return items
+
+
+def reconcile_session(registry, session):
+    workspaces = hypr_json("workspaces")
+    if not isinstance(workspaces, list):
+        raise RuntimeError("hyprctl workspaces did not return a list")
+    live_names = {str(workspace.get("name", "")) for workspace in workspaces if isinstance(workspace, dict)}
+    project_by_id = {project["id"]: project for project in registry["projects"] if not project.get("archivedAt")}
+    retained = []
+    for scope in session["openWorkspaces"]:
+        project = project_by_id.get(scope["projectId"])
+        if not project:
+            continue
+        if scope["kind"] == "project":
+            name = workspace_name(project)
+        else:
+            streams = load_stream_registry(project)
+            stream = next((item for item in streams["streams"] if item["id"] == scope["streamId"] and not item.get("archivedAt")), None)
+            if not stream:
+                continue
+            name = stream_workspace_name(project, stream)
+        if name in live_names:
+            retained.append(scope)
+    if retained != session["openWorkspaces"]:
+        session["openWorkspaces"] = retained
+        write_json_atomic(SESSION_PATH, session)
     return session
 
 
@@ -203,6 +351,19 @@ def validate_name(name, projects):
     return trimmed
 
 
+def registered_workspace_names(project_registry):
+    names = set()
+    for registered_project in project_registry["projects"]:
+        if registered_project.get("archivedAt"):
+            continue
+        names.add(workspace_name(registered_project))
+        streams = load_stream_registry(registered_project)
+        for registered_stream in streams["streams"]:
+            if not registered_stream.get("archivedAt"):
+                names.add(stream_workspace_name(registered_project, registered_stream))
+    return names
+
+
 def validate_directory(value):
     directory = Path(value).expanduser()
     if not directory.is_absolute():
@@ -239,43 +400,194 @@ def launch_tui():
     subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
-def enter_project(project, session, launch_terminal):
-    name = workspace_name(project)
-    if launch_terminal and live_workspace_exists(name):
+def enter_workspace(project, session, launch_terminal, *, stream=None, pi_arguments=None):
+    name = stream_workspace_name(project, stream) if stream else workspace_name(project)
+    scope = stream_scope(project, stream) if stream else project_scope(project)
+    opening = not scope_is_open(session, scope)
+    if opening and live_workspace_exists(name):
         raise RuntimeError(f"A live Hyprland workspace named ‘{name}’ already exists")
 
     previous_workspace = active_workspace_name()
-    previous_ids = list(session["openProjectIds"])
-    if project["id"] not in session["openProjectIds"]:
-        session["openProjectIds"].append(project["id"])
+    previous_scopes = list(session["openWorkspaces"])
+    if scope not in session["openWorkspaces"]:
+        session["openWorkspaces"].append(scope)
     write_json_atomic(SESSION_PATH, session)
 
     result = run([HYPRCTL, "dispatch", "workspace", f"name:{name}"])
     if result.returncode != 0:
-        session["openProjectIds"] = previous_ids
+        session["openWorkspaces"] = previous_scopes
         write_json_atomic(SESSION_PATH, session)
-        raise RuntimeError(f"Could not enter project workspace for {project['name']}")
+        label = f"stream {stream['name']}" if stream else f"project {project['name']}"
+        raise RuntimeError(f"Could not enter {label} workspace")
 
     if launch_terminal:
+        command = [PROJECT_TERMINAL, "--project-id", project["id"]]
+        if stream:
+            command.extend(["--stream-id", stream["id"]])
+        if pi_arguments is not None:
+            command.extend(["-e", "pi", *pi_arguments])
         try:
-            subprocess.Popen(
-                [PROJECT_TERMINAL, "--project-id", project["id"]],
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                start_new_session=True,
-            )
+            subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         except OSError:
-            session["openProjectIds"] = previous_ids
+            session["openWorkspaces"] = previous_scopes
             write_json_atomic(SESSION_PATH, session)
             if previous_workspace:
                 run([HYPRCTL, "dispatch", "workspace", f"name:{previous_workspace}"])
             raise
 
 
+def enter_project(project, session, launch_terminal):
+    enter_workspace(project, session, launch_terminal)
+
+
+def enter_stream(project, stream, session, launch_terminal=True, *, pi_arguments=None):
+    enter_workspace(project, session, launch_terminal, stream=stream, pi_arguments=pi_arguments)
+
+
+def workspace_clients(name):
+    clients = hypr_json("clients")
+    if not isinstance(clients, list):
+        raise RuntimeError("hyprctl clients did not return a list")
+    return [
+        client for client in clients
+        if isinstance(client, dict)
+        and isinstance(client.get("workspace"), dict)
+        and client["workspace"].get("name") == name
+        and {str(client.get("class", "")), str(client.get("initialClass", ""))}.isdisjoint({"project-picker", "dev.project_object.Picker"})
+    ]
+
+
+def close_workspace(project, session, stream=None):
+    scope = stream_scope(project, stream) if stream else project_scope(project)
+    name = stream_workspace_name(project, stream) if stream else workspace_name(project)
+    label = f"stream {stream['name']}" if stream else f"project workspace {project['name']}"
+    live = live_workspace_exists(name)
+    if scope not in session["openWorkspaces"] and not live:
+        return
+    if not live:
+        session["openWorkspaces"] = [item for item in session["openWorkspaces"] if item != scope]
+        write_json_atomic(SESSION_PATH, session)
+        return
+
+    snapshot_command = [PROJECT_SNAPSHOT, "--project-id", project["id"]]
+    if stream:
+        snapshot_command.extend(["--stream-id", stream["id"]])
+    snapshot = run(snapshot_command)
+    if snapshot.returncode != 0:
+        detail = snapshot.stderr.strip() or "snapshot capture failed"
+        raise RuntimeError(f"Could not close {label}: {detail}")
+
+    clients = workspace_clients(name)
+    addresses = []
+    for client in clients:
+        address = str(client.get("address", ""))
+        if not re.fullmatch(r"0x[0-9a-fA-F]+", address):
+            raise RuntimeError(f"Could not safely identify a window in {name}")
+        addresses.append(address)
+
+    if active_workspace_name() == name:
+        if stream and project_scope(project) in session["openWorkspaces"] and live_workspace_exists(project["name"]):
+            result = run([HYPRCTL, "dispatch", "workspace", f"name:{project['name']}"])
+        else:
+            result = run([HYPRCTL, "dispatch", "workspace", "previous"])
+        if result.returncode != 0:
+            raise RuntimeError(f"Could not leave {label}")
+
+    for address in addresses:
+        result = run([HYPRCTL, "dispatch", "closewindow", f"address:{address}"])
+        if result.returncode != 0:
+            raise RuntimeError(f"Could not close a window in {name}; workspace remains marked open")
+
+    deadline = time.monotonic() + 2.0
+    while addresses and time.monotonic() < deadline:
+        if not workspace_clients(name):
+            break
+        time.sleep(0.05)
+    remaining = workspace_clients(name)
+    if remaining:
+        raise RuntimeError(f"{len(remaining)} window(s) did not close; workspace remains marked open")
+
+    session["openWorkspaces"] = [item for item in session["openWorkspaces"] if item != scope]
+    write_json_atomic(SESSION_PATH, session)
+
+
+def close_project(project, session):
+    close_workspace(project, session)
+
+
+def close_stream(project, stream, session):
+    close_workspace(project, session, stream)
+
+
+def archive_project(project, registry, session):
+    record = next((item for item in registry["projects"] if item["id"] == project["id"]), None)
+    if record is None:
+        raise RuntimeError(f"Project {project['id']} is no longer registered")
+    if record.get("archivedAt"):
+        return
+
+    stream_registry = load_stream_registry(record)
+    for stream in stream_registry["streams"]:
+        close_stream(record, stream, session)
+    close_project(record, session)
+
+    previous_archived_at = record.get("archivedAt")
+    previous_updated_at = record.get("updatedAt")
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    record["archivedAt"] = now
+    record["updatedAt"] = now
+    try:
+        write_json_atomic(REGISTRY_PATH, registry)
+    except Exception:
+        record["archivedAt"] = previous_archived_at
+        record["updatedAt"] = previous_updated_at
+        raise
+
+
+def create_stream(project, registry, name):
+    trimmed = name.strip()
+    try:
+        validate_project_name(trimmed)
+    except RegistryError as error:
+        raise ValueError(str(error).replace("Project name", "Stream name")) from error
+    if any(normalized_name(stream["name"]) == normalized_name(trimmed) for stream in registry["streams"]):
+        raise ValueError(f"A stream named ‘{trimmed}’ already exists in {project['name']}")
+
+    candidate = {"id": str(uuid.uuid4()), "name": trimmed}
+    workspace = stream_workspace_name(project, candidate)
+    project_registry, _changed = read_registry(REGISTRY_PATH, DATA_ROOT)
+    if workspace in registered_workspace_names(project_registry):
+        raise ValueError(f"The workspace name ‘{workspace}’ is already represented by another project or stream")
+    if live_workspace_exists(workspace):
+        raise ValueError(f"A live Hyprland workspace named ‘{workspace}’ already exists")
+
+    now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    stream = {**candidate, "mainDirectory": None, "archivedAt": None, "createdAt": now, "updatedAt": now}
+    final_home = stream_home(project, stream)
+    ensure_directory(final_home.parent)
+    staging_home = final_home.with_name(f".{stream['id']}.creating-{os.getpid()}-{time.time_ns()}")
+    if final_home.exists() or final_home.is_symlink():
+        raise RuntimeError(f"Stream home already exists: {final_home}")
+
+    registry_before = list(registry["streams"])
+    try:
+        initialize_stream_home(project, stream, staging_home)
+        staging_home.replace(final_home)
+        registry["streams"].append(stream)
+        write_json_atomic(project_home(project) / "streams.json", registry)
+    except Exception:
+        registry["streams"] = registry_before
+        shutil.rmtree(staging_home, ignore_errors=True)
+        shutil.rmtree(final_home, ignore_errors=True)
+        raise
+    return stream
+
+
 def create_project(registry, name, directory):
     name = validate_name(name, registry["projects"])
     directory = validate_directory(directory)
+    if name in registered_workspace_names(registry):
+        raise ValueError(f"The workspace name ‘{name}’ is already represented by another project or stream")
     if live_workspace_exists(name):
         raise ValueError(f"A live Hyprland workspace named ‘{name}’ already exists")
 
@@ -335,7 +647,10 @@ class PickerUI:
         self.registry = registry
         self.session = session
         self.current_workspace = active_workspace_name()
-        self.open_ids = set(session["openProjectIds"])
+        self.open_ids = {
+            scope["projectId"] for scope in session["openWorkspaces"]
+            if scope.get("kind") == "project"
+        }
         self.mode = "list"
         self.query = ""
         self.selected = 0
@@ -615,7 +930,7 @@ def run_tui():
         ensure_directory(DATA_ROOT / "projects")
         ensure_directory(RUNTIME_ROOT)
         registry = load_registry()
-        session = load_session()
+        session = reconcile_session(registry, load_session())
         result = curses.wrapper(lambda screen: PickerUI(screen, registry, session).run())
         if result:
             project, launch_terminal = result

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import signal
 import sys
+import threading
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 BACKEND_COMMAND = SCRIPT_DIR / "project-picker-tui"
@@ -42,18 +43,20 @@ window { background: transparent; }
 .shortcut { color: #8d93a5; font-size: 12px; }
 .search { margin: 0 24px 14px; min-height: 46px; border-radius: 12px; font-size: 15px; }
 .project-list { background: transparent; margin: 0 18px; }
-.project-row { border-radius: 12px; margin: 2px 0; padding: 4px; background: transparent; }
+.project-row { border-radius: 8px; margin: 1px 0; padding: 0; background: transparent; }
 .project-row:selected { background: #262b3a; }
 .project-row:hover { background: rgba(255,255,255,0.045); }
-.row-content { padding: 11px 13px; }
-.project-dot { color: #676f86; font-size: 18px; min-width: 24px; }
-.current-dot { color: #74d3ae; }
-.open-dot { color: #79a8ff; }
-.project-name { font-size: 15px; font-weight: 650; }
-.project-path { color: #8990a3; font-size: 12px; }
-.badge { border-radius: 999px; padding: 4px 9px; font-size: 10px; font-weight: 700; }
-.current-badge { background: rgba(80,200,150,0.16); color: #82dfba; }
-.open-badge { background: rgba(90,145,255,0.16); color: #8eb5ff; }
+.active-workspace-row { box-shadow: inset 2px 0 rgba(238,241,248,0.82); background: rgba(255,255,255,0.025); }
+.active-workspace-row .project-name { font-weight: 720; }
+.row-content { min-height: 34px; padding: 0 10px; }
+.project-arrow { color: #8990a3; font-size: 12px; min-width: 16px; }
+.project-dot { color: #676f86; font-size: 12px; min-width: 20px; }
+.running-scope-row .project-dot { color: #74d3ae; }
+.working-scope-row .project-dot { color: #e7bd63; }
+.stream-row .row-content { min-height: 30px; margin-left: 28px; }
+.project-name { font-size: 12px; font-weight: 650; }
+.stream-row .project-name { font-weight: 540; }
+.stream-count { color: #8990a3; font-size: 10px; }
 .footer { padding: 14px 28px 18px; color: #777f93; font-size: 11px; }
 .footer-key { color: #c2c7d4; font-weight: 650; }
 .empty { color: #8d93a5; padding: 48px; }
@@ -68,44 +71,66 @@ window { background: transparent; }
 """
 
 
-def short_path(value):
-    home = str(Path.home())
-    return "~" + value[len(home):] if value == home or value.startswith(home + "/") else value
-
-
 class ProjectRow(Gtk.ListBoxRow):
-    def __init__(self, project, state):
+    def __init__(self, project, state, expanded=False, stream_count=0, open_stream_count=0, running=False, working=False):
         super().__init__()
         self.project = project
         self.state = state
         self.add_css_class("project-row")
+        if running:
+            self.add_css_class("running-scope-row")
+        if working:
+            self.add_css_class("working-scope-row")
+        if state == "current":
+            self.add_css_class("active-workspace-row")
+
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.add_css_class("row-content")
+        arrow = Gtk.Label(label="▾" if expanded else "▸")
+        arrow.add_css_class("project-arrow")
+        content.append(arrow)
+        dot = Gtk.Label(label="●" if running else "○")
+        dot.add_css_class("project-dot")
+        content.append(dot)
+
+        name = Gtk.Label(label=project["name"], xalign=0, ellipsize=3)
+        name.add_css_class("project-name")
+        name.set_hexpand(True)
+        content.append(name)
+
+        if stream_count:
+            count_text = f"{open_stream_count} open · {stream_count} total" if open_stream_count else f"{stream_count} stream{'s' if stream_count != 1 else ''}"
+            count = Gtk.Label(label=count_text)
+            count.add_css_class("stream-count")
+            content.append(count)
+        self.set_child(content)
+
+
+class StreamRow(Gtk.ListBoxRow):
+    def __init__(self, project, stream, state, working=False):
+        super().__init__()
+        self.project = project
+        self.stream = stream
+        self.state = state
+        self.add_css_class("project-row")
+        self.add_css_class("stream-row")
+        if state != "closed":
+            self.add_css_class("running-scope-row")
+        if working and state != "closed":
+            self.add_css_class("working-scope-row")
+        if state == "current":
+            self.add_css_class("active-workspace-row")
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.add_css_class("row-content")
         dot = Gtk.Label(label="●" if state != "closed" else "○")
         dot.add_css_class("project-dot")
-        if state == "current":
-            dot.add_css_class("current-dot")
-        elif state == "open":
-            dot.add_css_class("open-dot")
         content.append(dot)
 
-        text = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
-        text.set_hexpand(True)
-        name = Gtk.Label(label=project["name"], xalign=0)
+        name = Gtk.Label(label=stream["name"], xalign=0, ellipsize=3)
         name.add_css_class("project-name")
-        path = Gtk.Label(label=short_path(project["mainDirectory"]), xalign=0, ellipsize=3)
-        path.add_css_class("project-path")
-        text.append(name)
-        text.append(path)
-        content.append(text)
-
-        if state != "closed":
-            badge = Gtk.Label(label=state.upper())
-            badge.add_css_class("badge")
-            badge.add_css_class(f"{state}-badge")
-            badge.set_valign(Gtk.Align.CENTER)
-            content.append(badge)
+        name.set_hexpand(True)
+        content.append(name)
         self.set_child(content)
 
 
@@ -118,6 +143,11 @@ class PickerApplication(Adw.Application):
         self.registry = None
         self.session = None
         self.rows = []
+        self.working_scopes = set()
+        self.expanded_project_ids = set()
+        self.selected_scope = None
+        self.selected_project = None
+        self.stream_registry = None
         self.search_mode = False
         self.pending_g = False
 
@@ -138,8 +168,10 @@ class PickerApplication(Adw.Application):
             backend.ensure_directory(backend.DATA_ROOT / "projects")
             backend.ensure_directory(backend.RUNTIME_ROOT)
             self.registry = backend.load_registry()
-            self.session = backend.load_session()
+            self.session = backend.reconcile_session(self.registry, backend.load_session())
             self.current_workspace = backend.active_workspace_name()
+            self.working_scopes = self.load_working_scopes()
+            self.load_picker_state()
         except Exception as error:
             backend.notify_error(str(error))
             self.quit()
@@ -165,26 +197,28 @@ class PickerApplication(Adw.Application):
         shell.append(self.stack)
         self.stack.add_named(self.build_list_page(), "list")
         self.stack.add_named(self.build_create_page(), "create")
+        self.stack.add_named(self.build_create_stream_page(), "create-stream")
 
         keys = Gtk.EventControllerKey()
         keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
         keys.connect("key-pressed", self.on_key_pressed)
         self.window.add_controller(keys)
+        GLib.timeout_add_seconds(1, self.poll_activity)
 
     def build_list_page(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         header.add_css_class("header")
-        title = Gtk.Label(label="Projects", xalign=0)
-        title.add_css_class("title")
-        title.set_hexpand(True)
+        self.list_title = Gtk.Label(label="Projects", xalign=0)
+        self.list_title.add_css_class("title")
+        self.list_title.set_hexpand(True)
         shortcut = Gtk.Label(label="SUPER  P")
         shortcut.add_css_class("shortcut")
-        header.append(title)
+        header.append(self.list_title)
         header.append(shortcut)
         page.append(header)
 
-        self.search = Gtk.SearchEntry(placeholder_text="Press / to search projects…")
+        self.search = Gtk.SearchEntry(placeholder_text="Press / to search projects and streams…")
         self.search.add_css_class("search")
         self.search.connect("search-changed", lambda _entry: self.refresh_rows())
         self.search.connect("activate", lambda _entry: self.open_selected())
@@ -193,16 +227,16 @@ class PickerApplication(Adw.Application):
         scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE, activate_on_single_click=False)
         self.listbox.add_css_class("project-list")
+        self.listbox.connect("row-selected", self.on_row_selected)
         self.listbox.connect("row-activated", lambda _box, _row: self.open_selected())
         scroll.set_child(self.listbox)
         page.append(scroll)
 
-        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=18)
+        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         footer.add_css_class("footer")
-        for label in ("j/k  Navigate", "gg/G  First/last", "/  Search", "Enter  Open", "Ctrl N  New", "Esc  Close"):
-            item = Gtk.Label(label=label)
-            item.add_css_class("footer-key")
-            footer.append(item)
+        self.footer_hint = Gtk.Label(label="j/k Move   Tab Streams   Enter Open   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream", xalign=0, ellipsize=3)
+        self.footer_hint.add_css_class("footer-key")
+        footer.append(self.footer_hint)
         page.append(footer)
         self.refresh_rows()
         return page
@@ -259,28 +293,245 @@ class PickerApplication(Adw.Application):
         page.append(actions)
         return page
 
-    def project_items(self):
-        query = self.search.get_text().strip().casefold() if hasattr(self, "search") else ""
-        open_ids = set(self.session["openProjectIds"])
-        rank = {"current": 0, "open": 1, "closed": 2}
-        items = []
-        for project in self.registry["projects"]:
-            if project.get("archivedAt") or query not in project["name"].casefold():
+    def build_create_stream_page(self):
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        page.add_css_class("create-page")
+        title = Gtk.Label(label="New stream", xalign=0)
+        title.add_css_class("section-title")
+        self.stream_create_copy = Gtk.Label(label="Create a focused scope inside this project.", xalign=0)
+        self.stream_create_copy.add_css_class("section-copy")
+        page.append(title)
+        page.append(self.stream_create_copy)
+
+        label = Gtk.Label(label="STREAM NAME", xalign=0)
+        label.add_css_class("field-label")
+        page.append(label)
+        self.stream_name_entry = Gtk.Entry(placeholder_text="e.g. Forecast Bench")
+        self.stream_name_entry.add_css_class("create-entry")
+        self.stream_name_entry.connect("activate", lambda _entry: self.create_stream())
+        page.append(self.stream_name_entry)
+
+        inheritance = Gtk.Label(label="The stream inherits the project directory. It can be changed later.", xalign=0, wrap=True)
+        inheritance.add_css_class("section-copy")
+        page.append(inheritance)
+
+        self.stream_create_error = Gtk.Label(xalign=0, wrap=True)
+        self.stream_create_error.add_css_class("error")
+        self.stream_create_error.set_visible(False)
+        page.append(self.stream_create_error)
+        page.append(Gtk.Box(vexpand=True))
+
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10, halign=Gtk.Align.END)
+        cancel = Gtk.Button(label="Cancel")
+        cancel.add_css_class("secondary-button")
+        cancel.connect("clicked", lambda _button: self.show_list())
+        create = Gtk.Button(label="Create stream and start Pi")
+        create.add_css_class("primary-button")
+        create.connect("clicked", lambda _button: self.create_stream())
+        actions.append(cancel)
+        actions.append(create)
+        page.append(actions)
+        return page
+
+    def load_working_scopes(self):
+        activity_root = backend.RUNTIME_ROOT / "pi-activity"
+        try:
+            if activity_root.is_symlink() or not activity_root.is_dir():
+                return set()
+            entries = list(activity_root.iterdir())
+        except OSError:
+            return set()
+
+        known_projects = {
+            project["id"]: project for project in self.registry["projects"]
+            if not project.get("archivedAt")
+        }
+        known_streams = {}
+        for project_id, project in known_projects.items():
+            try:
+                known_streams[project_id] = {
+                    stream["id"] for stream in backend.load_stream_registry(project)["streams"]
+                    if not stream.get("archivedAt")
+                }
+            except Exception:
+                known_streams[project_id] = set()
+
+        working = set()
+        for entry in entries:
+            try:
+                metadata = entry.lstat()
+                if metadata.st_size > 4096 or not entry.is_file() or entry.is_symlink():
+                    continue
+                value = json.loads(entry.read_text())
+                pid = value.get("pid")
+                project_id = value.get("projectId")
+                stream_id = value.get("streamId")
+                if value.get("version") != 1 or value.get("state") != "working":
+                    continue
+                if not isinstance(pid, int) or entry.name != f"{pid}.json" or project_id not in known_projects:
+                    continue
+                if stream_id is not None and stream_id not in known_streams[project_id]:
+                    continue
+                environment_bytes = (Path("/proc") / str(pid) / "environ").read_bytes()
+                if len(environment_bytes) > 1024 * 1024:
+                    continue
+                environment = {}
+                for item in environment_bytes.split(b"\0"):
+                    if b"=" in item:
+                        key, raw_value = item.split(b"=", 1)
+                        environment[key.decode(errors="ignore")] = raw_value.decode(errors="ignore")
+                if environment.get("PROJECT_OBJECT_ID") != project_id:
+                    continue
+                if environment.get("PROJECT_OBJECT_STREAM_ID") != (stream_id or None):
+                    continue
+                working.add((project_id, stream_id))
+            except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 continue
-            state = "current" if project["name"] == self.current_workspace else "open" if project["id"] in open_ids else "closed"
-            items.append((project, state))
-        return sorted(items, key=lambda item: (rank[item[1]], item[0]["name"].casefold()))
+        return working
+
+    def poll_activity(self):
+        if self.window and self.window.get_visible():
+            current = self.load_working_scopes()
+            if current != self.working_scopes:
+                self.working_scopes = current
+                if self.stack.get_visible_child_name() == "list":
+                    self.refresh_rows()
+        return GLib.SOURCE_CONTINUE
+
+    @property
+    def picker_state_path(self):
+        return backend.RUNTIME_ROOT / "picker-state.json"
+
+    def load_picker_state(self):
+        self.expanded_project_ids = set()
+        self.selected_scope = None
+        try:
+            value = backend.read_json(self.picker_state_path, {})
+        except Exception:
+            value = {}
+        known_ids = {project["id"] for project in self.registry["projects"] if not project.get("archivedAt")}
+        restored = value.get("version") == 1 and value.get("hyprlandInstance") == backend.HYPRLAND_INSTANCE
+        if restored:
+            self.expanded_project_ids = {
+                project_id for project_id in value.get("expandedProjectIds", [])
+                if project_id in known_ids
+            }
+            selection = value.get("selection")
+            if isinstance(selection, dict) and selection.get("projectId") in known_ids:
+                self.selected_scope = selection
+
+        # On first use in a compositor session, reveal and select the active
+        # scope. Explicitly saved expansion and selection otherwise win.
+        if not restored:
+            for project in self.registry["projects"]:
+                if project.get("archivedAt"):
+                    continue
+                if project["name"] == self.current_workspace:
+                    self.selected_scope = {"kind": "project", "projectId": project["id"]}
+                    break
+                try:
+                    streams = backend.load_stream_registry(project)["streams"]
+                except Exception:
+                    continue
+                current_stream = next((
+                    stream for stream in streams
+                    if not stream.get("archivedAt")
+                    and backend.stream_workspace_name(project, stream) == self.current_workspace
+                ), None)
+                if current_stream:
+                    self.expanded_project_ids.add(project["id"])
+                    self.selected_scope = {
+                        "kind": "stream",
+                        "projectId": project["id"],
+                        "streamId": current_stream["id"],
+                    }
+                    break
+
+    def save_picker_state(self):
+        backend.write_json_atomic(self.picker_state_path, {
+            "version": 1,
+            "hyprlandInstance": backend.HYPRLAND_INSTANCE,
+            "expandedProjectIds": sorted(self.expanded_project_ids),
+            "selection": self.selected_scope,
+        })
+
+    @staticmethod
+    def row_scope(row):
+        if isinstance(row, StreamRow):
+            return {"kind": "stream", "projectId": row.project["id"], "streamId": row.stream["id"]}
+        if isinstance(row, ProjectRow):
+            return {"kind": "project", "projectId": row.project["id"]}
+        return None
+
+    def on_row_selected(self, _listbox, row):
+        if row is None:
+            return
+        self.selected_scope = self.row_scope(row)
+        try:
+            self.save_picker_state()
+        except Exception as error:
+            backend.notify_error(str(error))
+
+    def project_items(self):
+        return backend.project_picker_items(self.registry, self.session, self.current_workspace)
+
+    def stream_items(self, project):
+        return backend.stream_picker_items(
+            project,
+            backend.load_stream_registry(project),
+            self.session,
+            self.current_workspace,
+        )
+
+    def list_rows(self):
+        query = self.search.get_text().strip().casefold() if hasattr(self, "search") else ""
+        values = []
+        for project, state in self.project_items():
+            project_matches = query in project["name"].casefold() or query in project["mainDirectory"].casefold()
+            expanded = project["id"] in self.expanded_project_ids
+            streams = self.stream_items(project)
+            matching_streams = [item for item in streams if query in item[0]["name"].casefold()] if query else streams
+            if query and not project_matches and not matching_streams:
+                continue
+            open_stream_count = sum(stream_state != "closed" for _stream, stream_state in streams)
+            working_stream_ids = {
+                stream["id"] for stream, stream_state in streams
+                if stream_state != "closed" and (project["id"], stream["id"]) in self.working_scopes
+            }
+            project_working = (
+                state != "closed" and (project["id"], None) in self.working_scopes
+            ) or bool(working_stream_ids)
+            values.append(ProjectRow(
+                project,
+                state,
+                expanded=expanded,
+                stream_count=len(streams),
+                open_stream_count=open_stream_count,
+                running=state != "closed" or open_stream_count > 0,
+                working=project_working,
+            ))
+            if expanded or query:
+                for stream, stream_state in matching_streams:
+                    values.append(StreamRow(
+                        project,
+                        stream,
+                        stream_state,
+                        working=stream["id"] in working_stream_ids,
+                    ))
+        return values
 
     def refresh_rows(self):
+        desired = self.selected_scope
         while child := self.listbox.get_first_child():
             self.listbox.remove(child)
-        self.rows = []
-        for project, state in self.project_items():
-            row = ProjectRow(project, state)
-            self.rows.append(row)
+        self.rows = self.list_rows()
+        selected = None
+        for row in self.rows:
             self.listbox.append(row)
+            if desired and self.row_scope(row) == desired:
+                selected = row
         if self.rows:
-            self.listbox.select_row(self.rows[0])
+            self.listbox.select_row(selected or self.rows[0])
 
     def move_selection(self, delta):
         if not self.rows:
@@ -306,25 +557,287 @@ class PickerApplication(Adw.Application):
         self.set_normal_actions_enabled(False)
         self.search.grab_focus()
 
+    def toggle_selected_project(self):
+        row = self.listbox.get_selected_row()
+        if not row:
+            return
+        project = row.project
+        project_id = project["id"]
+        if project_id in self.expanded_project_ids:
+            self.expanded_project_ids.remove(project_id)
+            self.selected_scope = {"kind": "project", "projectId": project_id}
+        else:
+            self.expanded_project_ids.add(project_id)
+        try:
+            self.save_picker_state()
+            self.refresh_rows()
+        except Exception as error:
+            backend.notify_error(str(error))
+
     def open_selected(self):
         row = self.listbox.get_selected_row()
         if not row:
             return
+        self.selected_scope = self.row_scope(row)
         try:
-            backend.enter_project(row.project, self.session, row.state == "closed")
+            self.save_picker_state()
+            if isinstance(row, ProjectRow):
+                backend.enter_project(row.project, self.session, row.state == "closed")
+            else:
+                backend.enter_stream(row.project, row.stream, self.session, row.state == "closed")
         except Exception as error:
             backend.notify_error(str(error))
             return
         self.dismiss_window()
 
+    def resume_stream_pi(self):
+        row = self.listbox.get_selected_row()
+        if not isinstance(row, StreamRow):
+            backend.notify_error("Select a stream before resuming Pi")
+            return
+        try:
+            backend.enter_stream(row.project, row.stream, self.session, True, pi_arguments=["--continue"])
+        except Exception as error:
+            backend.notify_error(str(error))
+            return
+        self.dismiss_window()
+
+    def add_vim_dialog_navigation(self, dialog, confirm_response):
+        """Give confirmation dialogs the same keyboard language as the picker."""
+        keys = Gtk.EventControllerKey.new()
+        keys.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+
+        def navigate(_controller, keyval, _keycode, modifiers):
+            if modifiers & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK | Gdk.ModifierType.SUPER_MASK):
+                return False
+            if keyval in (Gdk.KEY_j, Gdk.KEY_l):
+                dialog.child_focus(Gtk.DirectionType.TAB_FORWARD)
+                return True
+            if keyval in (Gdk.KEY_k, Gdk.KEY_h):
+                dialog.child_focus(Gtk.DirectionType.TAB_BACKWARD)
+                return True
+            if keyval == Gdk.KEY_y:
+                dialog.response(confirm_response)
+                return True
+            if keyval in (Gdk.KEY_n, Gdk.KEY_q):
+                dialog.response("cancel")
+                return True
+            return False
+
+        keys.connect("key-pressed", navigate)
+        dialog.add_controller(keys)
+
+    def request_close_workspace(self):
+        row = self.listbox.get_selected_row()
+        if not row:
+            return
+        stream = row.stream if isinstance(row, StreamRow) else None
+        scope_name = stream["name"] if stream else f"{row.project['name']} project workspace"
+        if row.state == "closed":
+            backend.notify_error(f"{scope_name} is already closed")
+            return
+        workspace = backend.stream_workspace_name(row.project, stream) if stream else backend.workspace_name(row.project)
+        try:
+            window_count = len(backend.workspace_clients(workspace))
+        except Exception as error:
+            backend.notify_error(str(error))
+            return
+        retained = "Pi sessions and stream artifacts are retained." if stream else "All stream workspaces remain open and independent."
+        dialog = Adw.MessageDialog.new(
+            self.window,
+            f"Close {scope_name}?",
+            f"This will snapshot the workspace and ask {window_count} window(s) to close. {retained}",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("close", "Close workspace")
+        dialog.set_response_appearance("close", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        self.add_vim_dialog_navigation(dialog, "close")
+
+        def responded(_dialog, response):
+            _dialog.close()
+            if response != "close":
+                return
+
+            self.window.set_sensitive(False)
+
+            def finish(error):
+                self.window.set_sensitive(True)
+                if error:
+                    backend.notify_error(str(error))
+                    return GLib.SOURCE_REMOVE
+                try:
+                    self.session = backend.reconcile_session(self.registry, backend.load_session())
+                    self.current_workspace = backend.active_workspace_name()
+                    self.move_picker_to_active_workspace()
+                    self.refresh_rows()
+                    self.window.present()
+                except Exception as refresh_error:
+                    backend.notify_error(str(refresh_error))
+                return GLib.SOURCE_REMOVE
+
+            def close_in_background():
+                try:
+                    if stream:
+                        backend.close_stream(row.project, stream, self.session)
+                    else:
+                        backend.close_project(row.project, self.session)
+                except Exception as error:
+                    GLib.idle_add(finish, error)
+                    return
+                GLib.idle_add(finish, None)
+
+            threading.Thread(target=close_in_background, name="project-workspace-close", daemon=True).start()
+
+        dialog.connect("response", responded)
+        dialog.present()
+
+    def request_archive_project(self):
+        row = self.listbox.get_selected_row()
+        if not isinstance(row, ProjectRow):
+            backend.notify_error("Select a project row before archiving")
+            return
+        try:
+            streams = [
+                stream for stream in backend.load_stream_registry(row.project)["streams"]
+                if not stream.get("archivedAt")
+            ]
+        except Exception as error:
+            backend.notify_error(str(error))
+            return
+
+        stream_text = f" and its {len(streams)} stream{'s' if len(streams) != 1 else ''}" if streams else ""
+        dialog = Adw.MessageDialog.new(
+            self.window,
+            f"Archive {row.project['name']}?",
+            f"The project workspace{stream_text} will be snapshotted and closed first. Artifacts and Pi sessions are retained, and the project will disappear from the normal picker.",
+        )
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("archive", "Archive project")
+        dialog.set_response_appearance("archive", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+        self.add_vim_dialog_navigation(dialog, "archive")
+
+        def responded(_dialog, response):
+            _dialog.close()
+            if response != "archive":
+                return
+            self.window.set_sensitive(False)
+
+            def finish(error):
+                self.window.set_sensitive(True)
+                try:
+                    self.current_workspace = backend.active_workspace_name()
+                    self.move_picker_to_active_workspace()
+                    self.window.present()
+                except Exception as relocation_error:
+                    backend.notify_error(str(relocation_error))
+                if error:
+                    backend.notify_error(str(error))
+                    return GLib.SOURCE_REMOVE
+                try:
+                    self.registry = backend.load_registry()
+                    self.session = backend.reconcile_session(self.registry, backend.load_session())
+                    self.expanded_project_ids.discard(row.project["id"])
+                    self.selected_scope = None
+                    self.save_picker_state()
+                    self.refresh_rows()
+                except Exception as refresh_error:
+                    backend.notify_error(str(refresh_error))
+                return GLib.SOURCE_REMOVE
+
+            def archive_in_background():
+                try:
+                    backend.archive_project(row.project, self.registry, self.session)
+                except Exception as error:
+                    GLib.idle_add(finish, error)
+                    return
+                GLib.idle_add(finish, None)
+
+            threading.Thread(target=archive_in_background, name="project-archive", daemon=True).start()
+
+        dialog.connect("response", responded)
+        dialog.present()
+
+    def move_picker_to_workspace(self, workspace_name):
+        clients = backend.hypr_json("clients")
+        if not isinstance(clients, list):
+            return False
+        for client in clients:
+            if not isinstance(client, dict) or client.get("pid") != os.getpid():
+                continue
+            classes = {str(client.get("class", "")), str(client.get("initialClass", ""))}
+            address = str(client.get("address", ""))
+            if classes.isdisjoint({"project-picker", "dev.project_object.Picker"}) or not address.startswith("0x"):
+                continue
+            target = "current" if workspace_name == "current" else f"name:{workspace_name}"
+            result = backend.run([
+                backend.HYPRCTL,
+                "dispatch",
+                "movetoworkspacesilent",
+                f"{target},address:{address}",
+            ])
+            if result.returncode != 0:
+                raise RuntimeError("The picker could not move to the active workspace")
+            focus = backend.run([
+                backend.HYPRCTL,
+                "dispatch",
+                "focuswindow",
+                f"address:{address}",
+            ])
+            if focus.returncode != 0:
+                raise RuntimeError("The picker moved, but could not take focus")
+            return True
+        return False
+
+    def move_picker_to_active_workspace(self):
+        return self.move_picker_to_workspace("current")
+
     def show_create(self):
         self.create_error.set_visible(False)
+        self.set_normal_actions_enabled(False)
         self.stack.set_visible_child_name("create")
         self.name_entry.grab_focus()
 
     def show_list(self):
+        self.list_title.set_text("Projects")
+        self.footer_hint.set_text("j/k Move   Tab Streams   Enter Open   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream")
+        self.search.set_placeholder_text("Press / to search projects and streams…")
         self.stack.set_visible_child_name("list")
+        self.refresh_rows()
         self.focus_normal_mode()
+
+    def show_create_stream(self):
+        row = self.listbox.get_selected_row()
+        if not row:
+            return
+        self.selected_project = row.project
+        try:
+            self.stream_registry = backend.load_stream_registry(self.selected_project)
+        except Exception as error:
+            backend.notify_error(str(error))
+            return
+        self.stream_create_error.set_visible(False)
+        self.set_normal_actions_enabled(False)
+        self.stream_create_copy.set_text(f"Create a focused scope inside {self.selected_project['name']}.")
+        self.stream_name_entry.set_text("")
+        self.stack.set_visible_child_name("create-stream")
+        self.stream_name_entry.grab_focus()
+
+    def create_stream(self):
+        try:
+            stream = backend.create_stream(self.selected_project, self.stream_registry, self.stream_name_entry.get_text())
+            self.expanded_project_ids.add(self.selected_project["id"])
+            self.selected_scope = {"kind": "stream", "projectId": self.selected_project["id"], "streamId": stream["id"]}
+            self.save_picker_state()
+            backend.enter_stream(self.selected_project, stream, self.session, True, pi_arguments=[])
+        except Exception as error:
+            self.stream_create_error.set_text(str(error))
+            self.stream_create_error.set_visible(True)
+            return
+        self.dismiss_window()
 
     def choose_directory(self, _button):
         dialog = Gtk.FileDialog(title="Choose main directory")
@@ -341,6 +854,8 @@ class PickerApplication(Adw.Application):
     def create_project(self):
         try:
             project = backend.create_project(self.registry, self.name_entry.get_text(), self.directory_entry.get_text())
+            self.selected_scope = {"kind": "project", "projectId": project["id"]}
+            self.save_picker_state()
             backend.enter_project(project, self.session, True)
         except Exception as error:
             self.create_error.set_text(str(error))
@@ -391,9 +906,13 @@ class PickerApplication(Adw.Application):
     def show_window(self):
         try:
             self.registry = backend.load_registry()
-            self.session = backend.load_session()
+            self.session = backend.reconcile_session(self.registry, backend.load_session())
             self.current_workspace = backend.active_workspace_name()
+            self.working_scopes = self.load_working_scopes()
             if hasattr(self, "listbox"):
+                self.list_title.set_text("Projects")
+                self.footer_hint.set_text("j/k Move   Tab Streams   Enter Open   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream")
+                self.search.set_placeholder_text("Press / to search projects and streams…")
                 self.refresh_rows()
         except Exception as error:
             backend.notify_error(str(error))
@@ -402,13 +921,31 @@ class PickerApplication(Adw.Application):
         self.stack.set_visible_child_name("list")
         self.search.set_text("")
         self.focus_normal_mode()
+        target_workspace = self.current_workspace
         self.window.present()
+
+        def place_on_requested_workspace(attempt=0):
+            try:
+                if self.move_picker_to_workspace(target_workspace):
+                    return GLib.SOURCE_REMOVE
+            except Exception as error:
+                backend.notify_error(str(error))
+                return GLib.SOURCE_REMOVE
+            if attempt >= 10:
+                backend.notify_error("The picker opened, but Hyprland did not expose its window in time")
+                return GLib.SOURCE_REMOVE
+            GLib.timeout_add(25, place_on_requested_workspace, attempt + 1)
+            return GLib.SOURCE_REMOVE
+
+        GLib.idle_add(place_on_requested_workspace)
         return True
 
     def on_key_pressed(self, _controller, keyval, _keycode, state):
         control = bool(state & Gdk.ModifierType.CONTROL_MASK)
+        shift = bool(state & Gdk.ModifierType.SHIFT_MASK)
         if keyval == Gdk.KEY_Escape:
-            if self.stack.get_visible_child_name() == "create":
+            page = self.stack.get_visible_child_name()
+            if page in ("create", "create-stream"):
                 self.show_list()
             elif self.search_mode:
                 self.search.set_text("")
@@ -417,7 +954,10 @@ class PickerApplication(Adw.Application):
                 self.dismiss_window()
             return True
         if control and keyval in (Gdk.KEY_n, Gdk.KEY_N):
-            self.show_create()
+            if shift:
+                self.show_create_stream()
+            else:
+                self.show_create()
             return True
         if self.stack.get_visible_child_name() != "list":
             return False
@@ -430,6 +970,19 @@ class PickerApplication(Adw.Application):
                 self.move_selection(-1)
                 return True
             return False
+
+        if keyval in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab):
+            self.toggle_selected_project()
+            return True
+        if keyval == Gdk.KEY_r:
+            self.resume_stream_pi()
+            return True
+        if keyval == Gdk.KEY_x:
+            self.request_close_workspace()
+            return True
+        if keyval == Gdk.KEY_a:
+            self.request_archive_project()
+            return True
 
         return False
 

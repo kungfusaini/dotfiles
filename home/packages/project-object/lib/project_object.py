@@ -8,6 +8,8 @@ import unicodedata
 import uuid
 
 REGISTRY_VERSION = 1
+STREAM_REGISTRY_VERSION = 1
+STREAM_WORKSPACE_SEPARATOR = " · "
 DIRECTORY_MODE = 0o700
 FILE_MODE = 0o600
 
@@ -35,16 +37,16 @@ def ensure_private_file(file: Path) -> None:
     file.chmod(FILE_MODE)
 
 
-def canonical_uuid(value: object) -> str:
+def canonical_uuid(value: object, *, kind: str = "Project") -> str:
     if not isinstance(value, str):
-        raise RegistryError("Project ID must be a UUID string")
+        raise RegistryError(f"{kind} ID must be a UUID string")
     try:
         parsed = uuid.UUID(value)
     except (ValueError, AttributeError) as error:
-        raise RegistryError(f"Invalid project UUID: {value!r}") from error
+        raise RegistryError(f"Invalid {kind.lower()} UUID: {value!r}") from error
     canonical = str(parsed)
     if value != canonical:
-        raise RegistryError(f"Project UUID is not canonical: {value!r}")
+        raise RegistryError(f"{kind} UUID is not canonical: {value!r}")
     return canonical
 
 
@@ -103,6 +105,41 @@ def project_session_directory(state_root: Path, project_id: str) -> Path:
     return candidate
 
 
+def stream_home(data_root: Path, project_id: str, stream_id: str) -> Path:
+    project_root = project_home(data_root, project_id)
+    stream_id = canonical_uuid(stream_id, kind="Stream")
+    streams_root = project_root / "streams"
+    candidate = streams_root / stream_id
+    if streams_root.is_symlink() or candidate.is_symlink():
+        raise RegistryError(f"Stream home contains a symlinked managed component: {candidate}")
+    resolved_root = streams_root.resolve(strict=False)
+    resolved_candidate = candidate.resolve(strict=False)
+    if not resolved_candidate.is_relative_to(resolved_root):
+        raise RegistryError(f"Stream home escapes project home: {candidate}")
+    return candidate
+
+
+def stream_session_directory(state_root: Path, project_id: str, stream_id: str) -> Path:
+    project_id = canonical_uuid(project_id)
+    stream_id = canonical_uuid(stream_id, kind="Stream")
+    projects_root = state_root / "projects"
+    project_root = projects_root / project_id
+    streams_root = project_root / "streams"
+    stream_root = streams_root / stream_id
+    candidate = stream_root / "pi-sessions"
+    if any(component.is_symlink() for component in (projects_root, project_root, streams_root, stream_root, candidate)):
+        raise RegistryError(f"Stream session path contains a symlinked managed component: {candidate}")
+    resolved_root = streams_root.resolve(strict=False)
+    resolved_candidate = candidate.resolve(strict=False)
+    if not resolved_candidate.is_relative_to(resolved_root):
+        raise RegistryError(f"Stream session directory escapes state root: {candidate}")
+    return candidate
+
+
+def stream_workspace_name(project_name: str, stream_name: str) -> str:
+    return f"{validate_project_name(project_name)}{STREAM_WORKSPACE_SEPARATOR}{validate_project_name(stream_name)}"
+
+
 def validate_registry(value: object, data_root: Path) -> tuple[dict, bool]:
     if not isinstance(value, dict) or value.get("version") != REGISTRY_VERSION or not isinstance(value.get("projects"), list):
         raise RegistryError("Unsupported or malformed project registry")
@@ -156,6 +193,65 @@ def read_registry(registry_path: Path, data_root: Path) -> tuple[dict, bool]:
     except (OSError, json.JSONDecodeError) as error:
         raise RegistryError(f"Cannot read {registry_path}: {error}") from error
     return validate_registry(parsed, data_root)
+
+
+def validate_stream_registry(value: object, data_root: Path, project: dict) -> dict:
+    project_id = canonical_uuid(project.get("id"))
+    if not isinstance(value, dict) or value.get("version") != STREAM_REGISTRY_VERSION or not isinstance(value.get("streams"), list):
+        raise RegistryError(f"Unsupported or malformed stream registry for project {project_id}")
+
+    seen_ids: set[str] = set()
+    seen_names: set[str] = set()
+    streams: list[dict] = []
+    for index, raw in enumerate(value["streams"]):
+        if not isinstance(raw, dict):
+            raise RegistryError(f"Stream record {index} must be an object")
+        stream = dict(raw)
+        stream_id = canonical_uuid(stream.get("id"), kind="Stream")
+        name = validate_project_name(stream.get("name"))
+        if stream_id in seen_ids:
+            raise RegistryError(f"Duplicate stream ID: {stream_id}")
+        name_key = normalized_name(name)
+        if name_key in seen_names:
+            raise RegistryError(f"Duplicate normalized stream name: {name}")
+        seen_ids.add(stream_id)
+        seen_names.add(name_key)
+
+        if "mainDirectory" in stream and stream["mainDirectory"] is not None:
+            validate_main_directory(stream["mainDirectory"])
+        archived_at = stream.get("archivedAt")
+        if archived_at is not None and not isinstance(archived_at, str):
+            raise RegistryError(f"Stream {stream_id} has invalid archivedAt")
+        for field in ("createdAt", "updatedAt"):
+            if field in stream and not isinstance(stream[field], str):
+                raise RegistryError(f"Stream {stream_id} has invalid {field}")
+        stream_home(data_root, project_id, stream_id)
+        streams.append(stream)
+
+    return {**value, "streams": streams}
+
+
+def read_stream_registry(data_root: Path, project: dict) -> dict:
+    home = project_home(data_root, project["id"])
+    registry_path = home / "streams.json"
+    if registry_path.is_symlink():
+        raise RegistryError(f"Unsafe stream registry: {registry_path}")
+    if not registry_path.exists():
+        return {"version": STREAM_REGISTRY_VERSION, "streams": []}
+    try:
+        parsed = json.loads(registry_path.read_text())
+    except (OSError, json.JSONDecodeError) as error:
+        raise RegistryError(f"Cannot read {registry_path}: {error}") from error
+    return validate_stream_registry(parsed, data_root, project)
+
+
+def find_stream(stream_registry: dict, stream_id: str | None = None, name: str | None = None) -> dict | None:
+    if stream_id is not None:
+        canonical_uuid(stream_id, kind="Stream")
+        return next((stream for stream in stream_registry["streams"] if stream["id"] == stream_id and not stream.get("archivedAt")), None)
+    if name is None:
+        return None
+    return next((stream for stream in stream_registry["streams"] if stream["name"] == name and not stream.get("archivedAt")), None)
 
 
 def write_json_atomic(file: Path, value: object) -> None:

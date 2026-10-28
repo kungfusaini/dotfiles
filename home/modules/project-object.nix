@@ -8,6 +8,10 @@ in
 
   xdg.configFile."pi/agent/extensions/project-object.ts".source =
     "${projectObject}/share/project-object/pi/project-object.ts";
+  xdg.configFile."project-object/init" = {
+    source = "${projectObject}/share/project-object/pi/skills/init";
+    recursive = true;
+  };
 
   wayland.windowManager.hyprland.settings = {
     "$terminal" = lib.mkForce "${projectObject}/bin/project-terminal";
