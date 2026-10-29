@@ -9,6 +9,9 @@ const MAX_STREAM_REGISTRY_BYTES = 1024 * 1024;
 const MAX_AGENTS_BYTES = 64 * 1024;
 const MAX_WORKLOG_BYTES = 32 * 1024 * 1024;
 const MAX_WORKLOG_ENTRY_BYTES = 16 * 1024;
+const MAX_RECENT_WORKLOG_EVENTS = 10;
+const MAX_RECENT_WORKLOG_BYTES = 8 * 1024;
+const MAX_WORKLOG_TAIL_BYTES = 12 * MAX_WORKLOG_ENTRY_BYTES;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const WORKLOG_TYPES = ["start", "progress", "decision", "mistake", "stuck", "finish", "next", "note"] as const;
 const WORKLOG_TYPE_SET = new Set<string>(WORKLOG_TYPES);
@@ -403,6 +406,110 @@ export function appendProjectWorklogEntry(project: ProjectContext, parameters: W
   }
 }
 
+function compactWorklogText(value: unknown, name: string, maximum: number, required = false): string | undefined {
+  if (value === undefined && !required) return undefined;
+  if (typeof value !== "string") throw new Error(`worklog ${name} must be a string`);
+  const compact = value.replace(/\s+/g, " ").trim();
+  if (!compact) throw new Error(`worklog ${name} must not be empty`);
+  return compact.length <= maximum ? compact : `${compact.slice(0, maximum - 1)}…`;
+}
+
+export function readRecentWorklog(project: ProjectContext, stream?: StreamContext): string {
+  const scopeHome = stream?.streamHome || project.projectHome;
+  const scopeLabel = stream ? "stream" : "project";
+  let scopeDescriptor: number;
+  try {
+    scopeDescriptor = openSync(scopeHome, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch (error) {
+    throw new Error(`cannot open ${scopeLabel} home safely: ${(error as Error).message}`);
+  }
+
+  try {
+    const expectedHome = stream
+      ? join(realpathSync(dataRoot()), "projects", project.id, "streams", stream.id)
+      : join(realpathSync(dataRoot()), "projects", project.id);
+    const openedHome = realpathSync(`/proc/self/fd/${scopeDescriptor}`);
+    if (openedHome !== expectedHome) throw new Error(`opened ${scopeLabel} home does not match the canonical UUID path`);
+
+    let worklogsDescriptor: number;
+    try {
+      worklogsDescriptor = openSync(`/proc/self/fd/${scopeDescriptor}/worklogs`, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+      throw new Error(`cannot open worklogs directory safely: ${(error as Error).message}`);
+    }
+
+    try {
+      if (realpathSync(`/proc/self/fd/${worklogsDescriptor}`) !== join(openedHome, "worklogs")) throw new Error("worklogs directory escapes scope home");
+      let descriptor: number;
+      try {
+        descriptor = openSync(`/proc/self/fd/${worklogsDescriptor}/events.jsonl`, constants.O_RDONLY | constants.O_NOFOLLOW);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+        throw new Error(`cannot open worklog safely: ${(error as Error).message}`);
+      }
+
+      try {
+        const metadata = fstatSync(descriptor);
+        if (!metadata.isFile() || metadata.nlink !== 1) throw new Error("worklog must be a regular, singly linked file");
+        if (metadata.size > MAX_WORKLOG_BYTES) throw new Error(`worklog exceeds ${MAX_WORKLOG_BYTES} bytes`);
+        if (metadata.size === 0) return "";
+
+        const readBytes = Math.min(metadata.size, MAX_WORKLOG_TAIL_BYTES);
+        const buffer = Buffer.alloc(readBytes);
+        const count = readSync(descriptor, buffer, 0, readBytes, metadata.size - readBytes);
+        let text = buffer.subarray(0, count).toString("utf8");
+        if (metadata.size > readBytes) {
+          const firstNewline = text.indexOf("\n");
+          text = firstNewline >= 0 ? text.slice(firstNewline + 1) : "";
+        }
+        const lines = text.split("\n").filter((line) => line.trim()).slice(-MAX_RECENT_WORKLOG_EVENTS);
+        const rendered: string[] = [];
+        for (const line of lines) {
+          let raw: Record<string, unknown>;
+          try {
+            raw = JSON.parse(line) as Record<string, unknown>;
+          } catch (error) {
+            throw new Error(`worklog contains malformed JSON: ${(error as Error).message}`);
+          }
+          if (raw.v !== 1 || raw.project !== project.id || raw.scope !== (stream ? "stream" : "project")) throw new Error("worklog entry does not match the attached scope");
+          if (stream) {
+            const entryStream = raw.stream as Record<string, unknown> | undefined;
+            if (!entryStream || entryStream.id !== stream.id) throw new Error("worklog entry does not match the attached stream");
+          }
+          if (typeof raw.type !== "string" || !WORKLOG_TYPE_SET.has(raw.type)) throw new Error("worklog entry has an invalid type");
+          const time = compactWorklogText(raw.time, "time", 40, true)!;
+          const summary = compactWorklogText(raw.summary, "summary", 1000, true)!;
+          const details = [
+            ["Result", compactWorklogText(raw.result, "result", 800)],
+            ["Reason", compactWorklogText(raw.reason, "reason", 500)],
+            ["Lesson", compactWorklogText(raw.lesson, "lesson", 500)],
+            ["Next", compactWorklogText(raw.next, "next", 800)],
+            ["Blocker", compactWorklogText(raw.blocker, "blocker", 800)],
+          ].filter((item): item is [string, string] => Boolean(item[1]));
+          rendered.push([`[${time} · ${raw.type}] ${summary}`, ...details.map(([label, value]) => `  ${label}: ${value}`)].join("\n"));
+        }
+
+        const selected: string[] = [];
+        let bytes = 0;
+        for (const event of rendered.reverse()) {
+          const eventBytes = Buffer.byteLength(event) + (selected.length ? 2 : 0);
+          if (bytes + eventBytes > MAX_RECENT_WORKLOG_BYTES) break;
+          selected.unshift(event);
+          bytes += eventBytes;
+        }
+        return selected.join("\n\n");
+      } finally {
+        closeSync(descriptor);
+      }
+    } finally {
+      closeSync(worklogsDescriptor);
+    }
+  } finally {
+    closeSync(scopeDescriptor);
+  }
+}
+
 export function readAgentInstructions(project: ProjectContext, afterProjectDirectoryOpened?: () => void, stream?: StreamContext): string {
   const scopeHome = stream?.streamHome || project.projectHome;
   const scopeLabel = stream ? "Stream" : "Project";
@@ -464,8 +571,12 @@ export function readAgentInstructions(project: ProjectContext, afterProjectDirec
 
 export default function projectObjectExtension(pi: ExtensionAPI) {
   let resolution: Resolution = {};
+  let startupWorklog = "";
+  let startupWorklogError: string | undefined;
 
   pi.on("session_start", async (_event, ctx) => {
+    startupWorklog = "";
+    startupWorklogError = undefined;
     try { removeActivity(); } catch { /* advisory */ }
     resolution = resolveProject();
     if (resolution.error) {
@@ -479,6 +590,11 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       return;
     }
     const stream = resolution.stream;
+    try {
+      startupWorklog = readRecentWorklog(project, stream);
+    } catch (error) {
+      startupWorklogError = (error as Error).message;
+    }
     const label = stream ? `Project: ${project.name} · Stream: ${stream.name}` : `Project: ${project.name}`;
     ctx.ui.setStatus("project-object", ctx.ui.theme.fg("accent", label));
     try { writeActivity(resolution, "idle"); } catch { /* Activity is advisory and must never block Pi. */ }
@@ -510,7 +626,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
     }
     const stream = resolution.stream;
     const worklogScope = stream ? `the ${stream.name} stream` : "the project";
-    const worklogGuidance = `For meaningful progress, decisions, mistakes, blockers, completed work, or a concrete next step, append one concise durable entry with project_worklog_append before wrapping up. It writes to ${worklogScope}; stream details must not be copied into project artifacts automatically. Never put credentials, tokens, private keys, or other secrets in a worklog.`;
+    const worklogGuidance = `When a durable conversational fact, requirement, decision, mistake, blocker, completed result, or concrete next step becomes clear, append one concise entry with project_worklog_append then rather than waiting for shutdown. It writes to ${worklogScope}; do not log casual conversation or copy stream details into project artifacts automatically. Never put credentials, tokens, private keys, or other secrets in a worklog.`;
     const instructions: string[] = [];
     try {
       instructions.push(readAgentInstructions(project));
@@ -524,6 +640,8 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
         instructions.push(`Stream: ${stream.name}\nStream home: ${stream.streamHome}\nStream AGENTS.md was not loaded: ${(error as Error).message}`);
       }
     }
+    if (startupWorklog) instructions.push(`Recent ${stream ? "stream" : "project"} worklog (up to 10 newest events):\n${startupWorklog}`);
+    if (startupWorklogError) instructions.push(`Recent worklog was not loaded: ${startupWorklogError}`);
     instructions.push(worklogGuidance);
     event.systemPromptOptions.sections.project_object = instructions.join("\n\n");
   });
