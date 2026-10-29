@@ -28,37 +28,51 @@ def data_root() -> Path:
     return Path(os.environ.get("PROJECT_OBJECT_DATA_DIR", Path(os.environ.get("XDG_DATA_HOME", home / ".local/share")) / "project-object"))
 
 
-def stream_home() -> Path:
+def attached_scope() -> tuple[Path, str, str, str | None]:
     project_id = os.environ.get("PROJECT_OBJECT_ID", "")
+    supplied_project_home = os.environ.get("PROJECT_OBJECT_HOME", "")
     stream_id = os.environ.get("PROJECT_OBJECT_STREAM_ID", "")
-    supplied_home = os.environ.get("PROJECT_OBJECT_STREAM_HOME", "")
+    supplied_stream_home = os.environ.get("PROJECT_OBJECT_STREAM_HOME", "")
     if not UUID_PATTERN.fullmatch(project_id):
-        raise InitRefused("/init requires a stream-attached Pi session with a canonical project ID")
-    if not UUID_PATTERN.fullmatch(stream_id):
-        raise InitRefused("/init requires a stream-attached Pi session with a canonical stream ID")
-    expected = data_root() / "projects" / project_id / "streams" / stream_id
-    if not supplied_home or Path(supplied_home) != expected:
-        raise InitRefused("the attached stream home does not match its canonical UUID path")
+        raise InitRefused("/init requires a project-attached Pi session with a canonical project ID")
+
+    expected_project = data_root() / "projects" / project_id
+    if not supplied_project_home or Path(supplied_project_home) != expected_project:
+        raise InitRefused("the attached project home does not match its canonical UUID path")
+
+    if stream_id:
+        if not UUID_PATTERN.fullmatch(stream_id):
+            raise InitRefused("/init requires a canonical stream ID when a stream is attached")
+        expected = expected_project / "streams" / stream_id
+        if not supplied_stream_home or Path(supplied_stream_home) != expected:
+            raise InitRefused("the attached stream home does not match its canonical UUID path")
+        scope = "stream"
+    else:
+        if supplied_stream_home:
+            raise InitRefused("a stream home was supplied without an attached stream ID")
+        expected = expected_project
+        scope = "project"
+
     if expected.is_symlink() or not expected.is_dir():
-        raise InitRefused("the canonical stream home is missing or unsafe")
-    return expected
+        raise InitRefused(f"the canonical {scope} home is missing or unsafe")
+    return expected, scope, project_id, stream_id or None
 
 
-def marker_path(home: Path) -> Path:
+def marker_path(home: Path, scope: str) -> Path:
     marker = home / MARKER_NAME
     if marker.is_symlink():
-        raise InitRefused("the stream initialization marker is unsafe")
+        raise InitRefused(f"the {scope} initialization marker is unsafe")
     return marker
 
 
-def populated_artifacts(home: Path) -> list[str]:
+def populated_artifacts(home: Path, scope: str) -> list[str]:
     populated = []
     agents = home / "AGENTS.md"
     try:
         if agents.is_symlink() or not agents.is_file():
             populated.append("AGENTS.md is missing or unsafe")
         elif SCOPE_PLACEHOLDER not in agents.read_text():
-            populated.append("AGENTS.md already contains initialized stream scope")
+            populated.append(f"AGENTS.md already contains initialized {scope} scope")
     except OSError as error:
         populated.append(f"AGENTS.md cannot be read: {error}")
 
@@ -73,7 +87,7 @@ def populated_artifacts(home: Path) -> list[str]:
             populated.append(f"{name} cannot be read: {error}")
             continue
         if content != pristine:
-            populated.append(f"{name} already contains stream material")
+            populated.append(f"{name} already contains {scope} material")
 
     plans = home / "plans"
     if plans.is_symlink() or not plans.is_dir():
@@ -81,36 +95,36 @@ def populated_artifacts(home: Path) -> list[str]:
     else:
         try:
             if any(plans.iterdir()):
-                populated.append("plans/ already contains stream material")
+                populated.append(f"plans/ already contains {scope} material")
         except OSError as error:
             populated.append(f"plans/ cannot be read: {error}")
 
     events = home / "worklogs" / "events.jsonl"
     if events.is_symlink():
-        populated.append("the stream worklog is unsafe")
+        populated.append(f"the {scope} worklog is unsafe")
     elif events.exists():
         try:
             if events.stat().st_size > 0:
-                populated.append("the stream worklog already contains events")
+                populated.append(f"the {scope} worklog already contains events")
         except OSError as error:
-            populated.append(f"the stream worklog cannot be inspected: {error}")
+            populated.append(f"the {scope} worklog cannot be inspected: {error}")
     return populated
 
 
-def check(home: Path) -> None:
-    marker = marker_path(home)
+def check(home: Path, scope: str) -> None:
+    marker = marker_path(home, scope)
     if marker.exists():
-        raise InitRefused("this stream has already been initialized")
-    populated = populated_artifacts(home)
+        raise InitRefused(f"this {scope} has already been initialized")
+    populated = populated_artifacts(home, scope)
     if populated:
         raise InitRefused("initialization refused: " + "; ".join(populated))
-    print(json.dumps({"ok": True, "streamHome": str(home), "state": "pristine"}))
+    print(json.dumps({"ok": True, "scope": scope, "scopeHome": str(home), "state": "pristine"}))
 
 
-def mark(home: Path) -> None:
-    marker = marker_path(home)
+def mark(home: Path, scope: str, project_id: str, stream_id: str | None) -> None:
+    marker = marker_path(home, scope)
     if marker.exists():
-        raise InitRefused("this stream has already been initialized")
+        raise InitRefused(f"this {scope} has already been initialized")
     agents = home / "AGENTS.md"
     if SCOPE_PLACEHOLDER in agents.read_text():
         raise InitRefused("cannot mark an incomplete initialization: AGENTS.md scope")
@@ -120,9 +134,11 @@ def mark(home: Path) -> None:
     value = {
         "version": 1,
         "initializedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
-        "projectId": os.environ["PROJECT_OBJECT_ID"],
-        "streamId": os.environ["PROJECT_OBJECT_STREAM_ID"],
+        "scope": scope,
+        "projectId": project_id,
     }
+    if stream_id:
+        value["streamId"] = stream_id
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
     descriptor = os.open(marker, flags, 0o600)
     try:
@@ -139,18 +155,18 @@ def mark(home: Path) -> None:
         os.fsync(directory_descriptor)
     finally:
         os.close(directory_descriptor)
-    print(json.dumps({"ok": True, "streamHome": str(home), "state": "initialized", "marker": str(marker)}))
+    print(json.dumps({"ok": True, "scope": scope, "scopeHome": str(home), "state": "initialized", "marker": str(marker)}))
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Guard one-time Project Object stream initialization")
+    parser = argparse.ArgumentParser(description="Guard one-time Project Object project or stream initialization")
     parser.add_argument("action", choices=("check", "mark"))
     arguments = parser.parse_args()
     try:
-        home = stream_home()
-        check(home) if arguments.action == "check" else mark(home)
+        home, scope, project_id, stream_id = attached_scope()
+        check(home, scope) if arguments.action == "check" else mark(home, scope, project_id, stream_id)
     except (InitRefused, OSError, KeyError) as error:
-        print(f"stream-init: {error}", file=sys.stderr)
+        print(f"scope-init: {error}", file=sys.stderr)
         raise SystemExit(2) from error
 
 

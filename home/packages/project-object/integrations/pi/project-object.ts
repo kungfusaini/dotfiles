@@ -666,7 +666,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("init", {
-    description: "Initialize pristine artifacts for the attached stream once",
+    description: "Initialize pristine artifacts for the attached project or stream once",
     handler: async (args, ctx) => {
       if (!ctx.isIdle()) {
         ctx.ui.notify("Wait for the current response to finish before running /init", "warning");
@@ -679,29 +679,34 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       }
       const project = resolution.project;
       const stream = resolution.stream;
-      if (!project || !stream) {
-        ctx.ui.notify("/init requires a stream-attached Pi session", "warning");
+      if (!project) {
+        ctx.ui.notify("/init requires a project- or stream-attached Pi session", "warning");
         return;
       }
-      const marker = join(stream.streamHome, ".project-object-initialized.json");
+      const scopeHome = stream?.streamHome || project.projectHome;
+      const scopeName = stream?.name || project.name;
+      const scopeKind = stream ? "stream" : "project";
+      const marker = join(scopeHome, ".project-object-initialized.json");
       try {
         const metadata = lstatSync(marker);
         if (metadata.isSymbolicLink() || !metadata.isFile()) {
-          ctx.ui.notify("Stream initialization marker is unsafe; refusing /init", "error");
+          ctx.ui.notify(`${scopeKind === "stream" ? "Stream" : "Project"} initialization marker is unsafe; refusing /init`, "error");
         } else {
-          ctx.ui.notify(`${stream.name} has already been initialized`, "warning");
+          ctx.ui.notify(`${scopeName} has already been initialized`, "warning");
         }
         return;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-          ctx.ui.notify(`Cannot inspect stream initialization state: ${(error as Error).message}`, "error");
+          ctx.ui.notify(`Cannot inspect ${scopeKind} initialization state: ${(error as Error).message}`, "error");
           return;
         }
       }
 
       const suppliedGoal = args.trim();
       pi.sendUserMessage([
-        `Initialize the pristine ${stream.name} stream in the ${project.name} project.`,
+        stream
+          ? `Initialize the pristine ${stream.name} stream in the ${project.name} project.`
+          : `Initialize the pristine ${project.name} project.`,
         `Before doing anything else, read and follow the complete one-time init skill at: ${initSkillFile()}`,
         "The skill guard is authoritative. If it refuses, make no changes.",
         "This is setup only: do not begin substantive investigation, SSH, implementation, deployment, or external actions.",

@@ -95,6 +95,10 @@ def initialize_project_home(project, home=None):
 This file holds concise, stable project scope and guidance that every attached agent should receive. Keep changing facts in the repository or `NOTES.md`, current work in `TODO.md`, detailed plans in `plans/`, and completed history in the worklog.
 
 Project guidance is inherited by streams. Repository-local `AGENTS.md` files remain authoritative for repository-specific commands and implementation rules.
+
+## Scope
+
+<!-- project-object:init-scope -->
 """,
         "NOTES.md": "# Notes\n",
         "TODO.md": "# Todo\n\n## Now\n\n## Next\n\n## Waiting\n",

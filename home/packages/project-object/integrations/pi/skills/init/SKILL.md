@@ -1,16 +1,16 @@
 ---
 name: init
-description: Initialize a newly created Project Object stream's minimal durable artifacts from the user's stated goal and current conversation. Use only when explicitly directed by the Project Object /init command.
+description: Initialize a newly created Project Object project's or stream's minimal durable artifacts from the user's stated goal and current conversation. Use only when explicitly directed by the Project Object /init command.
 disable-model-invocation: true
 ---
 
-# Initialize a Project Object stream
+# Initialize a Project Object scope
 
-This is a one-time, low-ceremony orientation pass. It establishes enough durable state to resume the stream later. It does not begin the substantive work.
+This is a one-time, low-ceremony orientation pass for the attached project or stream. It establishes enough durable state to resume the scope later. It does not begin substantive work.
 
 ## Preconditions
 
-1. Require `PROJECT_OBJECT_ID`, `PROJECT_OBJECT_STREAM_ID`, and `PROJECT_OBJECT_STREAM_HOME`.
+1. Require `PROJECT_OBJECT_ID` and `PROJECT_OBJECT_HOME`. When `PROJECT_OBJECT_STREAM_ID` is present, also require `PROJECT_OBJECT_STREAM_HOME`.
 2. Resolve paths relative to this skill directory.
 3. Run:
 
@@ -22,23 +22,23 @@ If it refuses, stop immediately. Do not edit, merge, reset, or overwrite any art
 
 ## Determine the goal
 
-Use the user's `/init` arguments and the active conversation as evidence. Read existing project and stream instructions plus immediately relevant repository documentation only when needed to avoid inventing facts.
+Use the user's `/init` arguments and the active conversation as evidence. Read existing inherited instructions and immediately relevant repository documentation only when needed to avoid inventing facts.
 
-If the stream goal is still genuinely unclear, ask at most one concise clarifying question and make no changes yet. Otherwise initialize directly without presenting a lengthy questionnaire or draft ceremony.
+If the attached scope's goal is still genuinely unclear, ask at most one concise clarifying question and make no changes yet. Otherwise initialize directly without presenting a lengthy questionnaire or draft ceremony.
 
 ## Write the minimum useful state
 
-Modify stream-owned artifacts only. Never edit project-level artifacts during initialization.
+Modify artifacts owned by the attached scope only. For a stream, never edit project-level artifacts during initialization.
 
 ### `AGENTS.md`
 
-Replace the `<!-- project-object:init-scope -->` placeholder with a concise stream objective, initial boundary, authoritative source, and any stable constraints or safety rules future agents must always receive. Keep it short because this file is injected into every attached session. Do not add temporary status, mutable figures, task detail, or a transcript summary.
+Replace the `<!-- project-object:init-scope -->` placeholder with a concise objective, initial boundary, authoritative source, and any stable constraints or safety rules future agents must always receive. Keep it short because this file is injected into every attached session. Do not add temporary status, mutable figures, task detail, or a transcript summary.
 
 Separate known facts from hypotheses. Do not claim that exploratory assumptions are established architecture.
 
 ### `TODO.md`
 
-Use the existing `Now`, `Next`, and `Waiting` sections. Create roughly three to seven immediate, stream-owned actions. Prefer discovery and decision steps before implementation when the goal is exploratory. Put real external blockers under `Waiting`; do not duplicate completed history.
+Use the existing `Now`, `Next`, and `Waiting` sections. Create roughly three to seven immediate, scope-owned actions. Prefer discovery and decision steps before implementation when the goal is exploratory. Put real external blockers under `Waiting`; do not duplicate completed history.
 
 ### `NOTES.md` and `plans/`
 
@@ -46,7 +46,7 @@ Leave them untouched by default. Use `NOTES.md` only when the user already suppl
 
 ### Worklog
 
-Append one `start` entry with `project_worklog_append`. Summarize why the stream exists and state the first next action. Do not fabricate historical events. Do not set `projectAttention` during initialization unless the user explicitly identified an immediate parent-project concern.
+Append one `start` entry with `project_worklog_append`. Summarize why the attached scope exists and state the first next action. Do not fabricate historical events. For a stream, do not set `projectAttention` during initialization unless the user explicitly identified an immediate parent-project concern.
 
 ## Finish atomically
 
@@ -60,7 +60,7 @@ If marking fails, report it and stop. Never retry by overwriting artifacts.
 
 Reply with only:
 
-- the stream objective in one sentence;
+- the scope objective in one sentence;
 - files changed;
 - the first `Now` action and any `Waiting` blocker.
 
@@ -68,5 +68,5 @@ Reply with only:
 
 - Do not SSH, call external services, modify repositories, run deployments, or begin implementation.
 - Do not copy credentials, tokens, private keys, secret values, or sensitive command output into artifacts or worklogs.
-- Do not edit project-level artifacts or automatically promote stream information.
+- For stream initialization, do not edit project-level artifacts or automatically promote stream information.
 - Do not rerun initialization against populated or previously initialized artifacts.
