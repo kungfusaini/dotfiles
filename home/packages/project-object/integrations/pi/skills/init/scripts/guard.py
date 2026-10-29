@@ -12,11 +12,10 @@ import sys
 
 UUID_PATTERN = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 MARKER_NAME = ".project-object-initialized.json"
+SCOPE_PLACEHOLDER = "<!-- project-object:init-scope -->"
 PRISTINE_FILES = {
-    "CONTEXT.md": "# Context\n",
-    "STATUS.md": "# Status\n\nCurrent:\n\nNext:\n\nBlocked:\n",
     "NOTES.md": "# Notes\n",
-    "TODO.md": "# Todo\n",
+    "TODO.md": "# Todo\n\n## Now\n\n## Next\n\n## Waiting\n",
 }
 
 
@@ -54,6 +53,15 @@ def marker_path(home: Path) -> Path:
 
 def populated_artifacts(home: Path) -> list[str]:
     populated = []
+    agents = home / "AGENTS.md"
+    try:
+        if agents.is_symlink() or not agents.is_file():
+            populated.append("AGENTS.md is missing or unsafe")
+        elif SCOPE_PLACEHOLDER not in agents.read_text():
+            populated.append("AGENTS.md already contains initialized stream scope")
+    except OSError as error:
+        populated.append(f"AGENTS.md cannot be read: {error}")
+
     for name, pristine in PRISTINE_FILES.items():
         path = home / name
         if path.is_symlink() or not path.is_file():
@@ -103,10 +111,12 @@ def mark(home: Path) -> None:
     marker = marker_path(home)
     if marker.exists():
         raise InitRefused("this stream has already been initialized")
-    required = (home / "CONTEXT.md", home / "STATUS.md", home / "TODO.md")
-    still_pristine = [path.name for path in required if path.read_text() == PRISTINE_FILES[path.name]]
-    if still_pristine:
-        raise InitRefused("cannot mark an incomplete initialization: " + ", ".join(still_pristine))
+    agents = home / "AGENTS.md"
+    if SCOPE_PLACEHOLDER in agents.read_text():
+        raise InitRefused("cannot mark an incomplete initialization: AGENTS.md scope")
+    todo = home / "TODO.md"
+    if todo.read_text() == PRISTINE_FILES["TODO.md"]:
+        raise InitRefused("cannot mark an incomplete initialization: TODO.md")
     value = {
         "version": 1,
         "initializedAt": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),

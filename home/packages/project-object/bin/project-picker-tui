@@ -82,60 +82,22 @@ def stream_workspace_name(project, stream):
     return canonical_stream_workspace_name(project["name"], stream["name"])
 
 
-def stream_status_summary(project, stream):
-    status_file = stream_home(project, stream) / "STATUS.md"
-    try:
-        if status_file.is_symlink() or status_file.stat().st_size > 64 * 1024:
-            return None
-        lines = status_file.read_text().splitlines()
-    except OSError:
-        return None
-    for index, line in enumerate(lines):
-        if line.strip().casefold().startswith("current:"):
-            inline = line.split(":", 1)[1].strip()
-            if inline:
-                return inline
-            for candidate in lines[index + 1:]:
-                value = candidate.strip()
-                if value and not value.casefold().startswith(("next:", "blocked:")):
-                    return value.lstrip("- ")
-                if value.casefold().startswith(("next:", "blocked:")):
-                    break
-    return None
-
-
 def initialize_project_home(project, home=None):
-    canonical_home = project_home(project)
-    home = home or canonical_home
+    home = home or project_home(project)
     ensure_directory(home)
     ensure_directory(home / "plans")
     ensure_directory(home / "snapshots")
     ensure_directory(home / "worklogs")
 
     files = {
-        "AGENTS.md": f"""# Project agent guide
+        "AGENTS.md": f"""# {project['name']}
 
-You are working within the **{project['name']}** project object.
+This file holds concise, stable project scope and guidance that every attached agent should receive. Keep changing facts in the repository or `NOTES.md`, current work in `TODO.md`, detailed plans in `plans/`, and completed history in the worklog.
 
-- Project home: `{canonical_home}`
-- Main working directory: `{project['mainDirectory']}`
-
-Project-owned artifacts:
-
-- `CONTEXT.md` — project background, goals, and constraints.
-- `NOTES.md` — durable informal notes.
-- `TODO.md` — project-level tasks and next actions.
-- `plans/` — detailed plans.
-- `snapshots/` — retained workspace and application restoration state.
-- `worklogs/` — durable records of work, decisions, blockers, and outcomes.
-
-These artifacts may be sparse or empty. Inspect the relevant files when useful rather than assuming they contain information. Keep project-level material in the project home unless the user explicitly asks for it to live in a repository.
-
-Repository-local `AGENTS.md` files govern repository-specific build, testing, and implementation rules. This project guide governs project-wide context and artifacts.
+Project guidance is inherited by streams. Repository-local `AGENTS.md` files remain authoritative for repository-specific commands and implementation rules.
 """,
-        "CONTEXT.md": "# Context\n",
         "NOTES.md": "# Notes\n",
-        "TODO.md": "# Todo\n",
+        "TODO.md": "# Todo\n\n## Now\n\n## Next\n\n## Waiting\n",
     }
     for name, content in files.items():
         target = home / name
@@ -145,26 +107,23 @@ Repository-local `AGENTS.md` files govern repository-specific build, testing, an
 
 
 def initialize_stream_home(project, stream, home=None):
-    canonical_home = stream_home(project, stream)
-    home = home or canonical_home
-    main_directory = stream.get("mainDirectory") or project["mainDirectory"]
+    home = home or stream_home(project, stream)
     ensure_directory(home)
     for directory in ("plans", "snapshots", "worklogs"):
         ensure_directory(home / directory)
     files = {
-        "AGENTS.md": f"""# Stream agent guide
+        "AGENTS.md": f"""# {stream['name']}
 
-You are working within the **{stream['name']}** stream of the **{project['name']}** project object.
+This is a stream within the **{project['name']}** project. Project guidance is inherited and remains authoritative. Repository-local `AGENTS.md` files govern repository-specific commands and implementation rules.
 
-- Stream home: `{canonical_home}`
-- Working directory: `{main_directory}`
+Keep stable stream scope and rules here, rough or changing information in `NOTES.md`, current work in `TODO.md`, detailed plans in `plans/`, and completed history in the worklog. Do not copy stream detail into project artifacts automatically. Use `projectAttention: true` only when parent-project review is genuinely needed.
 
-Project instructions are inherited and remain authoritative. Keep detailed stream context, notes, tasks, plans, and worklogs in this stream home. Do not copy stream detail into project artifacts automatically. When a development genuinely needs parent-project review, set `projectAttention: true` on the stream worklog entry; this requests review and does not promote it automatically.
+## Scope
+
+<!-- project-object:init-scope -->
 """,
-        "CONTEXT.md": "# Context\n",
-        "STATUS.md": "# Status\n\nCurrent:\n\nNext:\n\nBlocked:\n",
         "NOTES.md": "# Notes\n",
-        "TODO.md": "# Todo\n",
+        "TODO.md": "# Todo\n\n## Now\n\n## Next\n\n## Waiting\n",
     }
     for name, content in files.items():
         target = home / name

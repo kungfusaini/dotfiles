@@ -618,7 +618,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       pi.sendUserMessage([
         `Catch me up on where we left off in the ${scopeDescription} and what I should do next.`,
         "Do not introduce or explain the project to me. Assume I remember what it is.",
-        `Use tools to inspect the newest relevant worklog entries first, then STATUS.md when present, TODO.md and NOTES.md in the attached scope home, plus uncommitted Git changes and recent commits in the working directory when it is a Git repository. ${stream ? "Use project-level context only as inherited background; keep detailed stream findings local." : "Include bounded stream status and unresolved projectAttention worklog entries when relevant, without copying stream detail into project artifacts."}`,
+        `Use tools to inspect the newest relevant worklog entries first, then TODO.md as the current task list and NOTES.md only when relevant, plus uncommitted Git changes and recent commits in the working directory when it is a Git repository. Treat repository or application data as authoritative for mutable operational facts. ${stream ? "Use inherited project instructions as stable background; keep detailed stream findings local." : "Include bounded stream activity and unresolved projectAttention worklog entries when relevant, without copying stream detail into project artifacts."}`,
         `Worklog: ${join(scopeHome, "worklogs", "events.jsonl")}`,
         `Scope home: ${scopeHome}`,
         `Project home: ${project.projectHome}`,

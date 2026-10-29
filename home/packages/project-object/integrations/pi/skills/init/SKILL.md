@@ -30,35 +30,19 @@ If the stream goal is still genuinely unclear, ask at most one concise clarifyin
 
 Modify stream-owned artifacts only. Never edit project-level artifacts during initialization.
 
-### `CONTEXT.md`
+### `AGENTS.md`
 
-Keep it short. Record:
+Replace the `<!-- project-object:init-scope -->` placeholder with a concise stream objective, initial boundary, authoritative source, and any stable constraints or safety rules future agents must always receive. Keep it short because this file is injected into every attached session. Do not add temporary status, mutable figures, task detail, or a transcript summary.
 
-- the objective;
-- the initial scope or discovery boundary;
-- confirmed constraints.
-
-Separate known facts from hypotheses. Do not summarize the whole transcript or claim that exploratory assumptions are established architecture.
-
-### `STATUS.md`
-
-Keep exactly the useful current boundary:
-
-- `Current:` what the stream is starting with;
-- `Next:` the first concrete action;
-- `Blocked:` a real known blocker, or `None known.`
+Separate known facts from hypotheses. Do not claim that exploratory assumptions are established architecture.
 
 ### `TODO.md`
 
-Create roughly three to seven immediate, stream-owned actions. Prefer discovery and decision steps before implementation when the goal is exploratory.
+Use the existing `Now`, `Next`, and `Waiting` sections. Create roughly three to seven immediate, stream-owned actions. Prefer discovery and decision steps before implementation when the goal is exploratory. Put real external blockers under `Waiting`; do not duplicate completed history.
 
 ### `NOTES.md` and `plans/`
 
-Leave them untouched by default. Use them only when the user already supplied material that clearly belongs there. Do not create a plan merely because the directory exists.
-
-### `AGENTS.md`
-
-Leave the generated guide intact by default. Append one short `## Operational guardrails` section only when the work has an obvious safety boundary that future agents must receive automatically—for example read-only remote discovery before any production changes. Do not add temporary status or task detail.
+Leave them untouched by default. Use `NOTES.md` only when the user already supplied rough, changing, or unverified material worth retaining. Use `plans/` only for an actual detailed plan; do not create one merely because the directory exists.
 
 ### Worklog
 
@@ -78,7 +62,7 @@ Reply with only:
 
 - the stream objective in one sentence;
 - files changed;
-- current, next, and blocked state.
+- the first `Now` action and any `Waiting` blocker.
 
 ## Hard boundaries
 
