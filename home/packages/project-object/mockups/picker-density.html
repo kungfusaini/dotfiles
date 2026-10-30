@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Project Object — picker density studies</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --page: #090a0f;
+    --panel: #11131a;
+    --panel-2: #171a23;
+    --selected: #262b3a;
+    --hover: rgba(255,255,255,.045);
+    --border: rgba(255,255,255,.10);
+    --text: #eef1f8;
+    --muted: #8990a3;
+    --faint: #676f86;
+    --blue: #79a8ff;
+    --green: #74d3ae;
+    --purple: #ae9cff;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    background:
+      radial-gradient(circle at 20% 0%, rgba(93,111,180,.12), transparent 34rem),
+      var(--page);
+    color: var(--text);
+    font: 14px/1.35 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  button, input { font: inherit; }
+  .page { width: min(1120px, calc(100% - 32px)); margin: 32px auto 56px; }
+  .top { display: flex; justify-content: space-between; gap: 24px; align-items: end; margin-bottom: 20px; }
+  .eyebrow { color: var(--blue); font-size: 11px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+  h1 { margin: 5px 0 4px; font-size: 26px; letter-spacing: -.04em; }
+  .lede { margin: 0; color: var(--muted); max-width: 680px; }
+  .measure { color: var(--muted); font: 11px/1.3 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: right; }
+  .switcher { display: flex; gap: 8px; margin-bottom: 14px; }
+  .switcher button {
+    border: 1px solid var(--border); background: var(--panel); color: var(--muted);
+    border-radius: 10px; padding: 8px 12px; cursor: pointer;
+  }
+  .switcher button:hover { color: var(--text); background: var(--panel-2); }
+  .switcher button.active { color: var(--text); border-color: rgba(121,168,255,.55); background: rgba(121,168,255,.12); }
+  .study { display: none; }
+  .study.active { display: grid; grid-template-columns: 760px 1fr; gap: 24px; align-items: start; }
+  .picker {
+    width: 760px; height: 570px; overflow: hidden; display: flex; flex-direction: column;
+    background: var(--panel); border: 1px solid var(--border); border-radius: 18px;
+    box-shadow: 0 24px 70px rgba(0,0,0,.52);
+  }
+  .picker-head { height: 64px; padding: 20px 25px 10px; display: flex; align-items: baseline; }
+  .picker-title { font-size: 20px; font-weight: 760; letter-spacing: -.02em; flex: 1; }
+  .shortcut { color: var(--faint); font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .08em; }
+  .search {
+    margin: 0 20px 10px; border: 1px solid rgba(255,255,255,.09); background: #1b1e28;
+    color: var(--muted); border-radius: 10px; height: 38px; padding: 0 13px; display: flex; align-items: center; gap: 9px;
+  }
+  .search b { color: #c9ceda; font-size: 15px; font-weight: 500; }
+  .list { flex: 1; overflow: hidden; padding: 0 15px; }
+  .row { display: flex; align-items: center; border-radius: 8px; position: relative; }
+  .row:hover { background: var(--hover); }
+  .row.selected { background: var(--selected); }
+  .arrow { color: var(--muted); width: 18px; text-align: center; flex: none; }
+  .dot { width: 20px; text-align: center; color: var(--faint); flex: none; font-size: 12px; }
+  .dot.current { color: var(--green); }
+  .dot.open { color: var(--blue); }
+  .name { min-width: 0; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .sub { min-width: 0; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .badge { flex: none; font-size: 9px; font-weight: 800; letter-spacing: .035em; border-radius: 999px; padding: 3px 7px; }
+  .badge.current { color: #82dfba; background: rgba(80,200,150,.15); }
+  .badge.open { color: #8eb5ff; background: rgba(90,145,255,.15); }
+  .count { color: var(--muted); font-size: 10px; flex: none; }
+  .more { color: var(--muted); width: 24px; text-align: center; flex: none; }
+  .footer { height: 43px; border-top: 1px solid rgba(255,255,255,.055); display: flex; align-items: center; padding: 0 24px; color: var(--faint); font-size: 10px; gap: 14px; }
+  .footer b { color: #c2c7d4; font-weight: 700; }
+  .footer .push { margin-left: auto; }
+  .notes { padding: 4px 0; }
+  .notes h2 { font-size: 17px; margin: 0 0 8px; }
+  .notes p { color: var(--muted); margin: 0 0 16px; }
+  .metric { border-top: 1px solid var(--border); padding: 10px 0; display: grid; grid-template-columns: 1fr auto; gap: 12px; }
+  .metric span { color: var(--muted); }
+  .metric strong { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--text); }
+  .tradeoffs { margin: 16px 0 0; padding-left: 18px; color: var(--muted); }
+  .tradeoffs li { margin: 7px 0; }
+
+  /* A: compact two-line */
+  .a .row.project { height: 46px; padding: 4px 10px; gap: 5px; }
+  .a .row.stream { height: 42px; padding: 3px 10px 3px 36px; gap: 5px; }
+  .a .text { min-width: 0; flex: 1; }
+  .a .name { font-size: 13px; }
+  .a .sub { font-size: 10.5px; margin-top: 1px; }
+
+  /* B: one-line table */
+  .b .column-head { height: 23px; margin: 0 9px; padding: 0 8px 4px 45px; display: grid; grid-template-columns: 185px 1fr 72px; align-items: end; color: #656c80; font-size: 9px; font-weight: 750; letter-spacing: .08em; text-transform: uppercase; }
+  .b .row { height: 34px; padding: 0 9px; gap: 5px; }
+  .b .row.stream { padding-left: 31px; }
+  .b .table { min-width: 0; flex: 1; display: grid; grid-template-columns: 185px 1fr 72px; align-items: center; gap: 8px; }
+  .b .name { font-size: 12px; }
+  .b .sub { font-size: 10.5px; }
+  .b .scope { color: #70788d; font: 10px ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  /* C: tree + selected detail */
+  .c .list { display: flex; flex-direction: column; }
+  .c .tree { flex: 1; }
+  .c .row.project { height: 34px; padding: 0 10px; gap: 5px; }
+  .c .row.stream { height: 30px; padding: 0 10px 0 37px; gap: 5px; }
+  .c .name { flex: 1; font-size: 12px; }
+  .c .row.stream .name { font-weight: 540; }
+  .c .detail {
+    height: 94px; margin: 8px 3px 10px; padding: 12px 14px; border: 1px solid rgba(255,255,255,.075);
+    border-radius: 10px; background: rgba(255,255,255,.025); display: grid; grid-template-columns: 1fr auto; gap: 6px 18px;
+  }
+  .c .detail-title { font-size: 13px; font-weight: 720; }
+  .c .detail-state { color: var(--green); font-size: 10px; font-weight: 750; }
+  .c .detail-copy { grid-column: 1 / -1; color: var(--muted); font-size: 11px; overflow: hidden; }
+  .c .detail-next { grid-column: 1 / -1; color: #b5bac7; font-size: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  @media (max-width: 1030px) {
+    .study.active { grid-template-columns: 1fr; }
+    .notes { width: 760px; }
+  }
+  @media (max-width: 800px) {
+    .page { width: calc(100% - 16px); margin-top: 16px; }
+    .study.active { overflow-x: auto; }
+    .top { min-width: 760px; }
+  }
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="top">
+    <div>
+      <div class="eyebrow">Project Object / density study</div>
+      <h1>Same picker, three information densities</h1>
+      <p class="lede">Each frame is the real 760×570 picker size. Compare hierarchy, scanning speed, status visibility, and how many rows fit without scrolling.</p>
+    </div>
+    <div class="measure">FRAME<br>760 × 570</div>
+  </div>
+
+  <nav class="switcher" aria-label="Choose design">
+    <button class="active" data-target="a">1 · Compact stacked</button>
+    <button data-target="b">2 · One-line table</button>
+    <button data-target="c">3 · Dense tree + detail</button>
+  </nav>
+
+  <section class="study active" data-study="a">
+    <div class="picker a">
+      <div class="picker-head"><div class="picker-title">Projects</div><div class="shortcut">SUPER&nbsp; P</div></div>
+      <div class="search"><b>⌕</b><span>Search projects and streams…</span></div>
+      <div class="list">
+        <div class="row project"><span class="arrow">▾</span><span class="dot">○</span><div class="text"><div class="name">Elijah</div><div class="sub">~/matrix/projects/elijah</div></div><span class="count">2 streams open</span><span class="more">•••</span></div>
+        <div class="row stream selected"><span class="dot current">●</span><div class="text"><div class="name">Model API</div><div class="sub">Discovery of Newshore coupling to models on BABS</div></div><span class="badge current">CURRENT</span><span class="more">•••</span></div>
+        <div class="row stream"><span class="dot open">●</span><div class="text"><div class="name">Yellowslacks UI Contract</div><div class="sub">Reconcile browser calls with the operation inventory</div></div><span class="badge open">OPEN</span><span class="more">•••</span></div>
+        <div class="row project"><span class="arrow">▸</span><span class="dot open">●</span><div class="text"><div class="name">Project Object</div><div class="sub">~/matrix/projects/command-center/project-object</div></div><span class="badge open">OPEN</span><span class="more">•••</span></div>
+        <div class="row project"><span class="arrow">▸</span><span class="dot">○</span><div class="text"><div class="name">Another project</div><div class="sub">~/matrix/projects/another-project</div></div><span class="count">3 streams</span><span class="more">•••</span></div>
+        <div class="row project"><span class="arrow">▸</span><span class="dot">○</span><div class="text"><div class="name">Archived research</div><div class="sub">~/matrix/research/archive-candidate</div></div><span class="count">1 stream</span><span class="more">•••</span></div>
+      </div>
+      <div class="footer"><span><b>Tab</b> streams</span><span><b>Enter</b> open</span><span><b>n/r</b> chat</span><span><b>x</b> close</span><span><b>a</b> archive</span><span class="push"><b>Esc</b> close</span></div>
+    </div>
+    <aside class="notes">
+      <h2>1 · Compact stacked</h2>
+      <p>Keeps the current two-line idea, but removes roughly a third of the vertical padding. Status summaries remain visible while hierarchy stays obvious.</p>
+      <div class="metric"><span>Project row</span><strong>46 px</strong></div>
+      <div class="metric"><span>Stream row</span><strong>42 px</strong></div>
+      <div class="metric"><span>Useful visible rows</span><strong>≈ 9–10</strong></div>
+      <ul class="tradeoffs"><li>Safest evolution of the current design.</li><li>Long status lines still truncate.</li><li>Good balance for mixed mouse and keyboard use.</li></ul>
+    </aside>
+  </section>
+
+  <section class="study" data-study="b">
+    <div class="picker b">
+      <div class="picker-head"><div class="picker-title">Projects</div><div class="shortcut">SUPER&nbsp; P</div></div>
+      <div class="search"><b>⌕</b><span>Search projects and streams…</span></div>
+      <div class="list">
+        <div class="column-head"><span>Name</span><span>Current work</span><span>State</span></div>
+        <div class="row project"><span class="arrow">▾</span><span class="dot">○</span><div class="table"><span class="name">Elijah</span><span class="sub">~/matrix/projects/elijah · 2 streams</span><span class="scope">PROJECT</span></div><span class="more">•••</span></div>
+        <div class="row stream selected"><span class="dot current">●</span><div class="table"><span class="name">Model API</span><span class="sub">Trace Newshore model invocation paths</span><span class="badge current">CURRENT</span></div><span class="more">•••</span></div>
+        <div class="row stream"><span class="dot open">●</span><div class="table"><span class="name">Yellowslacks UI Contract</span><span class="sub">Build operation-level coverage matrix</span><span class="badge open">OPEN</span></div><span class="more">•••</span></div>
+        <div class="row project"><span class="arrow">▸</span><span class="dot open">●</span><div class="table"><span class="name">Project Object</span><span class="sub">Picker density and archive workflow</span><span class="badge open">OPEN</span></div><span class="more">•••</span></div>
+        <div class="row project"><span class="arrow">▸</span><span class="dot">○</span><div class="table"><span class="name">Another project</span><span class="sub">3 streams · ~/matrix/projects/another-project</span><span class="scope">CLOSED</span></div><span class="more">•••</span></div>
+        <div class="row project"><span class="arrow">▾</span><span class="dot">○</span><div class="table"><span class="name">Archived research</span><span class="sub">1 stream · ~/matrix/research/archive-candidate</span><span class="scope">CLOSED</span></div><span class="more">•••</span></div>
+        <div class="row stream"><span class="dot">○</span><div class="table"><span class="name">Initial survey</span><span class="sub">Status not yet initialized</span><span class="scope">CLOSED</span></div><span class="more">•••</span></div>
+        <div class="row project"><span class="arrow">▸</span><span class="dot">○</span><div class="table"><span class="name">Personal systems</span><span class="sub">2 streams · ~/systems</span><span class="scope">CLOSED</span></div><span class="more">•••</span></div>
+      </div>
+      <div class="footer"><span><b>Tab</b> streams</span><span><b>Enter</b> open</span><span><b>n/r</b> chat</span><span><b>x</b> close</span><span><b>a</b> archive</span><span class="push"><b>Esc</b> close</span></div>
+    </div>
+    <aside class="notes">
+      <h2>2 · One-line table</h2>
+      <p>Treats the picker as a compact command surface. Name, immediate work, and state each get a stable column, making repeated scanning very fast.</p>
+      <div class="metric"><span>Every row</span><strong>34 px</strong></div>
+      <div class="metric"><span>Metadata lines</span><strong>1</strong></div>
+      <div class="metric"><span>Useful visible rows</span><strong>≈ 12–13</strong></div>
+      <ul class="tradeoffs"><li>Most information visible at once.</li><li>Columns make states easy to compare.</li><li>Long project and stream names get less room.</li></ul>
+    </aside>
+  </section>
+
+  <section class="study" data-study="c">
+    <div class="picker c">
+      <div class="picker-head"><div class="picker-title">Projects</div><div class="shortcut">SUPER&nbsp; P</div></div>
+      <div class="search"><b>⌕</b><span>Search projects and streams…</span></div>
+      <div class="list">
+        <div class="tree">
+          <div class="row project"><span class="arrow">▾</span><span class="dot">○</span><span class="name">Elijah</span><span class="count">2 open · 2 total</span><span class="more">•••</span></div>
+          <div class="row stream selected"><span class="dot current">●</span><span class="name">Model API</span><span class="badge current">CURRENT</span><span class="more">•••</span></div>
+          <div class="row stream"><span class="dot open">●</span><span class="name">Yellowslacks UI Contract</span><span class="badge open">OPEN</span><span class="more">•••</span></div>
+          <div class="row project"><span class="arrow">▸</span><span class="dot open">●</span><span class="name">Project Object</span><span class="count">4 streams</span><span class="more">•••</span></div>
+          <div class="row project"><span class="arrow">▸</span><span class="dot">○</span><span class="name">Another project</span><span class="count">3 streams</span><span class="more">•••</span></div>
+          <div class="row project"><span class="arrow">▾</span><span class="dot">○</span><span class="name">Archived research</span><span class="count">1 stream</span><span class="more">•••</span></div>
+          <div class="row stream"><span class="dot">○</span><span class="name">Initial survey</span><span class="more">•••</span></div>
+          <div class="row project"><span class="arrow">▸</span><span class="dot">○</span><span class="name">Personal systems</span><span class="count">2 streams</span><span class="more">•••</span></div>
+        </div>
+        <div class="detail">
+          <div class="detail-title">Elijah · Model API</div><div class="detail-state">● CURRENT</div>
+          <div class="detail-copy">Discovery of Newshore's coupling to Elijah models hosted on BABS.</div>
+          <div class="detail-next"><b>Next:</b> Trace and document how the forecasting pipeline invokes local models.</div>
+        </div>
+      </div>
+      <div class="footer"><span><b>Tab</b> streams</span><span><b>Enter</b> open</span><span><b>n/r</b> chat</span><span><b>x</b> close</span><span><b>a</b> archive</span><span class="push"><b>Esc</b> close</span></div>
+    </div>
+    <aside class="notes">
+      <h2>3 · Dense tree + selected detail</h2>
+      <p>Makes the list itself extremely compact. Rich context moves into a stable detail panel for only the selected item, avoiding repeated metadata.</p>
+      <div class="metric"><span>Project row</span><strong>34 px</strong></div>
+      <div class="metric"><span>Stream row</span><strong>30 px</strong></div>
+      <div class="metric"><span>Useful visible rows</span><strong>≈ 11 + detail</strong></div>
+      <ul class="tradeoffs"><li>Strongest hierarchy and cleanest list.</li><li>Selected status gets much more readable space.</li><li>Requires glancing down to inspect each item.</li></ul>
+    </aside>
+  </section>
+</main>
+<script>
+  const buttons = [...document.querySelectorAll('.switcher button')];
+  const studies = [...document.querySelectorAll('.study')];
+  function show(id) {
+    buttons.forEach(b => b.classList.toggle('active', b.dataset.target === id));
+    studies.forEach(s => s.classList.toggle('active', s.dataset.study === id));
+  }
+  buttons.forEach(b => b.addEventListener('click', () => show(b.dataset.target)));
+  addEventListener('keydown', event => {
+    if (['1','2','3'].includes(event.key)) show(['a','b','c'][Number(event.key) - 1]);
+  });
+  document.querySelectorAll('.picker .row').forEach(row => row.addEventListener('click', () => {
+    row.closest('.picker').querySelectorAll('.row').forEach(r => r.classList.remove('selected'));
+    row.classList.add('selected');
+  }));
+</script>
+</body>
+</html>

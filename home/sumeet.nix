@@ -28,7 +28,7 @@ in
     ./modules/mewtion.nix
     ./modules/microphone.nix
     ./modules/pi.nix
-    ./modules/project-object.nix
+    ./packages/project-object/nix/home-manager-module.nix
     ./modules/power-status.nix
     ./modules/vim.nix
     ./modules/voxtype.nix
@@ -62,4 +62,5 @@ in
   ];
 
   programs.home-manager.enable = true;
+  programs.project-object.enable = true;
 }

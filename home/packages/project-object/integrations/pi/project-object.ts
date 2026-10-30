@@ -16,6 +16,23 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 const WORKLOG_TYPES = ["start", "progress", "decision", "mistake", "stuck", "finish", "next", "note"] as const;
 const WORKLOG_TYPE_SET = new Set<string>(WORKLOG_TYPES);
 
+const StreamCreateParameters = {
+  type: "object",
+  additionalProperties: false,
+  required: ["name", "scope", "initialTasks"],
+  properties: {
+    name: { type: "string", minLength: 1, maxLength: 200 },
+    scope: { type: "string", minLength: 1, maxLength: 4000, description: "Concise durable purpose, responsibilities, and boundaries for the stream's AGENTS.md." },
+    initialTasks: {
+      type: "array",
+      minItems: 1,
+      maxItems: 10,
+      description: "Concrete initial work for the stream's TODO.md. Use plain single-line task text.",
+      items: { type: "string", minLength: 1, maxLength: 1000 },
+    },
+  },
+} as const;
+
 const WorklogParameters = {
   type: "object",
   additionalProperties: false,
@@ -642,8 +659,56 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
     }
     if (startupWorklog) instructions.push(`Recent ${stream ? "stream" : "project"} worklog (up to 10 newest events):\n${startupWorklog}`);
     if (startupWorklogError) instructions.push(`Recent worklog was not loaded: ${startupWorklogError}`);
+    if (!stream) instructions.push("When the user asks to create a stream under this project, a stream in the picker, or a project workspace, use project_stream_create. Do not use the workstream skill unless the user explicitly asks for an isolated Git worktree or worker session.");
     instructions.push(worklogGuidance);
+    instructions.push("For configured external APIs, use `project-api list` to discover APIs enabled for this project, `project-api describe <id>` for docs and authentication metadata, and `project-api request <id> <GET|POST|PUT|PATCH|DELETE> </path>` for authenticated calls. Never put credentials in prompts or worklogs. Existing CLIs such as `gh` are separate.");
     event.systemPromptOptions.sections.project_object = instructions.join("\n\n");
+  });
+
+  pi.registerTool({
+    name: "project_stream_create",
+    label: "Create project stream",
+    description: "Create and register a ready-to-use Project Object stream under the attached project so it appears in the project picker. Use this whenever the user asks for a stream under this project, a picker stream, or a project workspace. Never substitute the Git workstream skill. Derive a concise AGENTS.md scope and concrete initial TODO.md tasks from the user's request. NOTES.md remains blank. This does not open the stream workspace or launch an agent.",
+    promptSnippet: "Create Project Object streams that appear under the attached project in the picker.",
+    promptGuidelines: ["For a stream under the attached project or in the picker, use project_stream_create rather than the Git workstream skill."],
+    parameters: StreamCreateParameters,
+    async execute(_toolCallId, parameters) {
+      if (!resolution.project && !resolution.error) resolution = resolveProject();
+      if (resolution.error) throw new Error(`Project context error: ${resolution.error}`);
+      const project = resolution.project;
+      if (!project) throw new Error("No project object is attached to this Pi session");
+      if (resolution.stream) throw new Error("Streams can only be created from a project-level Pi session");
+
+      const executable = process.env.PROJECT_OBJECT_STREAM_CLI || "project-picker-tui";
+      let output: string;
+      try {
+        output = execFileSync(executable, [
+          "--create-stream", parameters.name,
+          "--project-id", project.id,
+          "--scope", parameters.scope,
+          "--tasks-json", JSON.stringify(parameters.initialTasks),
+        ], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 5000,
+        });
+      } catch (error) {
+        const failure = error as Error & { stderr?: Buffer | string };
+        const stderr = String(failure.stderr || "").trim();
+        throw new Error(stderr || `Could not create stream: ${failure.message}`);
+      }
+
+      let created: { projectId: string; streamId: string; name: string; streamHome: string; workspaceName: string };
+      try {
+        created = JSON.parse(output) as typeof created;
+      } catch (error) {
+        throw new Error(`Stream creation returned invalid output: ${(error as Error).message}`);
+      }
+      return {
+        content: [{ type: "text", text: `Created stream “${created.name}” in ${project.name}. It is now available in the project picker.` }],
+        details: created,
+      };
+    },
   });
 
   pi.registerTool({

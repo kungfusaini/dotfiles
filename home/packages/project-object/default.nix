@@ -9,6 +9,7 @@
 , kitty
 , hyprland
 , libnotify
+, libsecret
 , fd
 }:
 
@@ -34,11 +35,11 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p "$out/bin" "$out/lib" "$out/share/project-object/pi/skills"
-    cp bin/project-picker bin/project-picker-gui bin/project-picker-tui bin/project-snapshot bin/project-terminal "$out/bin/"
-    cp lib/project_object.py "$out/lib/"
+    cp bin/project-picker bin/project-picker-gui bin/project-picker-tui bin/project-snapshot bin/project-terminal bin/project-api "$out/bin/"
+    cp lib/project_object.py lib/api_access.py lib/oauth2.py lib/freeagent_oauth.py "$out/lib/"
     cp integrations/pi/project-object.ts "$out/share/project-object/pi/"
     cp -R integrations/pi/skills/init "$out/share/project-object/pi/skills/"
-    chmod 0555 "$out/bin/project-picker" "$out/bin/project-picker-gui" "$out/bin/project-picker-tui" "$out/bin/project-snapshot" "$out/bin/project-terminal" "$out/share/project-object/pi/skills/init/scripts/guard.py"
+    chmod 0555 "$out/bin/project-picker" "$out/bin/project-picker-gui" "$out/bin/project-picker-tui" "$out/bin/project-snapshot" "$out/bin/project-terminal" "$out/bin/project-api" "$out/share/project-object/pi/skills/init/scripts/guard.py"
     patchShebangs "$out/bin"
     runHook postInstall
   '';
@@ -52,6 +53,8 @@ stdenvNoCC.mkDerivation {
       --set PROJECT_OBJECT_TERMINAL "$out/bin/project-terminal"
     wrapProgram "$out/bin/project-snapshot" \
       --prefix PATH : ${lib.makeBinPath [ hyprland ]}
+    wrapProgram "$out/bin/project-api" \
+      --prefix PATH : ${lib.makeBinPath [ libsecret ]}
     wrapProgram "$out/bin/project-terminal" \
       --prefix PATH : ${lib.makeBinPath [ kitty hyprland ]}
   '';

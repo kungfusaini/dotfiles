@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+
+python3 -m py_compile bin/project-picker bin/project-picker-gui bin/project-picker-tui bin/project-snapshot bin/project-terminal bin/project-api lib/project_object.py lib/api_access.py lib/oauth2.py lib/freeagent_oauth.py integrations/pi/skills/init/scripts/guard.py
+python3 -m unittest discover -s tests -v
+nix-instantiate --parse default.nix >/dev/null
+nix-instantiate --parse nix/home-manager-module.nix >/dev/null
+package="$(nix-build --no-out-link -E 'with import <nixpkgs> {}; callPackage ./default.nix {}')"
+head -n 1 "$package/bin/project-picker" | grep -E '^#!/nix/store/.+-python3-[^/]+/bin/python3$' >/dev/null
+head -n 1 "$package/bin/.project-picker-gui-wrapped" | grep -E '^#!/nix/store/.+-python3-[^/]+/bin/python3$' >/dev/null
+head -n 1 "$package/bin/.project-snapshot-wrapped" | grep -E '^#!/nix/store/.+-python3-[^/]+/bin/python3$' >/dev/null
+head -n 1 "$package/bin/.project-terminal-wrapped" | grep -E '^#!/nix/store/.+-python3-[^/]+/bin/python3$' >/dev/null
+head -n 1 "$package/bin/.project-api-wrapped" | grep -E '^#!/nix/store/.+-python3-[^/]+/bin/python3$' >/dev/null
+nix-instantiate --eval --strict -E '
+  let
+    pkgs = import <nixpkgs> {};
+    evaluated = pkgs.lib.evalModules {
+      specialArgs = { inherit pkgs; };
+      modules = [
+        ./nix/home-manager-module.nix
+        ({ lib, ... }: {
+          options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = []; };
+          options.xdg.configFile = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = {}; };
+          options.wayland.windowManager.hyprland.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = {}; };
+          config.programs.project-object.enable = true;
+        })
+      ];
+    };
+  in {
+    package = (builtins.head evaluated.config.home.packages).drvPath;
+    extension = evaluated.config.xdg.configFile."pi/agent/extensions/project-object.ts".source;
+    initSkill = evaluated.config.xdg.configFile."project-object/init".source;
+    terminal = evaluated.config.wayland.windowManager.hyprland.settings."$terminal";
+  }
+' >/dev/null
+git diff --check -- .

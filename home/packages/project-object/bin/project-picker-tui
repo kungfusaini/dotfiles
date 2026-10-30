@@ -110,11 +110,13 @@ Project guidance is inherited by streams. Repository-local `AGENTS.md` files rem
         ensure_private_file(target)
 
 
-def initialize_stream_home(project, stream, home=None):
+def initialize_stream_home(project, stream, home=None, scope=None, initial_tasks=None):
     home = home or stream_home(project, stream)
     ensure_directory(home)
     for directory in ("plans", "snapshots", "worklogs"):
         ensure_directory(home / directory)
+    scope_text = scope.strip() if scope else "<!-- project-object:init-scope -->"
+    task_lines = "\n".join(f"- {task}" for task in (initial_tasks or []))
     files = {
         "AGENTS.md": f"""# {stream['name']}
 
@@ -124,10 +126,10 @@ Keep stable stream scope and rules here, rough or changing information in `NOTES
 
 ## Scope
 
-<!-- project-object:init-scope -->
+{scope_text}
 """,
         "NOTES.md": "# Notes\n",
-        "TODO.md": "# Todo\n\n## Now\n\n## Next\n\n## Waiting\n",
+        "TODO.md": f"# Todo\n\n## Now\n\n{task_lines}\n\n## Next\n\n## Waiting\n",
     }
     for name, content in files.items():
         target = home / name
@@ -508,8 +510,21 @@ def archive_project(project, registry, session):
         raise
 
 
-def create_stream(project, registry, name):
+def create_stream(project, registry, name, scope=None, initial_tasks=None):
     trimmed = name.strip()
+    if scope is not None:
+        if not isinstance(scope, str) or not scope.strip() or len(scope.strip()) > 4000:
+            raise ValueError("Stream scope must be between 1 and 4000 characters")
+        scope = scope.strip()
+    if initial_tasks is not None:
+        if not isinstance(initial_tasks, list) or not 1 <= len(initial_tasks) <= 10:
+            raise ValueError("Initial tasks must contain between 1 and 10 items")
+        cleaned_tasks = []
+        for task in initial_tasks:
+            if not isinstance(task, str) or not task.strip() or len(task.strip()) > 1000 or "\n" in task or "\r" in task:
+                raise ValueError("Each initial task must be a single line between 1 and 1000 characters")
+            cleaned_tasks.append(task.strip())
+        initial_tasks = cleaned_tasks
     try:
         validate_project_name(trimmed)
     except RegistryError as error:
@@ -535,7 +550,7 @@ def create_stream(project, registry, name):
 
     registry_before = list(registry["streams"])
     try:
-        initialize_stream_home(project, stream, staging_home)
+        initialize_stream_home(project, stream, staging_home, scope, initial_tasks)
         staging_home.replace(final_home)
         registry["streams"].append(stream)
         write_json_atomic(project_home(project) / "streams.json", registry)
@@ -886,6 +901,21 @@ class PickerUI:
         self.result = (project, True)
 
 
+def create_stream_noninteractive(project_id, name, scope, initial_tasks):
+    registry = load_registry()
+    project = next((item for item in registry["projects"] if item["id"] == project_id and not item.get("archivedAt")), None)
+    if project is None:
+        raise ValueError(f"Active project not found: {project_id}")
+    stream = create_stream(project, load_stream_registry(project), name, scope, initial_tasks)
+    print(json.dumps({
+        "projectId": project["id"],
+        "streamId": stream["id"],
+        "name": stream["name"],
+        "streamHome": str(stream_home(project, stream)),
+        "workspaceName": stream_workspace_name(project, stream),
+    }))
+
+
 def run_tui():
     if not acquire_lock():
         return
@@ -904,14 +934,25 @@ def run_tui():
 
 
 def main():
+    noninteractive = "--create-stream" in sys.argv
     try:
-        if "--tui" in sys.argv:
+        if noninteractive:
+            arguments = sys.argv[1:]
+            if len(arguments) != 8 or arguments[0] != "--create-stream" or arguments[2] != "--project-id" or arguments[4] != "--scope" or arguments[6] != "--tasks-json":
+                raise ValueError("Usage: project-picker-tui --create-stream NAME --project-id UUID --scope TEXT --tasks-json JSON")
+            try:
+                initial_tasks = json.loads(arguments[7])
+            except json.JSONDecodeError as error:
+                raise ValueError(f"Initial tasks must be valid JSON: {error}") from error
+            create_stream_noninteractive(arguments[3], arguments[1], arguments[5], initial_tasks)
+        elif "--tui" in sys.argv:
             run_tui()
         else:
             launch_tui()
     except Exception as error:
         print(f"{APP_NAME}: {error}", file=sys.stderr)
-        notify_error(str(error))
+        if not noninteractive:
+            notify_error(str(error))
         raise SystemExit(1) from error
 
 

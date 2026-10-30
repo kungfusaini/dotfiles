@@ -1,5 +1,7 @@
 System configuration lives in /home/sumeet/.config/nixos.
 
+Project Object lives at home/packages/project-object. The Command Center path is a symlink to that single source.
+
 Rebuild with:
   sudo nixos-rebuild switch --flake /home/sumeet/.config/nixos#kirax1
 

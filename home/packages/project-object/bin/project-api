@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""Manage reusable API credentials; list/describe/request are scoped to the attached project."""
+import argparse
+import getpass
+import json
+import os
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+from urllib.error import HTTPError
+from urllib.parse import urlsplit
+from urllib.request import Request, build_opener, HTTPRedirectHandler
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from api_access import add_api, available, grant, load_credential, lookup, open_catalog, store_credential  # noqa: E402
+from freeagent_oauth import PRODUCTION, SANDBOX, login as freeagent_login, migrate_legacy  # noqa: E402
+from oauth2 import OAuthConfig, access_token, is_configured, login as oauth_login  # noqa: E402
+from project_object import RegistryError, canonical_uuid, find_project, read_registry  # noqa: E402
+
+
+class NoRedirect(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
+def attached_project(data_root):
+    project_id = canonical_uuid(os.environ.get("PROJECT_OBJECT_ID"))
+    registry, _ = read_registry(data_root / "projects.json", data_root)
+    if find_project(registry, project_id) is None:
+        raise ValueError("No active attached project")
+    return project_id
+
+
+def known_project(data_root, project_id):
+    project_id = canonical_uuid(project_id)
+    registry, _ = read_registry(data_root / "projects.json", data_root)
+    if find_project(registry, project_id) is None:
+        raise ValueError("Unknown or archived project")
+    return project_id
+
+
+def request(db, project_id, api_id, method, path, body=None, *, credential_loader=load_credential, opener=None):
+    record = lookup(db, project_id, api_id)
+    _id, base_url, _docs, auth_type, header_name = record
+    parsed = urlsplit(path)
+    if (not path.startswith("/") or path.startswith("//") or "\\" in path
+            or parsed.scheme or parsed.netloc or parsed.fragment or any(p in (".", "..") for p in parsed.path.split("/"))):
+        raise ValueError("Path must be an absolute API path on the configured host")
+    if method not in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+        raise ValueError("Unsupported method")
+    if body is not None and method == "GET":
+        raise ValueError("GET cannot have a JSON body")
+    secret = credential_loader(api_id)
+    headers = {"Accept": "application/json"}
+    if auth_type == "bearer":
+        headers["Authorization"] = f"Bearer {secret}"
+    else:
+        headers[header_name] = secret
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+    req = Request(base_url + path, data=json.dumps(body).encode() if body is not None else None,
+                  headers=headers, method=method)
+    client = opener or build_opener(NoRedirect())
+    try:
+        response = client.open(req, timeout=30)
+    except HTTPError as error:
+        response = error  # Return API errors, but never follow redirects to another host.
+    with response:
+        payload = response.read(1024 * 1024 + 1)
+        if len(payload) > 1024 * 1024:
+            raise ValueError("API response exceeds 1 MiB")
+        return response.status, payload
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest="command", required=True)
+    add = commands.add_parser("add", help="Register an API definition (no credential or access yet)")
+    add.add_argument("api_id")
+    add.add_argument("--base-url", required=True)
+    add.add_argument("--docs-url", default="")
+    add.add_argument("--auth", choices=("bearer", "header"), default="bearer")
+    add.add_argument("--header", default="")
+    credential = commands.add_parser("credential", help="Securely prompt for a credential and store it once")
+    credential.add_argument("api_id")
+    enable = commands.add_parser("enable", help="Enable an existing API for a project or globally")
+    enable.add_argument("api_id")
+    scope = enable.add_mutually_exclusive_group(required=True)
+    scope.add_argument("--project-id")
+    scope.add_argument("--global", dest="global_access", action="store_true")
+    generic = commands.add_parser("oauth-login", help="Authorize an OAuth 2.0 API using browser login")
+    generic.add_argument("api_id")
+    generic.add_argument("--base-url", required=True, help="HTTPS API origin")
+    generic.add_argument("--authorize-url", required=True)
+    generic.add_argument("--token-url", required=True)
+    generic.add_argument("--client-id", required=True)
+    generic.add_argument("--redirect-uri", required=True, help="Registered loopback callback URL")
+    generic.add_argument("--client-auth", choices=("basic", "post", "none"), default="basic")
+    generic.add_argument("--scope", default="")
+    generic.add_argument("--pkce", action="store_true")
+    generic.add_argument("--docs-url", default="")
+    oauth = commands.add_parser("freeagent-login", help="Authorize a FreeAgent account using browser OAuth")
+    oauth.add_argument("api_id", help="Connection name, e.g. freeagent")
+    oauth.add_argument("--client-id", required=True, help="FreeAgent app client ID (not secret)")
+    oauth.add_argument("--redirect-uri", required=True, help="Registered loopback callback URL")
+    oauth.add_argument("--sandbox", action="store_true")
+    commands.add_parser("list", help="List APIs available to the attached project")
+    describe = commands.add_parser("describe", help="Show available API metadata")
+    describe.add_argument("api_id")
+    call = commands.add_parser("request", help="Make an authenticated API request")
+    call.add_argument("api_id")
+    call.add_argument("method", choices=("GET", "POST", "PUT", "PATCH", "DELETE"))
+    call.add_argument("path")
+    call.add_argument("--json", help="JSON request body")
+    args = parser.parse_args()
+    data_root = Path(os.environ.get("PROJECT_OBJECT_DATA_DIR", Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "project-object"))
+    try:
+        if args.command in ("oauth-login", "freeagent-login"):
+            with open_catalog(data_root) as db:
+                migrate_legacy(db)
+                if args.command == "freeagent-login":
+                    freeagent_login(db, args.api_id, args.client_id, getpass.getpass("FreeAgent app client secret: "),
+                                    args.redirect_uri, SANDBOX if args.sandbox else PRODUCTION)
+                else:
+                    config = OAuthConfig(args.authorize_url, args.token_url, args.client_auth, args.scope, args.pkce)
+                    config.validate()
+                    secret = getpass.getpass("OAuth app client secret: ") if args.client_auth != "none" else ""
+                    oauth_login(db, args.api_id, args.base_url, args.docs_url, args.client_id, secret,
+                                args.redirect_uri, config)
+            print("OAuth connection authorized. Enable it for a project with: project-api enable " + args.api_id + " --project-id <uuid>")
+            return 0
+        if args.command == "credential":
+            # Never accept a token in argv, shell history, or command output.
+            with open_catalog(data_root) as db:
+                migrate_legacy(db)
+                if not db.execute("SELECT 1 FROM apis WHERE id = ?", (args.api_id,)).fetchone():
+                    raise ValueError("Unknown API")
+                if is_configured(db, args.api_id):
+                    raise ValueError("Use freeagent-login to renew this OAuth connection")
+            store_credential(args.api_id, getpass.getpass("API credential: "))
+            return 0
+        with open_catalog(data_root) as db:
+            migrate_legacy(db)
+            if args.command == "add":
+                add_api(db, args.api_id, args.base_url, args.auth, args.docs_url, args.header)
+            elif args.command == "enable":
+                grant(db, args.api_id, known_project(data_root, args.project_id) if args.project_id else "")
+            else:
+                project_id = attached_project(data_root)
+                if args.command == "list":
+                    print(json.dumps([{"id": row[0], "base_url": row[1], "docs_url": row[2]} for row in available(db, project_id)]))
+                elif args.command == "describe":
+                    row = lookup(db, project_id, args.api_id)
+                    print(json.dumps(dict(zip(("id", "base_url", "docs_url", "auth_type", "header_name"), row))))
+                elif args.command == "request":
+                    credential_loader = (lambda api_id: access_token(db, data_root, api_id)) if is_configured(db, args.api_id) else load_credential
+                    status, payload = request(db, project_id, args.api_id, args.method, args.path,
+                                              json.loads(args.json) if args.json is not None else None,
+                                              credential_loader=credential_loader)
+                    print(payload.decode("utf-8", errors="replace"))
+                    return 0 if status < 400 else 1
+        return 0
+    except (ValueError, RegistryError, sqlite3.Error, OSError, subprocess.CalledProcessError) as error:
+        print(f"project-api: {error}", file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
