@@ -131,6 +131,81 @@ class PickerTests(unittest.TestCase):
         command = launch.call_args.args[0]
         self.assertEqual(command[-4:], ["-e", "pi", "--session", session_id])
 
+    def test_opening_closed_stream_restores_every_ordered_pi_session(self):
+        import json
+        stream = {"id": str(uuid.uuid4()), "name": "Many Agents"}
+        self.picker.initialize_stream_home(self.project, stream)
+        session_directory = self.picker.stream_session_directory(
+            self.picker.STATE_ROOT, self.project["id"], stream["id"]
+        )
+        session_directory.mkdir(parents=True)
+        session_ids = ["restore-session-one", "restore-session-two"]
+        for index, session_id in enumerate(session_ids):
+            (session_directory / f"2026-01-01T00-00-0{index}_{session_id}.jsonl").write_text(json.dumps({
+                "type": "session", "version": 3, "id": session_id, "cwd": str(self.root)
+            }) + "\n")
+        snapshot = {
+            "version": 1,
+            "projectId": self.project["id"],
+            "scope": "stream",
+            "streamId": stream["id"],
+            "windows": [
+                {"order": 1, "class": "kitty", "initialClass": "kitty", "piSessions": [{"sessionId": session_ids[1]}]},
+                {"order": 0, "class": "kitty", "initialClass": "kitty", "piSessions": [{"sessionId": session_ids[0]}]},
+                {"order": 2, "class": "code", "initialClass": "code"},
+            ],
+        }
+        self.picker.write_json_atomic(self.picker.stream_home(self.project, stream) / "snapshots" / "workspace.json", snapshot)
+        success = mock.Mock(returncode=0)
+        with mock.patch.object(self.picker, "active_workspace_name", return_value="before"), \
+             mock.patch.object(self.picker, "live_workspace_exists", return_value=False), \
+             mock.patch.object(self.picker, "run", return_value=success), \
+             mock.patch.object(self.picker, "write_json_atomic"), \
+             mock.patch.object(self.picker, "notify_warning") as warning, \
+             mock.patch.object(self.picker.subprocess, "Popen") as launch:
+            self.picker.enter_stream(self.project, stream, self.session)
+        commands = [call.args[0] for call in launch.call_args_list]
+        self.assertEqual([command[-1] for command in commands], session_ids)
+        self.assertTrue(all(command[-3:-1] == ["pi", "--session"] for command in commands))
+        warning.assert_called_once()
+        self.assertIn("Restored 2 Pi session", warning.call_args.args[0])
+        self.assertIn("1 captured item", warning.call_args.args[0])
+
+    def test_restore_plan_skips_session_that_is_already_live(self):
+        import json
+        stream = {"id": str(uuid.uuid4()), "name": "Live Elsewhere"}
+        self.picker.initialize_stream_home(self.project, stream)
+        session_id = "already-live-session"
+        session_directory = self.picker.stream_session_directory(
+            self.picker.STATE_ROOT, self.project["id"], stream["id"]
+        )
+        session_directory.mkdir(parents=True)
+        (session_directory / f"2026-01-01T00-00-00_{session_id}.jsonl").write_text(json.dumps({
+            "type": "session", "version": 3, "id": session_id, "cwd": str(self.root)
+        }) + "\n")
+        self.picker.write_json_atomic(self.picker.stream_home(self.project, stream) / "snapshots" / "workspace.json", {
+            "version": 1,
+            "projectId": self.project["id"],
+            "scope": "stream",
+            "streamId": stream["id"],
+            "windows": [{"class": "kitty", "initialClass": "kitty", "piSessions": [{"sessionId": session_id}]}],
+        })
+        activity = self.picker.RUNTIME_ROOT / "pi-activity"
+        activity.mkdir(parents=True)
+        pid = os.getpid()
+        (activity / f"{pid}.json").write_text(json.dumps({
+            "version": 1,
+            "pid": pid,
+            "processStartTime": self.picker.process_start_time(pid),
+            "projectId": self.project["id"],
+            "streamId": stream["id"],
+            "sessionId": session_id,
+        }))
+        self.assertEqual(self.picker.restored_pi_plan(self.project, stream), {
+            "sessionIds": [],
+            "unsupported": 1,
+        })
+
     def test_project_creation_scaffolds_one_time_init_placeholder(self):
         registry = {"version": 1, "projects": []}
         with mock.patch.object(self.picker, "live_workspace_exists", return_value=False):

@@ -54,9 +54,14 @@ GIT = os.environ.get("PROJECT_OBJECT_GIT", "git")
 SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,200}")
 MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 MAX_SESSION_HEADER_BYTES = 16 * 1024
+MAX_ACTIVITY_BYTES = 16 * 1024
 
 def notify_error(message):
     subprocess.run([NOTIFY, APP_NAME, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def notify_warning(message):
+    subprocess.run([NOTIFY, "Project restoration", message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
 def ensure_directory(directory):
@@ -566,10 +571,23 @@ def read_workspace_snapshot(project, stream=None):
 
 def captured_pi_processes(project, stream=None):
     snapshot = read_workspace_snapshot(project, stream)
-    if not snapshot or not isinstance(snapshot.get("windows"), list):
+    if not snapshot:
         return []
     processes = {}
-    for window in snapshot["windows"]:
+    top_level_processes = snapshot.get("piProcesses")
+    if not isinstance(top_level_processes, list):
+        top_level_processes = []
+    for process in top_level_processes:
+        if not isinstance(process, dict):
+            continue
+        pid = process.get("pid")
+        start_time = process.get("startTime")
+        if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0 and isinstance(start_time, str) and start_time.isdigit():
+            processes[pid] = start_time
+    windows = snapshot.get("windows")
+    if not isinstance(windows, list):
+        windows = []
+    for window in windows:
         if not isinstance(window, dict) or not isinstance(window.get("piProcesses"), list):
             continue
         for process in window["piProcesses"]:
@@ -656,22 +674,92 @@ def remove_close_requests(requests):
                 pass
 
 
-def restored_pi_arguments(project, stream=None):
+def live_pi_session_ids(project, stream=None):
+    directory = RUNTIME_ROOT / "pi-activity"
+    try:
+        targets = list(directory.iterdir())
+    except OSError:
+        return set()
+    expected_stream_id = stream["id"] if stream else None
+    session_ids = set()
+    for target in targets:
+        try:
+            metadata = target.lstat()
+            if target.is_symlink() or not target.is_file() or metadata.st_size > MAX_ACTIVITY_BYTES:
+                continue
+            value = json.loads(target.read_bytes().decode("utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(value, dict):
+            continue
+        pid = value.get("pid")
+        start_time = value.get("processStartTime")
+        session_id = value.get("sessionId")
+        if (
+            value.get("version") != 1
+            or isinstance(pid, bool)
+            or not isinstance(pid, int)
+            or pid <= 0
+            or target.name != f"{pid}.json"
+            or not isinstance(start_time, str)
+            or process_start_time(pid) != start_time
+            or value.get("projectId") != project["id"]
+            or value.get("streamId") != expected_stream_id
+            or not isinstance(session_id, str)
+            or not SESSION_ID_PATTERN.fullmatch(session_id)
+        ):
+            continue
+        session_ids.add(session_id)
+    return session_ids
+
+
+def restored_pi_plan(project, stream=None):
     snapshot = read_workspace_snapshot(project, stream)
     if not snapshot:
         return None
     windows = snapshot.get("windows")
-    if not isinstance(windows, list) or len(windows) != 1 or not isinstance(windows[0], dict):
-        return None
-    window = windows[0]
-    if "kitty" not in {str(window.get("class", "")).lower(), str(window.get("initialClass", "")).lower()}:
-        return None
-    session_id = window.get("piSessionId")
-    if not isinstance(session_id, str) or not SESSION_ID_PATTERN.fullmatch(session_id):
-        return None
-    if not session_id_exists(project, stream, session_id):
-        return None
-    return ["--session", session_id]
+    if not isinstance(windows, list):
+        return {"sessionIds": [], "unsupported": 1}
+
+    ordered_windows = sorted(
+        enumerate(windows),
+        key=lambda item: (
+            item[1].get("order") if isinstance(item[1], dict) and isinstance(item[1].get("order"), int) else item[0],
+            item[0],
+        ),
+    )
+    session_ids = []
+    seen = set()
+    live_session_ids = live_pi_session_ids(project, stream)
+    unsupported = 0
+    for _index, window in ordered_windows:
+        if not isinstance(window, dict):
+            unsupported += 1
+            continue
+        if "kitty" not in {str(window.get("class", "")).lower(), str(window.get("initialClass", "")).lower()}:
+            unsupported += 1
+            continue
+        records = window.get("piSessions")
+        if not isinstance(records, list):
+            legacy_id = window.get("piSessionId")
+            records = [{"sessionId": legacy_id}] if legacy_id is not None else []
+        if not records:
+            unsupported += 1
+            continue
+        for record in records:
+            session_id = record.get("sessionId") if isinstance(record, dict) else None
+            if (
+                not isinstance(session_id, str)
+                or not SESSION_ID_PATTERN.fullmatch(session_id)
+                or session_id in seen
+                or session_id in live_session_ids
+                or not session_id_exists(project, stream, session_id)
+            ):
+                unsupported += 1
+                continue
+            seen.add(session_id)
+            session_ids.append(session_id)
+    return {"sessionIds": session_ids, "unsupported": unsupported}
 
 
 def enter_workspace(project, session, launch_terminal, *, stream=None, pi_arguments=None):
@@ -695,21 +783,41 @@ def enter_workspace(project, session, launch_terminal, *, stream=None, pi_argume
         raise RuntimeError(f"Could not enter {label} workspace")
 
     if launch_terminal:
-        if opening and pi_arguments is None:
-            pi_arguments = restored_pi_arguments(project, stream)
-        command = [PROJECT_TERMINAL, "--project-id", project["id"]]
+        base_command = [PROJECT_TERMINAL, "--project-id", project["id"]]
         if stream:
-            command.extend(["--stream-id", stream["id"]])
-        if pi_arguments is not None:
-            command.extend(["-e", "pi", *pi_arguments])
+            base_command.extend(["--stream-id", stream["id"]])
+
+        restore_plan = restored_pi_plan(project, stream) if opening and pi_arguments is None else None
+        if restore_plan and restore_plan["sessionIds"]:
+            commands = [base_command + ["-e", "pi", "--session", session_id] for session_id in restore_plan["sessionIds"]]
+        else:
+            command = list(base_command)
+            if pi_arguments is not None:
+                command.extend(["-e", "pi", *pi_arguments])
+            commands = [command]
+
+        launched = 0
         try:
-            subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        except OSError:
-            session["openWorkspaces"] = previous_scopes
-            write_json_atomic(SESSION_PATH, session)
-            if previous_workspace:
-                run([HYPRCTL, "dispatch", "workspace", f"name:{previous_workspace}"])
-            raise
+            for command in commands:
+                subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+                launched += 1
+        except OSError as error:
+            if launched == 0:
+                session["openWorkspaces"] = previous_scopes
+                write_json_atomic(SESSION_PATH, session)
+                if previous_workspace:
+                    run([HYPRCTL, "dispatch", "workspace", f"name:{previous_workspace}"])
+                raise
+            raise RuntimeError(f"Restored {launched} Pi session(s), but another terminal could not be launched: {error}") from error
+
+        if restore_plan and restore_plan["unsupported"]:
+            if restore_plan["sessionIds"]:
+                notify_warning(
+                    f"Restored {len(restore_plan['sessionIds'])} Pi session(s); "
+                    f"{restore_plan['unsupported']} captured item(s) could not be reconstructed."
+                )
+            else:
+                notify_warning("No captured Pi session could be reconstructed; opened a fresh terminal instead.")
 
 
 def enter_project(project, session, launch_terminal):

@@ -167,6 +167,7 @@ function writeActivity(resolution: Resolution, state: "working" | "idle", sessio
     sessionId: sessionId || null,
     kittyPid: /^\d+$/.test(process.env.KITTY_PID || "") ? Number(process.env.KITTY_PID) : null,
     kittyStartTime: /^\d+$/.test(process.env.KITTY_PID || "") ? processStartTime(Number(process.env.KITTY_PID)) : null,
+    kittyWindowId: /^\d+$/.test(process.env.KITTY_WINDOW_ID || "") ? Number(process.env.KITTY_WINDOW_ID) : null,
     updatedAt: new Date().toISOString(),
   })}\n`;
   let descriptor: number | undefined;

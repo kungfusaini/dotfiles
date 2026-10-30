@@ -154,6 +154,7 @@ console.log(JSON.stringify({idle, working, settled, closeAck, existsAfterShutdow
             "PROJECT_OBJECT_STREAM_ID": stream_id,
             "PROJECT_OBJECT_RUNTIME_DIR": str(runtime),
             "KITTY_PID": str(os.getpid()),
+            "KITTY_WINDOW_ID": "17",
         })
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
@@ -166,6 +167,7 @@ console.log(JSON.stringify({idle, working, settled, closeAck, existsAfterShutdow
         self.assertEqual(output["working"]["kittyPid"], os.getpid())
         self.assertRegex(output["working"]["processStartTime"], r"^\d+$")
         self.assertRegex(output["working"]["kittyStartTime"], r"^\d+$")
+        self.assertEqual(output["working"]["kittyWindowId"], 17)
         self.assertEqual(output["closeAck"]["token"], "12345678-1234-4123-8123-123456789abc")
         self.assertFalse(output["existsAfterShutdown"])
         self.assertEqual((runtime / "pi-activity").stat().st_mode & 0o777, 0o700)

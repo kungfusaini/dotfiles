@@ -209,6 +209,7 @@ def live_pi_activity(project, stream=None):
         session_id = value.get("sessionId")
         recorded_start_time = value.get("processStartTime")
         recorded_kitty_start_time = value.get("kittyStartTime")
+        kitty_window_id = value.get("kittyWindowId")
         if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0 or target.name != f"{pid}.json":
             continue
         if isinstance(kitty_pid, bool) or not isinstance(kitty_pid, int) or kitty_pid <= 0:
@@ -217,6 +218,8 @@ def live_pi_activity(project, stream=None):
             continue
         if not isinstance(recorded_kitty_start_time, str) or not recorded_kitty_start_time.isdigit():
             continue
+        if kitty_window_id is not None and (isinstance(kitty_window_id, bool) or not isinstance(kitty_window_id, int) or kitty_window_id <= 0):
+            kitty_window_id = None
         if value.get("projectId") != project["id"] or value.get("streamId") != expected_stream_id:
             continue
         if value.get("state") not in ("working", "idle"):
@@ -235,6 +238,7 @@ def live_pi_activity(project, stream=None):
             "pid": pid,
             "processStartTime": recorded_start_time,
             "kittyPid": kitty_pid,
+            "kittyWindowId": kitty_window_id,
             "sessionId": session_id,
             "state": value["state"],
         })
@@ -277,6 +281,28 @@ def capture_project(project, stream=None):
         raise SnapshotError(f"Expected one live workspace named {workspace_name!r}, found {len(matches)}")
 
     activity = live_pi_activity(project, stream)
+    all_client_pids = [
+        client.get("pid")
+        for client in clients
+        if isinstance(client, dict)
+        and {str(client.get("class", "")), str(client.get("initialClass", ""))}.isdisjoint({"project-picker", "dev.project_object.Picker"})
+    ]
+    workspace_client_pids = [
+        client.get("pid")
+        for client in clients
+        if isinstance(client, dict)
+        and isinstance(client.get("workspace"), dict)
+        and client["workspace"].get("name") == workspace_name
+        and {str(client.get("class", "")), str(client.get("initialClass", ""))}.isdisjoint({"project-picker", "dev.project_object.Picker"})
+    ]
+    workspace_activity = [record for record in activity if record["kittyPid"] in workspace_client_pids]
+    if any(record["state"] == "working" for record in workspace_activity):
+        raise SnapshotError("Pi is still working in this workspace; wait for it to settle before closing")
+    workspace_pi_processes = sorted(
+        ({"pid": record["pid"], "startTime": record["processStartTime"]} for record in workspace_activity),
+        key=lambda process: process["pid"],
+    )
+
     project_clients = []
     for client in clients:
         if not isinstance(client, dict):
@@ -285,16 +311,35 @@ def capture_project(project, stream=None):
         classes = {str(client.get("class", "")), str(client.get("initialClass", ""))}
         if isinstance(workspace, dict) and workspace.get("name") == workspace_name and classes.isdisjoint({"project-picker", "dev.project_object.Picker"}):
             window = normalize_window(client, len(project_clients))
-            attached = [record for record in activity if record["kittyPid"] == window["pid"]]
-            if any(record["state"] == "working" for record in attached):
-                raise SnapshotError("Pi is still working in this workspace; wait for it to settle before closing")
+            attached = (
+                [record for record in workspace_activity if record["kittyPid"] == window["pid"]]
+                if all_client_pids.count(window["pid"]) == 1
+                else []
+            )
             if attached:
                 window["piProcesses"] = sorted(
                     ({"pid": record["pid"], "startTime": record["processStartTime"]} for record in attached),
                     key=lambda process: process["pid"],
                 )
-            if len(attached) == 1 and attached[0]["sessionId"]:
-                window["piSessionId"] = attached[0]["sessionId"]
+            restorable_sessions = [
+                {
+                    "sessionId": record["sessionId"],
+                    "pid": record["pid"],
+                    "startTime": record["processStartTime"],
+                    "kittyWindowId": record["kittyWindowId"],
+                }
+                for record in attached
+                if record["sessionId"]
+            ]
+            restorable_sessions.sort(key=lambda session: (
+                session["kittyWindowId"] is None,
+                session["kittyWindowId"] or 0,
+                session["pid"],
+            ))
+            if restorable_sessions:
+                window["piSessions"] = restorable_sessions
+            if len(restorable_sessions) == 1:
+                window["piSessionId"] = restorable_sessions[0]["sessionId"]
             project_clients.append(window)
 
     return {
@@ -307,6 +352,7 @@ def capture_project(project, stream=None):
         "workspace": normalize_workspace(matches[0]),
         "activeWorkspace": workspace_reference(active_workspace, "activeworkspace"),
         "activeWindowAddress": text(active_window.get("address"), "activewindow.address", optional=True),
+        "piProcesses": workspace_pi_processes,
         "windows": project_clients,
     }
 

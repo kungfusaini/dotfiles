@@ -132,6 +132,7 @@ print(fixture.read_text())
             "sessionId": session_id,
             "kittyPid": kitty_pid,
             "kittyStartTime": kitty_stat_fields[19],
+            "kittyWindowId": 17,
         }))
 
     def run_snapshot(self):
@@ -168,6 +169,12 @@ print(fixture.read_text())
         self.assertEqual(result.returncode, 0, result.stderr)
         snapshot = json.loads((self.project_home / "snapshots" / "workspace.json").read_text())
         self.assertEqual(snapshot["windows"][0]["piSessionId"], "restore-session-123")
+        self.assertEqual(snapshot["windows"][0]["piSessions"], [{
+            "sessionId": "restore-session-123",
+            "pid": os.getpid(),
+            "startTime": snapshot["windows"][0]["piProcesses"][0]["startTime"],
+            "kittyWindowId": 17,
+        }])
 
     def test_refuses_to_close_while_attached_pi_is_working(self):
         self.write_activity(state="working")
@@ -175,6 +182,37 @@ print(fixture.read_text())
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Pi is still working", result.stderr)
         self.assertFalse((self.project_home / "snapshots" / "workspace.json").exists())
+
+    def test_shared_kitty_process_is_protected_but_not_misattributed_to_os_windows(self):
+        self.write_activity()
+        clients = json.loads((self.fixtures / "clients.json").read_text())
+        duplicate = {**clients[0], "address": "0xabd", "title": "Second Kitty OS window"}
+        self.write_fixtures(workspaces=[workspace("Alpha")], clients=[clients[0], duplicate])
+        result = self.run_snapshot()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        snapshot = json.loads((self.project_home / "snapshots" / "workspace.json").read_text())
+        self.assertEqual(len(snapshot["piProcesses"]), 1)
+        self.assertEqual(len(snapshot["windows"]), 2)
+        self.assertTrue(all("piSessions" not in window for window in snapshot["windows"]))
+
+    def test_shared_kitty_process_across_workspaces_is_not_misattributed(self):
+        self.write_activity()
+        clients = json.loads((self.fixtures / "clients.json").read_text())
+        duplicate = {
+            **clients[0],
+            "address": "0xabd",
+            "title": "Kitty OS window elsewhere",
+            "workspace": {"id": 8, "name": "Other"},
+        }
+        self.write_fixtures(
+            workspaces=[workspace("Alpha"), workspace("Other")],
+            clients=[clients[0], duplicate],
+        )
+        result = self.run_snapshot()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        snapshot = json.loads((self.project_home / "snapshots" / "workspace.json").read_text())
+        self.assertEqual(len(snapshot["windows"]), 1)
+        self.assertNotIn("piSessions", snapshot["windows"][0])
 
     def test_malformed_session_id_still_protects_working_pi(self):
         self.write_activity(state="working", session_id="not a valid session id")
