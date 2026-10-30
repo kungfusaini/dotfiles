@@ -19,8 +19,14 @@ const WORKLOG_TYPE_SET = new Set<string>(WORKLOG_TYPES);
 const StreamArchiveParameters = {
   type: "object",
   additionalProperties: false,
-  properties: {},
+  properties: {
+    stream: { type: "string", minLength: 1, maxLength: 200, description: "Optional active stream name or UUID within the attached project. Omit to archive the attached stream." },
+  },
 } as const;
+
+type StreamArchiveParametersValue = {
+  stream?: string;
+};
 
 const StreamCreateParameters = {
   type: "object",
@@ -679,7 +685,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
     }
     if (startupWorklog) instructions.push(`Recent ${stream ? "stream" : "project"} worklog (up to 10 newest events):\n${startupWorklog}`);
     if (startupWorklogError) instructions.push(`Recent worklog was not loaded: ${startupWorklogError}`);
-    instructions.push(`When the user asks to create a stream under this project, a stream in the picker, or a project workspace, use project_stream_create. ${stream ? "From this stream-scoped session, it creates a sibling stream under the same parent project. When the user asks to archive this stream, or its work is genuinely complete with no remaining tasks or next steps, use project_stream_archive as the final tool operation after writing the finish worklog. It snapshots and closes the whole stream workspace, including this Pi session, after your final response settles. " : ""}Do not use the workstream skill unless the user explicitly asks for an isolated Git worktree or worker session.`);
+    instructions.push(`When the user asks to create a stream under this project, a stream in the picker, or a project workspace, use project_stream_create. ${stream ? "From this stream-scoped session, it creates a sibling stream under the same parent project. " : ""}When the user explicitly asks to archive a named stream in this project, use project_stream_archive with that stream name or ID; a sibling stream closes immediately without ending this session. ${stream ? "When archiving this attached stream, or when its work is genuinely complete with no remaining tasks or next steps, omit the target and use project_stream_archive as the final tool operation after writing the finish worklog. It snapshots and closes the whole stream workspace, including this Pi session, after your final response settles. " : ""}Do not use the workstream skill unless the user explicitly asks for an isolated Git worktree or worker session.`);
     instructions.push(worklogGuidance);
     instructions.push("For configured external APIs, use `project-api list` to discover APIs enabled for this project, `project-api describe <id>` for docs and authentication metadata, and `project-api request <id> <GET|POST|PUT|PATCH|DELETE> </path>` for authenticated calls. Never put credentials in prompts or worklogs. Existing CLIs such as `gh` are separate.");
     event.systemPromptOptions.sections.project_object = instructions.join("\n\n");
@@ -732,19 +738,28 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "project_stream_archive",
-    label: "Archive current project stream",
-    description: "Archive the attached Project Object stream when the user explicitly requests it or the stream is genuinely complete with no remaining tasks or next steps. Use this only from a stream-scoped session, as the final tool operation after appending the finish worklog. After the final response settles, a detached lifecycle process snapshots the stream, closes all stream workspace windows and their processes including this Pi session, verifies closure, and only then marks the stream archived. Sibling streams, the parent project, artifacts, worklogs, and Pi session history are retained.",
-    promptSnippet: "Archive the attached stream only when explicitly requested or genuinely complete; this terminates its workspace after the final response.",
-    promptGuidelines: ["Use project_stream_archive only for the attached stream, only when explicitly requested or genuinely complete, and only as the final tool operation after its finish worklog."],
+    label: "Archive project stream",
+    description: "Archive an active Project Object stream in the attached project. Pass a stream name or UUID when the user explicitly asks to archive that named stream; a sibling stream is snapshotted, closed, verified, and archived immediately while this session remains active. Omit the target only to archive the attached stream when explicitly requested or genuinely complete, as the final tool operation after its finish worklog; that lifecycle runs after the final response settles because it terminates this Pi session. The parent project, other streams, artifacts, worklogs, and Pi history are retained.",
+    promptSnippet: "Archive an explicitly named stream in this project, or finish and close the attached stream after the final response.",
+    promptGuidelines: ["For a named stream explicitly requested by the user, pass its name or ID to project_stream_archive; sibling archival completes immediately and this session continues. Omit the target only to archive the attached stream, as the final tool operation after its finish worklog."],
     parameters: StreamArchiveParameters,
-    async execute() {
+    async execute(_toolCallId, parameters: StreamArchiveParametersValue) {
       if (!resolution.project && !resolution.error) resolution = resolveProject();
       if (resolution.error) throw new Error(`Project context error: ${resolution.error}`);
       const project = resolution.project;
-      const stream = resolution.stream;
+      const attachedStream = resolution.stream;
       if (!project) throw new Error("No project object is attached to this Pi session");
-      if (!stream) throw new Error("Stream archiving is available only from an attached stream session");
-      if (pendingStreamArchive) throw new Error("This stream is already scheduled for archival");
+
+      const requested = parameters.stream?.trim();
+      let target = attachedStream as StreamRecord | undefined;
+      if (requested) {
+        const normalized = requested.normalize("NFKC").toLowerCase();
+        target = loadStreams(project).find((candidate) => !candidate.archivedAt && (candidate.id === requested || candidate.name.normalize("NFKC").toLowerCase() === normalized));
+        if (!target) throw new Error(`Active stream not found in ${project.name}: ${requested}`);
+      } else if (!target) {
+        throw new Error("Pass a stream name or ID when archiving from a project-scoped session");
+      }
+      if (pendingStreamArchive) throw new Error("The attached stream is already scheduled for archival");
 
       const executable = process.env.PROJECT_OBJECT_STREAM_CLI || "project-picker-tui";
       let output: string;
@@ -752,7 +767,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
         output = execFileSync(executable, [
           "--check-archive-stream",
           "--project-id", project.id,
-          "--stream-id", stream.id,
+          "--stream-id", target.id,
         ], {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
@@ -770,11 +785,34 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       } catch (error) {
         throw new Error(`Stream archive preflight returned invalid output: ${(error as Error).message}`);
       }
-      if (checked.projectId !== project.id || checked.streamId !== stream.id) throw new Error("Stream archive preflight returned a different scope");
-      pendingStreamArchive = { executable, projectId: project.id, streamId: stream.id };
+      if (checked.projectId !== project.id || checked.streamId !== target.id || checked.name !== target.name) throw new Error("Stream archive preflight returned a different scope");
+
+      if (attachedStream?.id === target.id) {
+        pendingStreamArchive = { executable, projectId: project.id, streamId: target.id };
+        return {
+          content: [{ type: "text", text: `Stream “${target.name}” is ready to archive. Give your brief final response now; after it settles, the workspace and this Pi session will close, and the stream will be archived only if closure succeeds.` }],
+          details: { projectId: project.id, streamId: target.id, pending: true },
+        };
+      }
+
+      try {
+        execFileSync(executable, [
+          "--archive-stream",
+          "--project-id", project.id,
+          "--stream-id", target.id,
+        ], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 30000,
+        });
+      } catch (error) {
+        const failure = error as Error & { stderr?: Buffer | string };
+        const stderr = String(failure.stderr || "").trim();
+        throw new Error(stderr || `Could not archive stream: ${failure.message}`);
+      }
       return {
-        content: [{ type: "text", text: `Stream “${stream.name}” is ready to archive. Give your brief final response now; after it settles, the workspace and this Pi session will close, and the stream will be archived only if closure succeeds.` }],
-        details: { projectId: project.id, streamId: stream.id, pending: true },
+        content: [{ type: "text", text: `Archived stream “${target.name}”. Its workspace and processes are closed; this session remains active.` }],
+        details: { projectId: project.id, streamId: target.id, pending: false, archived: true },
       };
     },
   });

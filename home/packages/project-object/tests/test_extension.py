@@ -370,7 +370,91 @@ console.log(JSON.stringify({ result, beforeSettled, calls }));
         self.assertTrue(output["result"]["details"]["pending"])
         self.assertIn("final response", output["result"]["content"][0]["text"])
 
-    def test_stream_archive_rejects_project_scoped_session(self):
+    def test_stream_archive_closes_named_sibling_immediately_and_keeps_session_active(self):
+        current_stream_id = str(uuid.uuid4())
+        sibling_stream_id = str(uuid.uuid4())
+        (self.home / self.project_id / "streams.json").write_text(json.dumps({
+            "version": 1,
+            "streams": [
+                {"id": current_stream_id, "name": "Current Work", "mainDirectory": None, "archivedAt": None},
+                {"id": sibling_stream_id, "name": "Finished Cleanup", "mainDirectory": None, "archivedAt": None},
+            ],
+        }))
+        calls = self.root / "archive-calls"
+        lifecycle = self.root / "stream-lifecycle"
+        lifecycle.write_text(f"""#!/usr/bin/env python3
+import json
+import sys
+with open({str(calls)!r}, "a") as output:
+    output.write(json.dumps(sys.argv[1:]) + "\\n")
+if sys.argv[1] == "--check-archive-stream":
+    print(json.dumps({{"projectId": {self.project_id!r}, "streamId": {sibling_stream_id!r}, "name": "Finished Cleanup"}}))
+""")
+        lifecycle.chmod(0o755)
+        expression = """
+const tools = {};
+const pi = {
+  on: () => {},
+  registerTool: (tool) => { tools[tool.name] = tool; },
+  registerCommand: () => {},
+};
+m.default(pi);
+const result = await tools.project_stream_archive.execute('call', { stream: 'finished cleanup' });
+const calls = fs.readFileSync(process.env.ARCHIVE_CALLS, 'utf8').trim().split('\\n').map(JSON.parse);
+console.log(JSON.stringify({ result, calls }));
+"""
+        result = self.node(expression, {
+            "PROJECT_OBJECT_ID": self.project_id,
+            "PROJECT_OBJECT_STREAM_ID": current_stream_id,
+            "PROJECT_OBJECT_STREAM_CLI": str(lifecycle),
+            "ARCHIVE_CALLS": str(calls),
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["calls"], [
+            ["--check-archive-stream", "--project-id", self.project_id, "--stream-id", sibling_stream_id],
+            ["--archive-stream", "--project-id", self.project_id, "--stream-id", sibling_stream_id],
+        ])
+        self.assertFalse(output["result"]["details"]["pending"])
+        self.assertTrue(output["result"]["details"]["archived"])
+        self.assertIn("session remains active", output["result"]["content"][0]["text"])
+
+    def test_stream_archive_accepts_named_stream_from_project_scoped_session(self):
+        stream_id = str(uuid.uuid4())
+        (self.home / self.project_id / "streams.json").write_text(json.dumps({
+            "version": 1,
+            "streams": [{"id": stream_id, "name": "Finished Work", "mainDirectory": None, "archivedAt": None}],
+        }))
+        lifecycle = self.root / "stream-lifecycle"
+        lifecycle.write_text(f"""#!/usr/bin/env python3
+import json
+import sys
+if sys.argv[1] == "--check-archive-stream":
+    print(json.dumps({{"projectId": {self.project_id!r}, "streamId": {stream_id!r}, "name": "Finished Work"}}))
+""")
+        lifecycle.chmod(0o755)
+        expression = """
+const tools = {};
+const pi = {
+  on: () => {},
+  registerTool: (tool) => { tools[tool.name] = tool; },
+  registerCommand: () => {},
+};
+m.default(pi);
+const result = await tools.project_stream_archive.execute('call', { stream: process.env.TARGET_STREAM_ID });
+console.log(JSON.stringify(result));
+"""
+        result = self.node(expression, {
+            "PROJECT_OBJECT_ID": self.project_id,
+            "PROJECT_OBJECT_STREAM_CLI": str(lifecycle),
+            "TARGET_STREAM_ID": stream_id,
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertTrue(output["details"]["archived"])
+        self.assertEqual(output["details"]["streamId"], stream_id)
+
+    def test_stream_archive_requires_name_from_project_scoped_session(self):
         expression = """
 const tools = {};
 const pi = {
@@ -388,7 +472,7 @@ try {
 """
         result = self.node(expression, {"PROJECT_OBJECT_ID": self.project_id})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("only from an attached stream session", result.stdout)
+        self.assertIn("Pass a stream name or ID", result.stdout)
 
     def test_project_stream_routing_is_global_not_project_specific(self):
         expression = """
@@ -418,7 +502,8 @@ console.log(JSON.stringify({
         self.assertIn("Do not use the workstream skill", output["prompt"])
         self.assertIn("project picker", output["description"])
         self.assertTrue(any("project_stream_create" in text for text in output["guidelines"]))
-        self.assertIn("closes all stream workspace windows", output["archiveDescription"])
+        self.assertIn("sibling stream is snapshotted", output["archiveDescription"])
+        self.assertTrue(any("sibling archival completes immediately" in text for text in output["archiveGuidelines"]))
         self.assertTrue(any("final tool operation" in text for text in output["archiveGuidelines"]))
 
     def test_worklog_tool_appends_private_structured_entry(self):
