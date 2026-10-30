@@ -683,11 +683,24 @@ export default function nanogptExtension(pi: ExtensionAPI) {
 
       try {
         const prior = JSON.parse(await readFile(outputPath, "utf8")) as BulkDecisionFile;
-        if (prior.inputDigest !== inputDigest) throw new Error("Existing bulk output belongs to different input; choose a new output path");
         if (prior.modelRequested !== model.id || digestJson(prior.question) !== digestJson(output.question)) {
           throw new Error("Existing bulk output uses a different model or question rubric; choose a new output path");
         }
-        output = prior;
+        if (digestJson(prior.thresholds) !== digestJson(output.thresholds)) {
+          throw new Error("Existing bulk output uses different ambiguity thresholds; choose a new output path");
+        }
+        const currentIds = new Set(items.map((item) => item.id));
+        const staleIds = prior.results.filter((result) => !currentIds.has(result.id));
+        if (staleIds.length) {
+          throw new Error("Existing bulk output contains messages no longer present in the input; choose a new output path");
+        }
+        output = {
+          ...prior,
+          inputDigest,
+          total: items.length,
+          completed: prior.results.length,
+          updatedAt: new Date().toISOString(),
+        };
       } catch (error: any) {
         if (error?.code !== "ENOENT") {
           if (String(error?.message || error).includes("Existing bulk output")) throw error;
