@@ -54,6 +54,9 @@ window { background: transparent; }
 .project-dot { color: #676f86; font-size: 12px; min-width: 20px; }
 .running-scope-row .project-dot { color: #74d3ae; }
 .working-scope-row .project-dot { color: #e7bd63; }
+.agent-status { font-size: 9px; min-width: 12px; }
+.agent-status-idle { color: #74d3ae; }
+.agent-status-working { color: #e7bd63; }
 .scope-row .row-content { min-height: 30px; margin-left: 28px; }
 .project-name { font-size: 12px; font-weight: 650; }
 .scope-row .project-name { font-weight: 540; }
@@ -78,7 +81,7 @@ window { background: transparent; }
 
 
 class ProjectRow(Gtk.ListBoxRow):
-    def __init__(self, project, expanded=False, workspace_count=1, open_workspace_count=0):
+    def __init__(self, project, expanded=False, workspace_count=1, open_workspace_count=0, agent_state=None):
         super().__init__()
         self.project = project
         self.add_css_class("project-row")
@@ -93,6 +96,13 @@ class ProjectRow(Gtk.ListBoxRow):
         name.add_css_class("project-name")
         name.set_hexpand(True)
         content.append(name)
+
+        if agent_state:
+            agent = Gtk.Label(label="●")
+            agent.add_css_class("agent-status")
+            agent.add_css_class(f"agent-status-{agent_state}")
+            agent.set_tooltip_text("Agent waiting for attention" if agent_state == "idle" else "Agent working")
+            content.append(agent)
 
         count_text = f"{open_workspace_count} open · {workspace_count} total" if open_workspace_count else f"{workspace_count} workspace{'s' if workspace_count != 1 else ''}"
         count = Gtk.Label(label=count_text)
@@ -183,7 +193,7 @@ class PickerApplication(Adw.Application):
         self.registry = None
         self.session = None
         self.rows = []
-        self.working_scopes = set()
+        self.agent_activity = {}
         self.expanded_project_ids = set()
         self.selected_scope = None
         self.selected_project = None
@@ -214,7 +224,7 @@ class PickerApplication(Adw.Application):
             self.registry = backend.load_registry()
             self.session = backend.reconcile_session(self.registry, backend.load_session())
             self.current_workspace = backend.active_workspace_name()
-            self.working_scopes = self.load_working_scopes()
+            self.agent_activity = self.load_agent_activity()
             self.load_picker_state()
         except Exception as error:
             backend.notify_error(str(error))
@@ -390,14 +400,14 @@ class PickerApplication(Adw.Application):
         page.append(actions)
         return page
 
-    def load_working_scopes(self):
+    def load_agent_activity(self):
         activity_root = backend.RUNTIME_ROOT / "pi-activity"
         try:
             if activity_root.is_symlink() or not activity_root.is_dir():
-                return set()
+                return {}
             entries = list(activity_root.iterdir())
         except OSError:
-            return set()
+            return {}
 
         known_projects = {
             project["id"]: project for project in self.registry["projects"]
@@ -413,7 +423,7 @@ class PickerApplication(Adw.Application):
             except Exception:
                 known_streams[project_id] = set()
 
-        working = set()
+        activity = {}
         for entry in entries:
             try:
                 metadata = entry.lstat()
@@ -423,7 +433,8 @@ class PickerApplication(Adw.Application):
                 pid = value.get("pid")
                 project_id = value.get("projectId")
                 stream_id = value.get("streamId")
-                if value.get("version") != 1 or value.get("state") != "working":
+                state = value.get("state")
+                if value.get("version") != 1 or state not in ("working", "idle"):
                     continue
                 if not isinstance(pid, int) or entry.name != f"{pid}.json" or project_id not in known_projects:
                     continue
@@ -441,16 +452,16 @@ class PickerApplication(Adw.Application):
                     continue
                 if environment.get("PROJECT_OBJECT_STREAM_ID") != (stream_id or None):
                     continue
-                working.add((project_id, stream_id))
+                activity.setdefault((project_id, stream_id), set()).add(state)
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 continue
-        return working
+        return activity
 
     def poll_activity(self):
         if self.window and self.window.get_visible():
-            current = self.load_working_scopes()
-            if current != self.working_scopes:
-                self.working_scopes = current
+            current = self.load_agent_activity()
+            if current != self.agent_activity:
+                self.agent_activity = current
                 if self.stack.get_visible_child_name() == "list":
                     self.refresh_rows()
         return GLib.SOURCE_CONTINUE
@@ -566,14 +577,22 @@ class PickerApplication(Adw.Application):
             open_stream_count = sum(stream_state != "closed" for _stream, stream_state in streams)
             working_stream_ids = {
                 stream["id"] for stream, stream_state in streams
-                if stream_state != "closed" and (project["id"], stream["id"]) in self.working_scopes
+                if stream_state != "closed" and "working" in self.agent_activity.get((project["id"], stream["id"]), set())
             }
-            project_working = state != "closed" and (project["id"], None) in self.working_scopes
+            project_working = state != "closed" and "working" in self.agent_activity.get((project["id"], None), set())
+            project_agent_states = {
+                agent_state
+                for (project_id, _stream_id), states in self.agent_activity.items()
+                if project_id == project["id"]
+                for agent_state in states
+            }
+            project_agent_state = "idle" if "idle" in project_agent_states else "working" if "working" in project_agent_states else None
             values.append(ProjectRow(
                 project,
                 expanded=expanded,
                 workspace_count=len(streams) + 1,
                 open_workspace_count=open_stream_count + (state != "closed"),
+                agent_state=project_agent_state,
             ))
             if expanded or query:
                 if not query or project_matches:
@@ -1103,7 +1122,7 @@ class PickerApplication(Adw.Application):
             self.registry = backend.load_registry()
             self.session = backend.reconcile_session(self.registry, backend.load_session())
             self.current_workspace = backend.active_workspace_name()
-            self.working_scopes = self.load_working_scopes()
+            self.agent_activity = self.load_agent_activity()
             if hasattr(self, "listbox"):
                 self.list_title.set_text("Projects")
                 self.footer_hint.set_text("j/k Move   Tab Expand   Enter Open/Expand   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream")
