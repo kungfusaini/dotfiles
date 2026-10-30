@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import time
@@ -55,6 +56,11 @@ SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,200}")
 MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
 MAX_SESSION_HEADER_BYTES = 16 * 1024
 MAX_ACTIVITY_BYTES = 16 * 1024
+MAX_CONTEXT_WORKLOG_TAIL_BYTES = 12 * 16 * 1024
+MAX_CONTEXT_TODO_BYTES = 256 * 1024
+MAX_CONTEXT_TEXT_LENGTH = 260
+CONTEXT_WORKLOG_TYPES = {"start", "progress", "decision", "mistake", "stuck", "finish", "next", "note"}
+
 
 def notify_error(message):
     subprocess.run([NOTIFY, APP_NAME, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -100,6 +106,157 @@ def stream_workspace_name(project, stream):
 
 def project_browser_workspace_name(project):
     return canonical_project_browser_workspace_name(project["name"])
+
+
+def _read_regular_file(file, maximum_bytes, tail=False):
+    try:
+        descriptor = os.open(file, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+            return None
+        if not tail and metadata.st_size > maximum_bytes:
+            return None
+        start = max(0, metadata.st_size - maximum_bytes) if tail else 0
+        os.lseek(descriptor, start, os.SEEK_SET)
+        chunks = []
+        remaining = metadata.st_size - start
+        while remaining:
+            chunk = os.read(descriptor, min(remaining, 64 * 1024))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        return b"".join(chunks), start > 0
+    except OSError:
+        return None
+    finally:
+        os.close(descriptor)
+
+
+def _context_text(value):
+    if not isinstance(value, str):
+        return None
+    compact = " ".join(value.split())
+    if not compact:
+        return None
+    if len(compact) <= MAX_CONTEXT_TEXT_LENGTH:
+        return compact
+    shortened = compact[:MAX_CONTEXT_TEXT_LENGTH - 1].rsplit(" ", 1)[0]
+    return f"{shortened or compact[:MAX_CONTEXT_TEXT_LENGTH - 1]}…"
+
+
+def _todo_next_step(scope_home):
+    loaded = _read_regular_file(scope_home / "TODO.md", MAX_CONTEXT_TODO_BYTES)
+    if not loaded:
+        return None
+    try:
+        lines = loaded[0].decode("utf-8").splitlines()
+    except UnicodeDecodeError:
+        return None
+    section = None
+    candidates = {"now": [], "next": []}
+    for raw_line in lines:
+        line = raw_line.strip()
+        if line.startswith("## "):
+            heading = line[3:].strip().casefold()
+            section = heading if heading in candidates else None
+            continue
+        if section is None or not line or line.startswith("#"):
+            continue
+        item = re.sub(r"^(?:[-*+]\s+|\d+[.)]\s+)", "", line).strip()
+        if re.match(r"^\[[xX]\]\s+", item):
+            continue
+        item = re.sub(r"^\[\s\]\s+", "", item).strip()
+        text = _context_text(item)
+        if text:
+            candidates[section].append(text)
+    return next(iter(candidates["now"] or candidates["next"]), None)
+
+
+def load_scope_context(project, stream=None):
+    scope_home = stream_home(project, stream) if stream else project_home(project)
+    loaded = _read_regular_file(scope_home / "worklogs" / "events.jsonl", MAX_CONTEXT_WORKLOG_TAIL_BYTES, tail=True)
+    events = []
+    if loaded:
+        data, truncated = loaded
+        lines = data.splitlines()
+        if truncated and lines:
+            lines = lines[1:]
+        for encoded in lines:
+            try:
+                raw = json.loads(encoded.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            expected_scope = "stream" if stream else "project"
+            if (
+                raw.get("v") != 1
+                or raw.get("type") not in CONTEXT_WORKLOG_TYPES
+                or raw.get("project") != project["id"]
+                or raw.get("scope") != expected_scope
+            ):
+                continue
+            if stream:
+                raw_stream = raw.get("stream")
+                if not isinstance(raw_stream, dict) or raw_stream.get("id") != stream["id"]:
+                    continue
+            summary = _context_text(raw.get("summary"))
+            if not summary:
+                continue
+            event = {
+                "type": raw.get("type"),
+                "summary": summary,
+                "time": _context_text(raw.get("time")),
+            }
+            for field in ("task", "next", "reason", "lesson", "blocker", "result"):
+                text = _context_text(raw.get(field))
+                if text:
+                    event[field] = text
+            events.append(event)
+
+    latest = events[-1] if events else None
+    happening = None
+    for event in reversed(events):
+        if event.get("task"):
+            happening = event["task"]
+            break
+        if event.get("type") in ("start", "progress"):
+            happening = event["summary"]
+            break
+    if happening is None and latest:
+        happening = latest["summary"]
+
+    stopped = None
+    if latest:
+        if latest.get("type") == "stuck":
+            stopped = latest.get("blocker") or latest["summary"]
+        elif latest.get("type") == "finish":
+            stopped = latest.get("result") or latest["summary"]
+        elif latest.get("type") == "decision":
+            stopped = latest.get("reason") or latest["summary"]
+        elif latest.get("type") == "mistake":
+            stopped = latest.get("lesson") or latest["summary"]
+        elif latest.get("type") in ("start", "progress"):
+            stopped = latest.get("blocker") or latest.get("reason") or "Work remains in progress; no separate stopping point is recorded."
+        else:
+            stopped = latest["summary"]
+
+    next_step = next((event["next"] for event in reversed(events) if event.get("next")), None)
+    next_source = "worklog" if next_step else None
+    if not next_step:
+        next_step = _todo_next_step(scope_home)
+        next_source = "TODO" if next_step else None
+
+    return {
+        "happening": happening,
+        "stopped": stopped,
+        "next": next_step,
+        "nextSource": next_source,
+        "updatedAt": latest.get("time") if latest else None,
+        "hasWorklog": bool(events),
+    }
 
 
 def initialize_project_home(project, home=None):

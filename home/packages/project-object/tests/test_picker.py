@@ -1,6 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 from importlib.machinery import SourceFileLoader
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -215,6 +216,91 @@ class PickerTests(unittest.TestCase):
         self.assertIn("<!-- project-object:init-scope -->", agents.read_text())
         self.assertTrue((home / "skills").is_dir())
         self.assertEqual((home / "skills").stat().st_mode & 0o777, 0o700)
+
+    def test_scope_context_composes_recent_worklog_fields(self):
+        self.picker.initialize_project_home(self.project)
+        worklog = self.picker.project_home(self.project) / "worklogs" / "events.jsonl"
+        events = [
+            {
+                "v": 1,
+                "time": "2026-10-30T12:00:00Z",
+                "type": "start",
+                "summary": "Starting restoration work",
+                "task": "Restore every safely captured Pi session",
+                "project": self.project["id"],
+                "scope": "project",
+            },
+            {
+                "v": 1,
+                "time": "2026-10-30T13:00:00Z",
+                "type": "finish",
+                "summary": "Restoration implementation finished",
+                "result": "Implementation committed and validated",
+                "next": "Deploy and run a live restoration test",
+                "project": self.project["id"],
+                "scope": "project",
+            },
+        ]
+        worklog.write_text("".join(json.dumps(event) + "\n" for event in events))
+
+        self.assertEqual(self.picker.load_scope_context(self.project), {
+            "happening": "Restore every safely captured Pi session",
+            "stopped": "Implementation committed and validated",
+            "next": "Deploy and run a live restoration test",
+            "nextSource": "worklog",
+            "updatedAt": "2026-10-30T13:00:00Z",
+            "hasWorklog": True,
+        })
+
+    def test_scope_context_keeps_in_progress_preview_compact_without_duplicating_it(self):
+        self.picker.initialize_project_home(self.project)
+        worklog = self.picker.project_home(self.project) / "worklogs" / "events.jsonl"
+        worklog.write_text(json.dumps({
+            "v": 1,
+            "time": "2026-10-30T13:00:00Z",
+            "type": "progress",
+            "summary": "word " * 100,
+            "project": self.project["id"],
+            "scope": "project",
+        }) + "\n")
+        context = self.picker.load_scope_context(self.project)
+        self.assertLessEqual(len(context["happening"]), self.picker.MAX_CONTEXT_TEXT_LENGTH)
+        self.assertTrue(context["happening"].endswith("…"))
+        self.assertEqual(context["stopped"], "Work remains in progress; no separate stopping point is recorded.")
+
+    def test_scope_context_uses_first_unfinished_todo_when_worklog_has_no_next(self):
+        self.picker.initialize_project_home(self.project)
+        (self.picker.project_home(self.project) / "TODO.md").write_text(
+            "# Todo\n\n## Now\n\n- [x] Already done\n- Run the live test\n\n## Next\n\n- Later task\n"
+        )
+        self.assertEqual(self.picker.load_scope_context(self.project)["next"], "Run the live test")
+        self.assertEqual(self.picker.load_scope_context(self.project)["nextSource"], "TODO")
+
+    def test_scope_context_rejects_cross_scope_worklog_and_unsafe_todo(self):
+        self.picker.initialize_project_home(self.project)
+        home = self.picker.project_home(self.project)
+        (home / "worklogs" / "events.jsonl").write_text(json.dumps({
+            "v": 1,
+            "time": "2026-10-30T13:00:00Z",
+            "type": "progress",
+            "summary": "Another project's event",
+            "project": str(uuid.uuid4()),
+            "scope": "project",
+        }) + "\n")
+        todo = home / "TODO.md"
+        todo.unlink()
+        external = self.root / "external-todo.md"
+        external.write_text("## Now\n- Must not be read\n")
+        todo.symlink_to(external)
+
+        self.assertEqual(self.picker.load_scope_context(self.project), {
+            "happening": None,
+            "stopped": None,
+            "next": None,
+            "nextSource": None,
+            "updatedAt": None,
+            "hasWorklog": False,
+        })
 
     def test_registry_write_failure_removes_new_project_home(self):
         ui = self.picker.PickerUI.__new__(self.picker.PickerUI)

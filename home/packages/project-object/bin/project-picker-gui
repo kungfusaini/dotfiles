@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from datetime import datetime, timezone
 import importlib.util
 import json
 from importlib.machinery import SourceFileLoader
@@ -29,6 +30,10 @@ except (ImportError, ValueError) as error:
     os.execv(str(BACKEND_COMMAND), [str(BACKEND_COMMAND)])
 
 APP_ID = "dev.project_object.Picker"
+COMPACT_WIDTH = 760
+INSPECTOR_WIDTH = 1180
+WINDOW_HEIGHT = 570
+FOOTER_HINT = "j/k Move   Space Context   n Next attention   Enter Open/Expand   x Close   a Archive"
 
 CSS = """
 window { background: transparent; }
@@ -63,6 +68,21 @@ window { background: transparent; }
 .stream-count { color: #8990a3; font-size: 10px; }
 .footer { padding: 14px 28px 18px; color: #777f93; font-size: 11px; }
 .footer-key { color: #c2c7d4; font-weight: 650; }
+.context-separator { background: rgba(255,255,255,0.10); }
+.context-inspector { background: rgba(8,10,15,0.22); padding: 22px 26px 20px; }
+.context-kicker { color: #8990a3; font-size: 10px; font-weight: 700; letter-spacing: 0.8px; }
+.context-title { color: #eef1f8; font-size: 20px; font-weight: 750; margin-top: 5px; }
+.context-status { font-size: 10px; font-weight: 750; letter-spacing: 0.7px; margin-top: 8px; }
+.context-status-idle { color: #74d3ae; }
+.context-status-working { color: #e7bd63; }
+.context-status-none { color: #8990a3; }
+.context-age { color: #8990a3; font-size: 10px; margin-top: 8px; }
+.context-rule { background: rgba(255,255,255,0.10); margin: 14px 0; }
+.context-section { color: #9ba3b7; font-size: 10px; font-weight: 700; letter-spacing: 0.7px; margin-top: 12px; }
+.context-copy { color: #e2e6ef; font-size: 13px; margin-top: 5px; }
+.context-next { background: #171a23; border-left: 3px solid #7c9cff; border-radius: 8px; padding: 12px 14px; margin-top: 14px; }
+.context-source { color: #777f93; font-size: 10px; margin-top: 8px; }
+.context-rule-copy { color: #8990a3; font-size: 10px; margin-top: 18px; }
 .empty { color: #8d93a5; padding: 48px; }
 .create-page { padding: 24px 28px 26px; }
 .section-title { font-size: 20px; font-weight: 750; }
@@ -194,6 +214,8 @@ class PickerApplication(Adw.Application):
         self.session = None
         self.rows = []
         self.agent_activity = {}
+        self.context_cache = {}
+        self.context_open = False
         self.expanded_project_ids = set()
         self.selected_scope = None
         self.selected_project = None
@@ -226,6 +248,7 @@ class PickerApplication(Adw.Application):
             self.current_workspace = backend.active_workspace_name()
             self.agent_activity = self.load_agent_activity()
             self.load_picker_state()
+            self.preload_context_cache()
         except Exception as error:
             backend.notify_error(str(error))
             self.quit()
@@ -237,7 +260,9 @@ class PickerApplication(Adw.Application):
     def build_window(self):
         self.window = Adw.ApplicationWindow(application=self)
         self.window.set_title("Projects")
-        self.window.set_default_size(760, 570)
+        initial_width = INSPECTOR_WIDTH if self.context_open else COMPACT_WIDTH
+        self.window.set_default_size(initial_width, WINDOW_HEIGHT)
+        self.window.set_size_request(initial_width, WINDOW_HEIGHT)
         self.window.set_decorated(False)
         self.window.connect("close-request", self.on_close_request)
 
@@ -258,6 +283,7 @@ class PickerApplication(Adw.Application):
         keys.connect("key-pressed", self.on_key_pressed)
         self.window.add_controller(keys)
         GLib.timeout_add_seconds(1, self.poll_activity)
+        GLib.timeout_add_seconds(2, self.poll_context)
 
     def build_list_page(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -278,22 +304,91 @@ class PickerApplication(Adw.Application):
         self.search.connect("activate", lambda _entry: self.open_selected())
         page.append(self.search)
 
-        scroll = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True)
+        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE, activate_on_single_click=False)
         self.listbox.add_css_class("project-list")
         self.listbox.connect("row-selected", self.on_row_selected)
         self.listbox.connect("row-activated", lambda _box, _row: self.open_selected())
         scroll.set_child(self.listbox)
-        page.append(scroll)
+        body.append(scroll)
+
+        self.context_separator = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
+        self.context_separator.add_css_class("context-separator")
+        self.context_separator.set_visible(self.context_open)
+        body.append(self.context_separator)
+        self.context_inspector = self.build_context_inspector()
+        self.context_inspector.set_visible(self.context_open)
+        body.append(self.context_inspector)
+        page.append(body)
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         footer.add_css_class("footer")
-        self.footer_hint = Gtk.Label(label="j/k Move   Tab Expand   Enter Open/Expand   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream", xalign=0, ellipsize=3)
+        self.footer_hint = Gtk.Label(label=FOOTER_HINT, xalign=0, ellipsize=3)
         self.footer_hint.add_css_class("footer-key")
         footer.append(self.footer_hint)
         page.append(footer)
         self.refresh_rows()
         return page
+
+    def build_context_inspector(self):
+        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        scroll.set_size_request(500, -1)
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        content.add_css_class("context-inspector")
+
+        kicker = Gtk.Label(label="SELECTED CONTEXT", xalign=0)
+        kicker.add_css_class("context-kicker")
+        content.append(kicker)
+        self.context_title = Gtk.Label(xalign=0, ellipsize=3)
+        self.context_title.add_css_class("context-title")
+        content.append(self.context_title)
+
+        status_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.context_status = Gtk.Label(xalign=0)
+        self.context_status.add_css_class("context-status")
+        self.context_status.set_hexpand(True)
+        status_row.append(self.context_status)
+        self.context_age = Gtk.Label(xalign=1)
+        self.context_age.add_css_class("context-age")
+        status_row.append(self.context_age)
+        content.append(status_row)
+
+        rule = Gtk.Separator()
+        rule.add_css_class("context-rule")
+        content.append(rule)
+
+        def section(title):
+            label = Gtk.Label(label=title, xalign=0)
+            label.add_css_class("context-section")
+            content.append(label)
+            copy = Gtk.Label(xalign=0, wrap=True)
+            copy.add_css_class("context-copy")
+            content.append(copy)
+            return copy
+
+        self.context_happening = section("WHAT WAS HAPPENING")
+        self.context_stopped = section("WHERE IT STOPPED")
+
+        next_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        next_box.add_css_class("context-next")
+        next_label = Gtk.Label(label="NEXT", xalign=0)
+        next_label.add_css_class("context-section")
+        next_box.append(next_label)
+        self.context_next = Gtk.Label(xalign=0, wrap=True)
+        self.context_next.add_css_class("context-copy")
+        next_box.append(self.context_next)
+        content.append(next_box)
+
+        self.context_source = Gtk.Label(xalign=0)
+        self.context_source.add_css_class("context-source")
+        content.append(self.context_source)
+        content.append(Gtk.Box(vexpand=True))
+        preview_rule = Gtk.Label(label="Selection only previews · Enter switches workspace", xalign=1)
+        preview_rule.add_css_class("context-rule-copy")
+        content.append(preview_rule)
+        scroll.set_child(content)
+        return scroll
 
     def build_create_page(self):
         page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -479,6 +574,201 @@ class PickerApplication(Adw.Application):
                     self.refresh_rows()
         return GLib.SOURCE_CONTINUE
 
+    @staticmethod
+    def context_key(project, stream=None):
+        return project["id"], stream["id"] if stream else None
+
+    def context_targets(self):
+        targets = []
+        for project in self.registry["projects"]:
+            if project.get("archivedAt"):
+                continue
+            targets.append((project, None))
+            try:
+                streams = backend.load_stream_registry(project)["streams"]
+            except Exception:
+                continue
+            targets.extend((project, stream) for stream in streams if not stream.get("archivedAt"))
+        return targets
+
+    def preload_context_cache(self):
+        for project, stream in self.context_targets():
+            try:
+                self.context_cache[self.context_key(project, stream)] = backend.load_scope_context(project, stream)
+            except Exception:
+                continue
+
+    @staticmethod
+    def context_age_text(value):
+        if not value:
+            return ""
+        try:
+            recorded = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            if recorded.tzinfo is None:
+                recorded = recorded.replace(tzinfo=timezone.utc)
+            seconds = max(0, int((datetime.now(timezone.utc) - recorded).total_seconds()))
+        except (TypeError, ValueError):
+            return ""
+        if seconds < 60:
+            return "just now"
+        if seconds < 3600:
+            return f"{seconds // 60} min ago"
+        if seconds < 86400:
+            return f"{seconds // 3600} h ago"
+        return f"{seconds // 86400} d ago"
+
+    def project_preview_target(self, project):
+        try:
+            streams = [
+                stream for stream in backend.load_stream_registry(project)["streams"]
+                if not stream.get("archivedAt")
+            ]
+        except Exception:
+            streams = []
+        targets = [(project, None), *((project, stream) for stream in streams)]
+        for state in ("idle", "working"):
+            for target_project, target_stream in targets:
+                key = self.context_key(target_project, target_stream)
+                if state in self.agent_activity.get(key, set()):
+                    return target_project, target_stream
+
+        def updated_at(target):
+            target_project, target_stream = target
+            context = self.context_cache.get(self.context_key(target_project, target_stream), {})
+            return context.get("updatedAt") or ""
+
+        return max(targets, key=updated_at)
+
+    def row_context_target(self, row):
+        if isinstance(row, StreamRow):
+            return row.project, row.stream
+        if isinstance(row, ProjectWorkspaceRow):
+            return row.project, None
+        if isinstance(row, ProjectRow):
+            return self.project_preview_target(row.project)
+        return None
+
+    def paint_context_inspector(self, refresh=False):
+        if not hasattr(self, "context_inspector"):
+            return
+        row = self.listbox.get_selected_row()
+        target = self.row_context_target(row)
+        if not target:
+            return
+        project, stream = target
+        key = self.context_key(project, stream)
+        if refresh or key not in self.context_cache:
+            try:
+                self.context_cache[key] = backend.load_scope_context(project, stream)
+            except Exception:
+                self.context_cache.setdefault(key, {})
+        context = self.context_cache.get(key, {})
+
+        scope_name = stream["name"] if stream else ("Project workspace" if isinstance(row, ProjectWorkspaceRow) else None)
+        self.context_title.set_text(f"{project['name']}  ›  {scope_name}" if scope_name else project["name"])
+        states = self.agent_activity.get(self.context_key(project, stream), set())
+        for css_class in ("context-status-idle", "context-status-working", "context-status-none"):
+            self.context_status.remove_css_class(css_class)
+        if "idle" in states:
+            self.context_status.set_text("●  AGENT SETTLED")
+            self.context_status.add_css_class("context-status-idle")
+        elif "working" in states:
+            self.context_status.set_text("●  AGENT WORKING")
+            self.context_status.add_css_class("context-status-working")
+        else:
+            self.context_status.set_text("○  NO ATTACHED AGENT")
+            self.context_status.add_css_class("context-status-none")
+        self.context_age.set_text(self.context_age_text(context.get("updatedAt")))
+        self.context_happening.set_text(context.get("happening") or "No recent worklog activity is recorded for this scope.")
+        self.context_stopped.set_text(context.get("stopped") or "No stopping point has been recorded yet.")
+        self.context_next.set_text(context.get("next") or "No next step is recorded in the worklog or TODO.md.")
+        source = context.get("nextSource")
+        self.context_source.set_text(
+            "From recent worklog · TODO fallback available" if source == "worklog"
+            else "From TODO.md" if source == "TODO"
+            else "No recorded next-step source"
+        )
+
+    def poll_context(self):
+        if self.window and self.window.get_visible() and self.context_open and self.stack.get_visible_child_name() == "list":
+            self.paint_context_inspector(refresh=True)
+        return GLib.SOURCE_CONTINUE
+
+    def apply_window_size(self, width):
+        self.window.set_size_request(width, WINDOW_HEIGHT)
+        self.window.set_default_size(width, WINDOW_HEIGHT)
+        try:
+            clients = backend.hypr_json("clients")
+            address = next(
+                str(client.get("address"))
+                for client in clients
+                if isinstance(client, dict) and client.get("pid") == os.getpid()
+                and str(client.get("address", "")).startswith("0x")
+            )
+            result = backend.run([
+                backend.HYPRCTL,
+                "dispatch",
+                "resizewindowpixel",
+                f"exact {width} {WINDOW_HEIGHT},address:{address}",
+            ])
+            if result.returncode != 0:
+                raise RuntimeError("Hyprland refused the picker resize")
+        except (OSError, RuntimeError, StopIteration, TypeError) as error:
+            backend.notify_error(f"The context inspector changed, but the picker could not resize: {error}")
+        return GLib.SOURCE_REMOVE
+
+    def toggle_context_inspector(self):
+        self.context_open = not self.context_open
+        self.context_separator.set_visible(self.context_open)
+        self.context_inspector.set_visible(self.context_open)
+        width = INSPECTOR_WIDTH if self.context_open else COMPACT_WIDTH
+        GLib.idle_add(self.apply_window_size, width)
+        if self.context_open:
+            self.paint_context_inspector(refresh=True)
+        try:
+            self.save_picker_state()
+        except Exception as error:
+            backend.notify_error(str(error))
+
+    def attention_scopes(self):
+        scopes = []
+        for project in self.registry["projects"]:
+            if project.get("archivedAt"):
+                continue
+            if "idle" in self.agent_activity.get((project["id"], None), set()):
+                scopes.append({"kind": "project", "projectId": project["id"]})
+            try:
+                streams = backend.load_stream_registry(project)["streams"]
+            except Exception:
+                continue
+            for stream in streams:
+                if not stream.get("archivedAt") and "idle" in self.agent_activity.get((project["id"], stream["id"]), set()):
+                    scopes.append({"kind": "stream", "projectId": project["id"], "streamId": stream["id"]})
+        return scopes
+
+    def select_next_attention(self):
+        scopes = self.attention_scopes()
+        if not scopes:
+            self.footer_hint.set_text("No settled agent currently needs review")
+            GLib.timeout_add_seconds(2, self.restore_footer_hint)
+            return
+        try:
+            index = scopes.index(self.selected_scope)
+        except ValueError:
+            index = -1
+        self.selected_scope = scopes[(index + 1) % len(scopes)]
+        self.expanded_project_ids.add(self.selected_scope["projectId"])
+        try:
+            self.save_picker_state()
+            self.refresh_rows()
+        except Exception as error:
+            backend.notify_error(str(error))
+
+    def restore_footer_hint(self):
+        if self.stack.get_visible_child_name() == "list" and self.pending_stream_open_id is None:
+            self.footer_hint.set_text(FOOTER_HINT)
+        return GLib.SOURCE_REMOVE
+
     @property
     def picker_state_path(self):
         return backend.RUNTIME_ROOT / "picker-state.json"
@@ -486,6 +776,7 @@ class PickerApplication(Adw.Application):
     def load_picker_state(self):
         self.expanded_project_ids = set()
         self.selected_scope = None
+        self.context_open = False
         try:
             value = backend.read_json(self.picker_state_path, {})
         except Exception:
@@ -493,6 +784,7 @@ class PickerApplication(Adw.Application):
         known_ids = {project["id"] for project in self.registry["projects"] if not project.get("archivedAt")}
         restored = value.get("version") == 1 and value.get("hyprlandInstance") == backend.HYPRLAND_INSTANCE
         if restored:
+            self.context_open = value.get("contextOpen") is True
             self.expanded_project_ids = {
                 project_id for project_id in value.get("expandedProjectIds", [])
                 if project_id in known_ids
@@ -540,6 +832,7 @@ class PickerApplication(Adw.Application):
             "hyprlandInstance": backend.HYPRLAND_INSTANCE,
             "expandedProjectIds": sorted(self.expanded_project_ids),
             "selection": self.selected_scope,
+            "contextOpen": self.context_open,
         })
 
     @staticmethod
@@ -556,6 +849,8 @@ class PickerApplication(Adw.Application):
         if row is None:
             return
         self.selected_scope = self.row_scope(row)
+        if self.context_open:
+            self.paint_context_inspector()
         try:
             self.save_picker_state()
         except Exception as error:
@@ -943,7 +1238,7 @@ class PickerApplication(Adw.Application):
     def show_list(self):
         self.pending_stream_id = None
         self.list_title.set_text("Projects")
-        self.footer_hint.set_text("j/k Move   Tab Expand   Enter Open/Expand   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream")
+        self.footer_hint.set_text(FOOTER_HINT)
         self.search.set_placeholder_text("Press / to search projects and streams…")
         self.stack.set_visible_child_name("list")
         self.refresh_rows()
@@ -1210,6 +1505,8 @@ class PickerApplication(Adw.Application):
             "move-up": (lambda: self.move_selection(-1), ["k", "Up"]),
             "search": (self.enter_search_mode, ["slash", "KP_Divide"]),
             "open": (self.open_selected, ["Return", "KP_Enter"]),
+            "toggle-context": (self.toggle_context_inspector, ["space"]),
+            "next-attention": (self.select_next_attention, ["n"]),
             "last": (lambda: self.select_edge(last=True), ["<Shift>g"]),
             "g-prefix": (self.handle_g, ["g"]),
         }
@@ -1251,7 +1548,7 @@ class PickerApplication(Adw.Application):
             self.agent_activity = self.load_agent_activity()
             if hasattr(self, "listbox"):
                 self.list_title.set_text("Projects")
-                self.footer_hint.set_text("j/k Move   Tab Expand   Enter Open/Expand   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream")
+                self.footer_hint.set_text(FOOTER_HINT)
                 self.search.set_placeholder_text("Press / to search projects and streams…")
                 self.refresh_rows()
         except Exception as error:
