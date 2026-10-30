@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -24,10 +25,13 @@ from project_object import (  # noqa: E402
 
 HOME = Path.home()
 DATA_ROOT = Path(os.environ.get("PROJECT_OBJECT_DATA_DIR", Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "project-object"))
+RUNTIME_ROOT = Path(os.environ.get("PROJECT_OBJECT_RUNTIME_DIR", Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/project-object-{os.getuid()}")) / "project-object"))
 REGISTRY_PATH = DATA_ROOT / "projects.json"
 HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
 MAX_HYPRCTL_BYTES = 8 * 1024 * 1024
 SNAPSHOT_VERSION = 1
+MAX_ACTIVITY_BYTES = 16 * 1024
+SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,200}")
 
 
 class SnapshotError(RuntimeError):
@@ -147,6 +151,96 @@ def normalize_window(client, order):
     }
 
 
+def process_stat(pid):
+    try:
+        value = (Path("/proc") / str(pid) / "stat").read_text()
+        fields = value[value.rfind(")") + 2:].split()
+    except OSError:
+        return None
+    if len(fields) <= 19 or not fields[1].isdigit() or not fields[19].isdigit():
+        return None
+    return {"parentPid": int(fields[1]), "startTime": fields[19]}
+
+
+def process_start_time(pid):
+    value = process_stat(pid)
+    return value["startTime"] if value else None
+
+
+def process_descends_from(pid, ancestor_pid):
+    visited = set()
+    current = pid
+    for _index in range(128):
+        if current == ancestor_pid:
+            return True
+        if current <= 1 or current in visited:
+            return False
+        visited.add(current)
+        value = process_stat(current)
+        if not value:
+            return False
+        current = value["parentPid"]
+    return False
+
+
+def live_pi_activity(project, stream=None):
+    directory = RUNTIME_ROOT / "pi-activity"
+    try:
+        targets = list(directory.iterdir())
+    except FileNotFoundError:
+        return []
+    except OSError as error:
+        raise SnapshotError(f"Cannot inspect Pi activity: {error}") from error
+
+    records = []
+    expected_stream_id = stream["id"] if stream else None
+    for target in targets:
+        try:
+            metadata = target.lstat()
+            if target.is_symlink() or not target.is_file() or metadata.st_size > MAX_ACTIVITY_BYTES:
+                continue
+            value = json.loads(target.read_text())
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if not isinstance(value, dict) or value.get("version") != 1:
+            continue
+        pid = value.get("pid")
+        kitty_pid = value.get("kittyPid")
+        session_id = value.get("sessionId")
+        recorded_start_time = value.get("processStartTime")
+        recorded_kitty_start_time = value.get("kittyStartTime")
+        if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0 or target.name != f"{pid}.json":
+            continue
+        if isinstance(kitty_pid, bool) or not isinstance(kitty_pid, int) or kitty_pid <= 0:
+            continue
+        if not isinstance(recorded_start_time, str) or not recorded_start_time.isdigit():
+            continue
+        if not isinstance(recorded_kitty_start_time, str) or not recorded_kitty_start_time.isdigit():
+            continue
+        if value.get("projectId") != project["id"] or value.get("streamId") != expected_stream_id:
+            continue
+        if value.get("state") not in ("working", "idle"):
+            continue
+        if session_id is not None and (not isinstance(session_id, str) or not SESSION_ID_PATTERN.fullmatch(session_id)):
+            session_id = None
+        try:
+            os.kill(pid, 0)
+        except (OSError, ValueError):
+            continue
+        if process_start_time(pid) != recorded_start_time or process_start_time(kitty_pid) != recorded_kitty_start_time:
+            continue
+        if not process_descends_from(pid, kitty_pid):
+            continue
+        records.append({
+            "pid": pid,
+            "processStartTime": recorded_start_time,
+            "kittyPid": kitty_pid,
+            "sessionId": session_id,
+            "state": value["state"],
+        })
+    return records
+
+
 def resolve_active_project(project_id):
     try:
         registry, _changed = read_registry(REGISTRY_PATH, DATA_ROOT)
@@ -182,6 +276,7 @@ def capture_project(project, stream=None):
     if len(matches) != 1:
         raise SnapshotError(f"Expected one live workspace named {workspace_name!r}, found {len(matches)}")
 
+    activity = live_pi_activity(project, stream)
     project_clients = []
     for client in clients:
         if not isinstance(client, dict):
@@ -189,7 +284,18 @@ def capture_project(project, stream=None):
         workspace = client.get("workspace")
         classes = {str(client.get("class", "")), str(client.get("initialClass", ""))}
         if isinstance(workspace, dict) and workspace.get("name") == workspace_name and classes.isdisjoint({"project-picker", "dev.project_object.Picker"}):
-            project_clients.append(normalize_window(client, len(project_clients)))
+            window = normalize_window(client, len(project_clients))
+            attached = [record for record in activity if record["kittyPid"] == window["pid"]]
+            if any(record["state"] == "working" for record in attached):
+                raise SnapshotError("Pi is still working in this workspace; wait for it to settle before closing")
+            if attached:
+                window["piProcesses"] = sorted(
+                    ({"pid": record["pid"], "startTime": record["processStartTime"]} for record in attached),
+                    key=lambda process: process["pid"],
+                )
+            if len(attached) == 1 and attached[0]["sessionId"]:
+                window["piSessionId"] = attached[0]["sessionId"]
+            project_clients.append(window)
 
     return {
         "version": SNAPSHOT_VERSION,

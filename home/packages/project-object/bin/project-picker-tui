@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -22,9 +23,11 @@ from project_object import (  # noqa: E402
     normalized_name as canonical_normalized_name,
     project_browser_workspace_name as canonical_project_browser_workspace_name,
     project_home as canonical_project_home,
+    project_session_directory,
     read_registry,
     read_stream_registry as canonical_read_stream_registry,
     stream_home as canonical_stream_home,
+    stream_session_directory,
     stream_workspace_name as canonical_stream_workspace_name,
     validate_project_name,
     verify_worktree_checkout,
@@ -34,6 +37,7 @@ from project_object import (  # noqa: E402
 APP_NAME = "Project picker"
 HOME = Path.home()
 DATA_ROOT = Path(os.environ.get("PROJECT_OBJECT_DATA_DIR", Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "project-object"))
+STATE_ROOT = Path(os.environ.get("PROJECT_OBJECT_STATE_DIR", Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "project-object"))
 RUNTIME_ROOT = Path(os.environ.get("PROJECT_OBJECT_RUNTIME_DIR", Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/project-object-{os.getuid()}")) / "project-object"))
 REGISTRY_PATH = DATA_ROOT / "projects.json"
 SESSION_PATH = RUNTIME_ROOT / "session.json"
@@ -47,6 +51,9 @@ NOTIFY = os.environ.get("PROJECT_PICKER_NOTIFY", "notify-send")
 PROJECT_TERMINAL = os.environ.get("PROJECT_OBJECT_TERMINAL", str(SCRIPT_PATH.with_name("project-terminal")))
 PROJECT_SNAPSHOT = os.environ.get("PROJECT_OBJECT_SNAPSHOT", str(SCRIPT_PATH.with_name("project-snapshot")))
 GIT = os.environ.get("PROJECT_OBJECT_GIT", "git")
+SESSION_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,200}")
+MAX_SNAPSHOT_BYTES = 8 * 1024 * 1024
+MAX_SESSION_HEADER_BYTES = 16 * 1024
 
 def notify_error(message):
     subprocess.run([NOTIFY, APP_NAME, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -502,6 +509,171 @@ def launch_tui():
     subprocess.Popen(command, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
+def process_start_time(pid):
+    try:
+        value = (Path("/proc") / str(pid) / "stat").read_text()
+        fields = value[value.rfind(")") + 2:].split()
+    except OSError:
+        return None
+    return fields[19] if len(fields) > 19 and fields[19].isdigit() else None
+
+
+def session_id_exists(project, stream, session_id):
+    directory = (
+        stream_session_directory(STATE_ROOT, project["id"], stream["id"])
+        if stream else project_session_directory(STATE_ROOT, project["id"])
+    )
+    try:
+        targets = list(directory.iterdir())
+    except OSError:
+        return False
+    for target in targets:
+        try:
+            metadata = target.lstat()
+            if target.is_symlink() or not target.is_file() or metadata.st_size > 128 * 1024 * 1024:
+                continue
+            with target.open() as handle:
+                header_text = handle.readline(MAX_SESSION_HEADER_BYTES + 1)
+            if len(header_text) > MAX_SESSION_HEADER_BYTES:
+                continue
+            header = json.loads(header_text)
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+        if isinstance(header, dict) and header.get("type") == "session" and header.get("id") == session_id:
+            return True
+    return False
+
+
+def read_workspace_snapshot(project, stream=None):
+    home = stream_home(project, stream) if stream else project_home(project)
+    target = home / "snapshots" / "workspace.json"
+    try:
+        metadata = target.lstat()
+        if target.is_symlink() or not target.is_file() or metadata.st_size > MAX_SNAPSHOT_BYTES:
+            return None
+        snapshot = json.loads(target.read_bytes().decode("utf-8"))
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(snapshot, dict) or snapshot.get("version") != 1 or snapshot.get("projectId") != project["id"]:
+        return None
+    if stream:
+        if snapshot.get("scope") != "stream" or snapshot.get("streamId") != stream["id"]:
+            return None
+    elif snapshot.get("scope") != "project":
+        return None
+    return snapshot
+
+
+def captured_pi_processes(project, stream=None):
+    snapshot = read_workspace_snapshot(project, stream)
+    if not snapshot or not isinstance(snapshot.get("windows"), list):
+        return []
+    processes = {}
+    for window in snapshot["windows"]:
+        if not isinstance(window, dict) or not isinstance(window.get("piProcesses"), list):
+            continue
+        for process in window["piProcesses"]:
+            if not isinstance(process, dict):
+                continue
+            pid = process.get("pid")
+            start_time = process.get("startTime")
+            if isinstance(pid, int) and not isinstance(pid, bool) and pid > 0 and isinstance(start_time, str) and start_time.isdigit():
+                processes[pid] = start_time
+    return [{"pid": pid, "startTime": processes[pid]} for pid in sorted(processes)]
+
+
+def close_coordination_files(pid):
+    directory = RUNTIME_ROOT / "pi-close"
+    return directory / f"{pid}.request.json", directory / f"{pid}.ack.json"
+
+
+def read_close_ack(target, process, token):
+    try:
+        metadata = target.lstat()
+        if target.is_symlink() or not target.is_file() or metadata.st_size > MAX_SESSION_HEADER_BYTES:
+            return False
+        value = json.loads(target.read_bytes().decode("utf-8"))
+    except (FileNotFoundError, OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return False
+    return value == {
+        "version": 1,
+        "pid": process["pid"],
+        "token": token,
+        "processStartTime": process["startTime"],
+    }
+
+
+def request_pi_quiescence(processes):
+    if not processes:
+        return []
+    directory = RUNTIME_ROOT / "pi-close"
+    ensure_directory(directory)
+    requests = []
+    for process in processes:
+        if process_start_time(process["pid"]) != process["startTime"]:
+            continue
+        request, ack = close_coordination_files(process["pid"])
+        token = str(uuid.uuid4())
+        item = {"process": process, "request": request, "ack": ack, "token": token}
+        requests.append(item)
+        try:
+            ack.unlink(missing_ok=True)
+            write_json_atomic(request, {
+                "version": 1,
+                "pid": process["pid"],
+                "token": token,
+                "processStartTime": process["startTime"],
+            })
+        except OSError as error:
+            remove_close_requests(requests)
+            raise RuntimeError(f"Could not coordinate workspace close with Pi: {error}") from error
+
+    deadline = time.monotonic() + 2.0
+    pending = list(requests)
+    while pending and time.monotonic() < deadline:
+        remaining = []
+        for item in pending:
+            process = item["process"]
+            if process_start_time(process["pid"]) != process["startTime"]:
+                continue
+            if not read_close_ack(item["ack"], process, item["token"]):
+                remaining.append(item)
+        pending = remaining
+        if pending:
+            time.sleep(0.025)
+    if pending:
+        remove_close_requests(requests)
+        raise RuntimeError("Pi did not acknowledge a safe idle point; workspace remains open")
+    return requests
+
+
+def remove_close_requests(requests):
+    for item in requests:
+        for target in (item["request"], item["ack"]):
+            try:
+                target.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
+def restored_pi_arguments(project, stream=None):
+    snapshot = read_workspace_snapshot(project, stream)
+    if not snapshot:
+        return None
+    windows = snapshot.get("windows")
+    if not isinstance(windows, list) or len(windows) != 1 or not isinstance(windows[0], dict):
+        return None
+    window = windows[0]
+    if "kitty" not in {str(window.get("class", "")).lower(), str(window.get("initialClass", "")).lower()}:
+        return None
+    session_id = window.get("piSessionId")
+    if not isinstance(session_id, str) or not SESSION_ID_PATTERN.fullmatch(session_id):
+        return None
+    if not session_id_exists(project, stream, session_id):
+        return None
+    return ["--session", session_id]
+
+
 def enter_workspace(project, session, launch_terminal, *, stream=None, pi_arguments=None):
     name = stream_workspace_name(project, stream) if stream else workspace_name(project)
     scope = stream_scope(project, stream) if stream else project_scope(project)
@@ -523,6 +695,8 @@ def enter_workspace(project, session, launch_terminal, *, stream=None, pi_argume
         raise RuntimeError(f"Could not enter {label} workspace")
 
     if launch_terminal:
+        if opening and pi_arguments is None:
+            pi_arguments = restored_pi_arguments(project, stream)
         command = [PROJECT_TERMINAL, "--project-id", project["id"]]
         if stream:
             command.extend(["--stream-id", stream["id"]])
@@ -580,38 +754,80 @@ def close_workspace(project, session, stream=None):
         detail = snapshot.stderr.strip() or "snapshot capture failed"
         raise RuntimeError(f"Could not close {label}: {detail}")
 
-    clients = workspace_clients(name)
-    addresses = []
-    for client in clients:
-        address = str(client.get("address", ""))
-        if not re.fullmatch(r"0x[0-9a-fA-F]+", address):
-            raise RuntimeError(f"Could not safely identify a window in {name}")
-        addresses.append(address)
+    stopped_processes = []
+    close_requests = []
+    try:
+        processes = captured_pi_processes(project, stream)
+        close_requests = request_pi_quiescence(processes)
+        for process in processes:
+            pid = process["pid"]
+            if process_start_time(pid) != process["startTime"]:
+                continue
+            pidfd = None
+            try:
+                pidfd = os.pidfd_open(pid)
+                if process_start_time(pid) != process["startTime"]:
+                    os.close(pidfd)
+                    continue
+                signal.pidfd_send_signal(pidfd, signal.SIGSTOP)
+            except ProcessLookupError:
+                if pidfd is not None:
+                    os.close(pidfd)
+                continue
+            except OSError as error:
+                if pidfd is not None:
+                    os.close(pidfd)
+                raise RuntimeError(f"Could not pause Pi before closing {label}: {error}") from error
+            stopped_processes.append(pidfd)
 
-    if active_workspace_name() == name:
-        if stream and project_scope(project) in session["openWorkspaces"] and live_workspace_exists(project["name"]):
-            result = run([HYPRCTL, "dispatch", "workspace", f"name:{project['name']}"])
-        else:
-            result = run([HYPRCTL, "dispatch", "workspace", "previous"])
-        if result.returncode != 0:
-            raise RuntimeError(f"Could not leave {label}")
+        # Re-capture after pausing Pi. If a turn began after the first capture,
+        # its working activity is now stable and this second check refuses close.
+        snapshot = run(snapshot_command)
+        if snapshot.returncode != 0:
+            detail = snapshot.stderr.strip() or "snapshot revalidation failed"
+            raise RuntimeError(f"Could not close {label}: {detail}")
 
-    for address in addresses:
-        result = run([HYPRCTL, "dispatch", "closewindow", f"address:{address}"])
-        if result.returncode != 0:
-            raise RuntimeError(f"Could not close a window in {name}; workspace remains marked open")
+        clients = workspace_clients(name)
+        addresses = []
+        for client in clients:
+            address = str(client.get("address", ""))
+            if not re.fullmatch(r"0x[0-9a-fA-F]+", address):
+                raise RuntimeError(f"Could not safely identify a window in {name}")
+            addresses.append(address)
 
-    deadline = time.monotonic() + 2.0
-    while addresses and time.monotonic() < deadline:
-        if not workspace_clients(name):
-            break
-        time.sleep(0.05)
-    remaining = workspace_clients(name)
-    if remaining:
-        raise RuntimeError(f"{len(remaining)} window(s) did not close; workspace remains marked open")
+        if active_workspace_name() == name:
+            if stream and project_scope(project) in session["openWorkspaces"] and live_workspace_exists(project["name"]):
+                result = run([HYPRCTL, "dispatch", "workspace", f"name:{project['name']}"])
+            else:
+                result = run([HYPRCTL, "dispatch", "workspace", "previous"])
+            if result.returncode != 0:
+                raise RuntimeError(f"Could not leave {label}")
 
-    session["openWorkspaces"] = [item for item in session["openWorkspaces"] if item != scope]
-    write_json_atomic(SESSION_PATH, session)
+        for address in addresses:
+            result = run([HYPRCTL, "dispatch", "closewindow", f"address:{address}"])
+            if result.returncode != 0:
+                raise RuntimeError(f"Could not close a window in {name}; workspace remains marked open")
+
+        deadline = time.monotonic() + 2.0
+        while addresses and time.monotonic() < deadline:
+            if not workspace_clients(name):
+                break
+            time.sleep(0.05)
+        remaining = workspace_clients(name)
+        if remaining:
+            raise RuntimeError(f"{len(remaining)} window(s) did not close; workspace remains marked open")
+
+        session["openWorkspaces"] = [item for item in session["openWorkspaces"] if item != scope]
+        write_json_atomic(SESSION_PATH, session)
+    finally:
+        for pidfd in stopped_processes:
+            try:
+                signal.pidfd_send_signal(pidfd, signal.SIGCONT)
+            except OSError:
+                pass
+            finally:
+                os.close(pidfd)
+        remove_close_requests(close_requests)
 
 
 def project_has_other_open_scope(project, session, excluding):
@@ -651,16 +867,16 @@ def close_browser_workspace(project):
 
 def close_project(project, session):
     scope = project_scope(project)
+    close_workspace(project, session)
     if not project_has_other_open_scope(project, session, scope):
         close_browser_workspace(project)
-    close_workspace(project, session)
 
 
 def close_stream(project, stream, session):
     scope = stream_scope(project, stream)
+    close_workspace(project, session, stream)
     if not project_has_other_open_scope(project, session, scope):
         close_browser_workspace(project)
-    close_workspace(project, session, stream)
 
 
 def archive_stream(project, stream, stream_registry, session):

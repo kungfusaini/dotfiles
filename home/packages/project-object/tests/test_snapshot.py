@@ -53,6 +53,7 @@ class SnapshotTests(unittest.TestCase):
         self.root = Path(self.temporary.name)
         self.data = self.root / "data"
         self.fixtures = self.root / "fixtures"
+        self.runtime = self.root / "runtime"
         self.fixtures.mkdir()
         self.project_id = str(uuid.uuid4())
         self.project_home = self.data / "projects" / self.project_id
@@ -102,6 +103,7 @@ print(fixture.read_text())
             **os.environ,
             "PROJECT_OBJECT_DATA_DIR": str(self.data),
             "PROJECT_PICKER_HYPRCTL": str(self.hyprctl),
+            "PROJECT_OBJECT_RUNTIME_DIR": str(self.runtime),
             "HYPRCTL_FIXTURES": str(self.fixtures),
             "HYPRCTL_LOG": str(self.log),
             "HYPRLAND_INSTANCE_SIGNATURE": "isolated-test-instance",
@@ -109,6 +111,28 @@ print(fixture.read_text())
         environment.pop("PROJECT_OBJECT_ID", None)
         environment.pop("PROJECT_OBJECT_STREAM_ID", None)
         return environment
+
+    def write_activity(self, state="idle", session_id="restore-session-123"):
+        directory = self.runtime / "pi-activity"
+        directory.mkdir(parents=True, mode=0o700)
+        pid = os.getpid()
+        kitty_pid = os.getppid()
+        stat_fields = (Path("/proc") / str(pid) / "stat").read_text().split(")", 1)[1].split()
+        kitty_stat_fields = (Path("/proc") / str(kitty_pid) / "stat").read_text().split(")", 1)[1].split()
+        clients = json.loads((self.fixtures / "clients.json").read_text())
+        clients[0]["pid"] = kitty_pid
+        (self.fixtures / "clients.json").write_text(json.dumps(clients))
+        (directory / f"{pid}.json").write_text(json.dumps({
+            "version": 1,
+            "pid": pid,
+            "processStartTime": stat_fields[19],
+            "projectId": self.project_id,
+            "streamId": None,
+            "state": state,
+            "sessionId": session_id,
+            "kittyPid": kitty_pid,
+            "kittyStartTime": kitty_stat_fields[19],
+        }))
 
     def run_snapshot(self):
         return subprocess.run(
@@ -137,6 +161,38 @@ print(fixture.read_text())
         self.assertFalse(any("dispatch" in command for command in commands))
         self.assertEqual(target.parent.stat().st_mode & 0o777, 0o700)
         self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
+    def test_captures_exact_idle_pi_session_for_managed_kitty_window(self):
+        self.write_activity()
+        result = self.run_snapshot()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        snapshot = json.loads((self.project_home / "snapshots" / "workspace.json").read_text())
+        self.assertEqual(snapshot["windows"][0]["piSessionId"], "restore-session-123")
+
+    def test_refuses_to_close_while_attached_pi_is_working(self):
+        self.write_activity(state="working")
+        result = self.run_snapshot()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Pi is still working", result.stderr)
+        self.assertFalse((self.project_home / "snapshots" / "workspace.json").exists())
+
+    def test_malformed_session_id_still_protects_working_pi(self):
+        self.write_activity(state="working", session_id="not a valid session id")
+        result = self.run_snapshot()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Pi is still working", result.stderr)
+
+    def test_ignores_activity_from_a_reused_pid(self):
+        self.write_activity()
+        target = self.runtime / "pi-activity" / f"{os.getpid()}.json"
+        activity = json.loads(target.read_text())
+        activity["processStartTime"] = str(int(activity["processStartTime"]) + 1)
+        target.write_text(json.dumps(activity))
+        result = self.run_snapshot()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        snapshot = json.loads((self.project_home / "snapshots" / "workspace.json").read_text())
+        self.assertNotIn("piSessionId", snapshot["windows"][0])
+        self.assertNotIn("piProcesses", snapshot["windows"][0])
 
     def test_captures_stream_workspace_into_stream_home(self):
         stream_id = str(uuid.uuid4())

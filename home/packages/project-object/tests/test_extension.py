@@ -131,21 +131,29 @@ const pi = {
   registerTool: () => {}, registerCommand: () => {}, sendUserMessage: () => {},
 };
 m.default(pi);
-const ctx = { hasUI: false, mode: 'rpc', ui: { setStatus: () => {}, notify: () => {}, theme: { fg: (_tone, text) => text } } };
+const ctx = { hasUI: false, mode: 'rpc', sessionManager: { getSessionId: () => 'restore-session-123' }, ui: { setStatus: () => {}, notify: () => {}, theme: { fg: (_tone, text) => text } } };
 await handlers.session_start({}, ctx);
 const file = `${process.env.PROJECT_OBJECT_RUNTIME_DIR}/pi-activity/${process.pid}.json`;
 const idle = JSON.parse(fs.readFileSync(file, 'utf8'));
+const closeDirectory = `${process.env.PROJECT_OBJECT_RUNTIME_DIR}/pi-close`;
+fs.mkdirSync(closeDirectory, { recursive: true, mode: 0o700 });
+const closeToken = '12345678-1234-4123-8123-123456789abc';
+fs.writeFileSync(`${closeDirectory}/${process.pid}.request.json`, JSON.stringify({ version: 1, pid: process.pid, token: closeToken, processStartTime: idle.processStartTime }));
+await new Promise((resolve) => setTimeout(resolve, 100));
+const closeAck = JSON.parse(fs.readFileSync(`${closeDirectory}/${process.pid}.ack.json`, 'utf8'));
+fs.unlinkSync(`${closeDirectory}/${process.pid}.request.json`);
 await handlers.agent_start({}, ctx);
 const working = JSON.parse(fs.readFileSync(file, 'utf8'));
 await handlers.agent_settled({}, ctx);
 const settled = JSON.parse(fs.readFileSync(file, 'utf8'));
 await handlers.session_shutdown({}, ctx);
-console.log(JSON.stringify({idle, working, settled, existsAfterShutdown: fs.existsSync(file)}));
+console.log(JSON.stringify({idle, working, settled, closeAck, existsAfterShutdown: fs.existsSync(file)}));
 """
         result = self.node(expression, {
             "PROJECT_OBJECT_ID": self.project_id,
             "PROJECT_OBJECT_STREAM_ID": stream_id,
             "PROJECT_OBJECT_RUNTIME_DIR": str(runtime),
+            "KITTY_PID": str(os.getpid()),
         })
         self.assertEqual(result.returncode, 0, result.stderr)
         output = json.loads(result.stdout)
@@ -154,6 +162,11 @@ console.log(JSON.stringify({idle, working, settled, existsAfterShutdown: fs.exis
         self.assertEqual(output["settled"]["state"], "idle")
         self.assertEqual(output["working"]["projectId"], self.project_id)
         self.assertEqual(output["working"]["streamId"], stream_id)
+        self.assertEqual(output["working"]["sessionId"], "restore-session-123")
+        self.assertEqual(output["working"]["kittyPid"], os.getpid())
+        self.assertRegex(output["working"]["processStartTime"], r"^\d+$")
+        self.assertRegex(output["working"]["kittyStartTime"], r"^\d+$")
+        self.assertEqual(output["closeAck"]["token"], "12345678-1234-4123-8123-123456789abc")
         self.assertFalse(output["existsAfterShutdown"])
         self.assertEqual((runtime / "pi-activity").stat().st_mode & 0o777, 0o700)
 
@@ -487,7 +500,7 @@ const pi = {
   registerCommand: () => {},
 };
 m.default(pi);
-await handlers.session_start({}, { mode: 'rpc', hasUI: false, ui: { setStatus: () => {}, theme: { fg: (_tone, text) => text } } });
+await handlers.session_start({}, { mode: 'rpc', hasUI: false, sessionManager: { getSessionId: () => 'routing-session' }, ui: { setStatus: () => {}, theme: { fg: (_tone, text) => text } } });
 const event = { systemPromptOptions: { sections: {} } };
 handlers.before_agent_start(event);
 console.log(JSON.stringify({
@@ -585,7 +598,7 @@ const pi = {
   registerCommand: () => {},
 };
 m.default(pi);
-await handlers.session_start({}, { mode: 'rpc', hasUI: false, ui: { setStatus: () => {}, theme: { fg: (_kind, text) => text } } });
+await handlers.session_start({}, { mode: 'rpc', hasUI: false, sessionManager: { getSessionId: () => 'stream-session' }, ui: { setStatus: () => {}, theme: { fg: (_kind, text) => text } } });
 const event = { systemPromptOptions: { sections: {} } };
 handlers.before_agent_start(event);
 const result = await tools.project_worklog_append.execute('call', { type: 'note', summary: 'Stream-only detail', projectAttention: true }, undefined, undefined, { sessionManager: { getSessionId: () => 'stream-session' } });

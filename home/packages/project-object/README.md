@@ -63,7 +63,7 @@ A read-only workspace snapshot can be captured without dispatching, focusing, mo
 project-snapshot --project-id <project-uuid>
 ```
 
-It writes validated compositor metadata for the project’s live named workspace to `snapshots/workspace.json` inside the Project Object home. This is capture evidence only; close and restore actions are not implemented yet.
+It writes validated compositor metadata for the project’s live named workspace to `snapshots/workspace.json` inside the Project Object home. For a workspace containing one Project Object-managed Kitty window with one settled Pi process, the snapshot also records the exact Pi session ID. Reopening that closed workspace automatically resumes that conversation with `pi --session`; closing is refused while the attached Pi agent is working. Kitty geometry, tabs and splits, arbitrary applications, terminal scrollback, unsent editor text, and process memory are not restored yet, so other snapshots remain capture evidence only.
 
 The hardened implementation also includes:
 

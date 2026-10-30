@@ -16,6 +16,7 @@ def load_picker(root: Path):
     environment = {
         "PROJECT_OBJECT_DATA_DIR": str(root / "data"),
         "PROJECT_OBJECT_RUNTIME_DIR": str(root / "runtime"),
+        "PROJECT_OBJECT_STATE_DIR": str(root / "state"),
         "HYPRLAND_INSTANCE_SIGNATURE": "test-instance",
     }
     with mock.patch.dict(os.environ, environment):
@@ -99,6 +100,36 @@ class PickerTests(unittest.TestCase):
                 self.picker.enter_project(self.project, self.session, True)
         self.assertEqual(self.session["openWorkspaces"], [])
         self.assertIn([self.picker.HYPRCTL, "dispatch", "workspace", "name:before"], commands)
+
+    def test_opening_closed_stream_restores_exact_snapshotted_pi_session(self):
+        import json
+        stream = {"id": str(uuid.uuid4()), "name": "Focused Work"}
+        self.picker.initialize_stream_home(self.project, stream)
+        session_id = "restore-session-123"
+        session_directory = self.picker.stream_session_directory(
+            self.picker.STATE_ROOT, self.project["id"], stream["id"]
+        )
+        session_directory.mkdir(parents=True)
+        (session_directory / f"2026-01-01T00-00-00_{session_id}.jsonl").write_text(json.dumps({
+            "type": "session", "version": 3, "id": session_id, "cwd": str(self.root)
+        }) + "\n")
+        snapshot = {
+            "version": 1,
+            "projectId": self.project["id"],
+            "scope": "stream",
+            "streamId": stream["id"],
+            "windows": [{"class": "kitty", "initialClass": "kitty", "piSessionId": session_id}],
+        }
+        self.picker.write_json_atomic(self.picker.stream_home(self.project, stream) / "snapshots" / "workspace.json", snapshot)
+        success = mock.Mock(returncode=0)
+        with mock.patch.object(self.picker, "active_workspace_name", return_value="before"), \
+             mock.patch.object(self.picker, "live_workspace_exists", return_value=False), \
+             mock.patch.object(self.picker, "run", return_value=success), \
+             mock.patch.object(self.picker, "write_json_atomic"), \
+             mock.patch.object(self.picker.subprocess, "Popen") as launch:
+            self.picker.enter_stream(self.project, stream, self.session)
+        command = launch.call_args.args[0]
+        self.assertEqual(command[-4:], ["-e", "pi", "--session", session_id])
 
     def test_project_creation_scaffolds_one_time_init_placeholder(self):
         registry = {"version": 1, "projects": []}
@@ -334,7 +365,7 @@ class PickerTests(unittest.TestCase):
         with mock.patch.object(self.picker, "run", side_effect=run), \
              mock.patch.object(self.picker, "active_workspace_name", return_value="Elsewhere"), \
              mock.patch.object(self.picker, "live_workspace_exists", return_value=True), \
-             mock.patch.object(self.picker, "workspace_clients", side_effect=[[browser_client], [], [], [client], [], []]), \
+             mock.patch.object(self.picker, "workspace_clients", side_effect=[[client], [], [], [browser_client], [], []]), \
              mock.patch.object(self.picker, "write_json_atomic") as write:
             self.picker.close_stream(self.project, stream, session)
         self.assertEqual(session["openWorkspaces"], [])
@@ -342,6 +373,32 @@ class PickerTests(unittest.TestCase):
         self.assertIn([self.picker.HYPRCTL, "dispatch", "closewindow", "address:0xabc"], commands)
         self.assertIn([self.picker.HYPRCTL, "dispatch", "closewindow", "address:0xdef"], commands)
         write.assert_called_once()
+
+    def test_close_pauses_captured_pi_and_resumes_it_when_revalidation_refuses(self):
+        stream = {"id": str(uuid.uuid4()), "name": "Focused Work"}
+        scope = self.picker.stream_scope(self.project, stream)
+        session = {"version": 2, "hyprlandInstance": "test-instance", "openWorkspaces": [scope]}
+        success = mock.Mock(returncode=0, stdout="snapshot\n", stderr="")
+        refused = mock.Mock(returncode=1, stdout="", stderr="Pi is still working")
+        with mock.patch.object(self.picker, "live_workspace_exists", return_value=True), \
+             mock.patch.object(self.picker, "run", side_effect=[success, refused]), \
+             mock.patch.object(self.picker, "captured_pi_processes", return_value=[{"pid": 4242, "startTime": "123"}]), \
+             mock.patch.object(self.picker, "process_start_time", return_value="123"), \
+             mock.patch.object(self.picker, "request_pi_quiescence", return_value=[]), \
+             mock.patch.object(self.picker.os, "pidfd_open", return_value=99) as pidfd_open, \
+             mock.patch.object(self.picker.signal, "pidfd_send_signal") as send_signal, \
+             mock.patch.object(self.picker.os, "close") as close_fd, \
+             mock.patch.object(self.picker, "workspace_clients") as clients:
+            with self.assertRaisesRegex(RuntimeError, "Pi is still working"):
+                self.picker.close_workspace(self.project, session, stream)
+        pidfd_open.assert_called_once_with(4242)
+        self.assertEqual(send_signal.call_args_list, [
+            mock.call(99, self.picker.signal.SIGSTOP),
+            mock.call(99, self.picker.signal.SIGCONT),
+        ])
+        close_fd.assert_called_once_with(99)
+        clients.assert_not_called()
+        self.assertEqual(session["openWorkspaces"], [scope])
 
     def test_archive_stream_closes_workspace_before_registry_update(self):
         stream = {"id": str(uuid.uuid4()), "name": "Focused Work", "archivedAt": None, "updatedAt": "before"}

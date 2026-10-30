@@ -126,7 +126,29 @@ function activityFile(): string {
   return join(runtimeRoot(), "pi-activity", `${process.pid}.json`);
 }
 
-function writeActivity(resolution: Resolution, state: "working" | "idle"): void {
+function closeDirectory(): string {
+  return join(runtimeRoot(), "pi-close");
+}
+
+function closeRequestFile(): string {
+  return join(closeDirectory(), `${process.pid}.request.json`);
+}
+
+function closeAckFile(): string {
+  return join(closeDirectory(), `${process.pid}.ack.json`);
+}
+
+function processStartTime(pid: number = process.pid): string | null {
+  try {
+    const value = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const fields = value.slice(value.lastIndexOf(")") + 2).trim().split(/\s+/);
+    return /^\d+$/.test(fields[19] || "") ? fields[19] : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeActivity(resolution: Resolution, state: "working" | "idle", sessionId?: string): void {
   const project = resolution.project;
   if (!project) return;
   const directory = join(runtimeRoot(), "pi-activity");
@@ -138,9 +160,13 @@ function writeActivity(resolution: Resolution, state: "working" | "idle"): void 
   const payload = `${JSON.stringify({
     version: 1,
     pid: process.pid,
+    processStartTime: processStartTime(),
     projectId: project.id,
     streamId: resolution.stream?.id || null,
     state,
+    sessionId: sessionId || null,
+    kittyPid: /^\d+$/.test(process.env.KITTY_PID || "") ? Number(process.env.KITTY_PID) : null,
+    kittyStartTime: /^\d+$/.test(process.env.KITTY_PID || "") ? processStartTime(Number(process.env.KITTY_PID)) : null,
     updatedAt: new Date().toISOString(),
   })}\n`;
   let descriptor: number | undefined;
@@ -162,6 +188,45 @@ function writeActivity(resolution: Resolution, state: "working" | "idle"): void 
 
 function removeActivity(): void {
   try { unlinkSync(activityFile()); } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+}
+
+function readCloseRequest(): { token: string; processStartTime: string } | undefined {
+  try {
+    const directory = closeDirectory();
+    const directoryMetadata = lstatSync(directory);
+    if (directoryMetadata.isSymbolicLink() || !directoryMetadata.isDirectory()) return undefined;
+    const target = closeRequestFile();
+    const metadata = lstatSync(target);
+    if (metadata.isSymbolicLink() || !metadata.isFile() || metadata.size > MAX_WORKLOG_ENTRY_BYTES) return undefined;
+    const value = JSON.parse(readFileSync(target, "utf8")) as Record<string, unknown>;
+    if (value.version !== 1 || value.pid !== process.pid || typeof value.token !== "string" || !UUID_PATTERN.test(value.token)) return undefined;
+    if (typeof value.processStartTime !== "string" || value.processStartTime !== processStartTime()) return undefined;
+    return { token: value.token, processStartTime: value.processStartTime };
+  } catch {
+    return undefined;
+  }
+}
+
+function writeCloseAck(request: { token: string; processStartTime: string }): void {
+  const target = closeAckFile();
+  const payload = `${JSON.stringify({ version: 1, pid: process.pid, ...request })}\n`;
+  let descriptor: number | undefined;
+  try {
+    descriptor = openSync(target, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, 0o600);
+    fchmodSync(descriptor, 0o600);
+    writeSync(descriptor, payload);
+    fsyncSync(descriptor);
+    closeSync(descriptor);
+    descriptor = undefined;
+  } finally {
+    if (descriptor !== undefined) closeSync(descriptor);
+  }
+}
+
+function removeCloseAck(): void {
+  try { unlinkSync(closeAckFile()); } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
   }
 }
@@ -624,11 +689,18 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   let startupWorklog = "";
   let startupWorklogError: string | undefined;
   let pendingStreamArchive: { executable: string; projectId: string; streamId: string } | undefined;
+  let activeSessionId: string | undefined;
+  let activityState: "working" | "idle" = "idle";
+  let closePoll: NodeJS.Timeout | undefined;
 
   pi.on("session_start", async (_event, ctx) => {
     startupWorklog = "";
     startupWorklogError = undefined;
+    activeSessionId = ctx.sessionManager.getSessionId();
+    activityState = "idle";
+    if (closePoll) clearInterval(closePoll);
     try { removeActivity(); } catch { /* advisory */ }
+    try { removeCloseAck(); } catch { /* advisory */ }
     resolution = resolveProject();
     if (resolution.error) {
       ctx.ui.setStatus("project-object", ctx.ui.theme.fg("error", "Project context error"));
@@ -648,16 +720,32 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
     }
     const label = stream ? `Project: ${project.name} · Stream: ${stream.name}` : `Project: ${project.name}`;
     ctx.ui.setStatus("project-object", ctx.ui.theme.fg("accent", label));
-    try { writeActivity(resolution, "idle"); } catch { /* Activity is advisory and must never block Pi. */ }
+    try { writeActivity(resolution, "idle", activeSessionId); } catch { /* Activity is advisory and must never block Pi. */ }
+    closePoll = setInterval(() => {
+      if (activityState !== "idle") return;
+      const request = readCloseRequest();
+      if (!request) return;
+      try { writeCloseAck(request); } catch { /* Close coordination is advisory until the picker verifies the acknowledgement. */ }
+    }, 50);
+    closePoll.unref();
     if (ctx.mode === "tui") ctx.ui.notify(`${label} context loaded`, "info");
   });
 
-  pi.on("agent_start", () => {
-    try { writeActivity(resolution, "working"); } catch { /* advisory */ }
+  pi.on("input", (_event, ctx) => {
+    if (!readCloseRequest()) return { action: "continue" };
+    if (ctx.hasUI) ctx.ui.notify("Workspace close is in progress; input was not submitted", "warning");
+    return { action: "handled" };
+  });
+
+  pi.on("agent_start", async () => {
+    while (readCloseRequest()) await new Promise((resolve) => setTimeout(resolve, 25));
+    activityState = "working";
+    try { writeActivity(resolution, "working", activeSessionId); } catch { /* advisory */ }
   });
 
   pi.on("agent_settled", () => {
-    try { writeActivity(resolution, "idle"); } catch { /* advisory */ }
+    activityState = "idle";
+    try { writeActivity(resolution, "idle", activeSessionId); } catch { /* advisory */ }
     const pending = pendingStreamArchive;
     pendingStreamArchive = undefined;
     if (!pending) return;
@@ -674,7 +762,11 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", () => {
+    if (closePoll) clearInterval(closePoll);
+    closePoll = undefined;
     try { removeActivity(); } catch { /* advisory */ }
+    try { removeCloseAck(); } catch { /* advisory */ }
+    activeSessionId = undefined;
   });
 
   pi.on("before_agent_start", (event) => {
