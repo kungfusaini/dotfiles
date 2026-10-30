@@ -34,6 +34,8 @@ const StreamCreateParameters = {
   required: ["name", "scope", "initialTasks"],
   properties: {
     name: { type: "string", minLength: 1, maxLength: 200 },
+    repository: { type: "string", minLength: 1, maxLength: 4096, description: "Optional absolute Git working-tree path to isolate. Omit to auto-detect the project repository; required when the project contains multiple repositories." },
+    useWorktree: { type: "boolean", description: "Use lazy Git-worktree isolation (default true). Set false only for an explicitly non-code stream." },
     scope: { type: "string", minLength: 1, maxLength: 4000, description: "Concise durable purpose, responsibilities, and boundaries for the stream's AGENTS.md." },
     initialTasks: {
       type: "array",
@@ -83,10 +85,18 @@ type ProjectRecord = {
   archivedAt?: string | null;
 };
 
+type StreamWorktree = {
+  repository: string;
+  directory: string;
+  branch: string;
+  baseCommit: string;
+};
+
 type StreamRecord = {
   id: string;
   name: string;
   mainDirectory?: string | null;
+  worktree?: StreamWorktree;
   archivedAt?: string | null;
 };
 
@@ -208,13 +218,24 @@ function validateStreams(parsed: unknown, project: ProjectRecord): StreamRecord[
     if (typeof record.id !== "string" || !UUID_PATTERN.test(record.id)) throw new Error(`stream record ${index} has an invalid UUID`);
     if (typeof record.name !== "string" || record.name !== record.name.trim() || !record.name || /[\r\n\t]/.test(record.name)) throw new Error(`stream ${record.id} has an invalid name`);
     if (record.mainDirectory !== undefined && record.mainDirectory !== null && (typeof record.mainDirectory !== "string" || !isAbsolute(record.mainDirectory) || resolve(record.mainDirectory) !== record.mainDirectory)) throw new Error(`stream ${record.id} has an invalid mainDirectory`);
+    let worktree: StreamWorktree | undefined;
+    if (record.worktree !== undefined) {
+      if (!record.worktree || typeof record.worktree !== "object") throw new Error(`stream ${record.id} has invalid worktree metadata`);
+      const rawWorktree = record.worktree as Record<string, unknown>;
+      const expectedDirectory = join(dataRoot(), "worktrees", project.id, record.id);
+      if (typeof rawWorktree.repository !== "string" || !isAbsolute(rawWorktree.repository) || resolve(rawWorktree.repository) !== rawWorktree.repository) throw new Error(`stream ${record.id} has an invalid worktree repository`);
+      if (rawWorktree.directory !== expectedDirectory || record.mainDirectory !== expectedDirectory) throw new Error(`stream ${record.id} has an invalid worktree directory`);
+      if (rawWorktree.branch !== `project-object/${record.id}`) throw new Error(`stream ${record.id} has an invalid worktree branch`);
+      if (typeof rawWorktree.baseCommit !== "string" || !/^[0-9a-f]{40,64}$/.test(rawWorktree.baseCommit)) throw new Error(`stream ${record.id} has an invalid worktree base commit`);
+      worktree = { repository: rawWorktree.repository, directory: rawWorktree.directory, branch: rawWorktree.branch, baseCommit: rawWorktree.baseCommit } as StreamWorktree;
+    }
     if (record.archivedAt !== undefined && record.archivedAt !== null && typeof record.archivedAt !== "string") throw new Error(`stream ${record.id} has an invalid archivedAt`);
     const normalizedName = record.name.trim().normalize("NFKC").toLowerCase();
     if (ids.has(record.id)) throw new Error(`duplicate stream ID: ${record.id}`);
     if (names.has(normalizedName)) throw new Error(`duplicate normalized stream name: ${record.name}`);
     ids.add(record.id);
     names.add(normalizedName);
-    return { id: record.id, name: record.name, mainDirectory: record.mainDirectory as string | null | undefined, archivedAt: record.archivedAt as string | null | undefined };
+    return { id: record.id, name: record.name, mainDirectory: record.mainDirectory as string | null | undefined, worktree, archivedAt: record.archivedAt as string | null | undefined };
   });
 }
 
@@ -685,7 +706,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
     }
     if (startupWorklog) instructions.push(`Recent ${stream ? "stream" : "project"} worklog (up to 10 newest events):\n${startupWorklog}`);
     if (startupWorklogError) instructions.push(`Recent worklog was not loaded: ${startupWorklogError}`);
-    instructions.push(`When the user asks to create a stream under this project, a stream in the picker, or a project workspace, use project_stream_create. ${stream ? "From this stream-scoped session, it creates a sibling stream under the same parent project. " : ""}When the user explicitly asks to archive a named stream in this project, use project_stream_archive with that stream name or ID; a sibling stream closes immediately without ending this session. ${stream ? "When archiving this attached stream, or when its work is genuinely complete with no remaining tasks or next steps, omit the target and use project_stream_archive as the final tool operation after writing the finish worklog. It snapshots and closes the whole stream workspace, including this Pi session, after your final response settles. " : ""}Do not use the workstream skill unless the user explicitly asks for an isolated Git worktree or worker session.`);
+    instructions.push(`When the user asks to create a stream under this project, a stream in the picker, or a project workspace, use project_stream_create. Git-backed streams use one shared isolated worktree prepared on first open; pass the repository path when this project contains multiple Git repositories, and disable worktree isolation only for explicitly non-code work. ${stream ? "From this stream-scoped session, it creates a sibling stream under the same parent project. " : ""}When the user explicitly asks to archive a named stream in this project, use project_stream_archive with that stream name or ID; a sibling stream closes immediately without ending this session. ${stream ? "When archiving this attached stream, or when its work is genuinely complete with no remaining tasks or next steps, omit the target and use project_stream_archive as the final tool operation after writing the finish worklog. It snapshots and closes the whole stream workspace, including this Pi session, while retaining the managed worktree and branch to avoid data loss. " : ""}Do not use the workstream skill unless the user explicitly asks for an isolated Git worktree or worker session.`);
     instructions.push(worklogGuidance);
     instructions.push("For configured external APIs, use `project-api list` to discover APIs enabled for this project, `project-api describe <id>` for docs and authentication metadata, and `project-api request <id> <GET|POST|PUT|PATCH|DELETE> </path>` for authenticated calls. Never put credentials in prompts or worklogs. Existing CLIs such as `gh` are separate.");
     event.systemPromptOptions.sections.project_object = instructions.join("\n\n");
@@ -694,9 +715,9 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "project_stream_create",
     label: "Create project stream",
-    description: "Create and register a ready-to-use Project Object stream under the attached project so it appears in the project picker. A stream-scoped session creates a sibling under its parent project. Use this whenever the user asks for a stream under this project, a picker stream, or a project workspace. Never substitute the Git workstream skill. Derive a concise AGENTS.md scope and concrete initial TODO.md tasks from the user's request. NOTES.md remains blank. This does not open the stream workspace or launch an agent.",
+    description: "Create and register a ready-to-use Project Object stream under the attached project so it appears in the project picker. Git-backed streams receive a shared isolated worktree, prepared lazily on first open; pass repository when a project contains multiple Git repositories, or set useWorktree false only for explicitly non-code work. A stream-scoped session creates a sibling under its parent project. Use this whenever the user asks for a stream under this project, a picker stream, or a project workspace. Never substitute the Git workstream skill. Derive a concise AGENTS.md scope and concrete initial TODO.md tasks from the user's request. NOTES.md remains blank. This does not open the stream workspace or launch an agent.",
     promptSnippet: "Create Project Object streams that appear under the attached project in the picker.",
-    promptGuidelines: ["For a stream under the attached project or in the picker, use project_stream_create rather than the Git workstream skill."],
+    promptGuidelines: ["For a stream under the attached project or in the picker, use project_stream_create rather than the Git workstream skill. Bind Git-backed streams to a repository; useWorktree=false is only for explicitly non-code work."],
     parameters: StreamCreateParameters,
     async execute(_toolCallId, parameters) {
       if (!resolution.project && !resolution.error) resolution = resolveProject();
@@ -707,12 +728,15 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       const executable = process.env.PROJECT_OBJECT_STREAM_CLI || "project-picker-tui";
       let output: string;
       try {
-        output = execFileSync(executable, [
+        const arguments_ = [
           "--create-stream", parameters.name,
           "--project-id", project.id,
           "--scope", parameters.scope,
           "--tasks-json", JSON.stringify(parameters.initialTasks),
-        ], {
+        ];
+        if (parameters.repository) arguments_.push("--repository", parameters.repository);
+        if (parameters.useWorktree === false) arguments_.push("--no-worktree");
+        output = execFileSync(executable, arguments_, {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
           timeout: 5000,
@@ -723,7 +747,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
         throw new Error(stderr || `Could not create stream: ${failure.message}`);
       }
 
-      let created: { projectId: string; streamId: string; name: string; streamHome: string; workspaceName: string };
+      let created: { projectId: string; streamId: string; name: string; streamHome: string; workspaceName: string; mainDirectory: string; worktree?: StreamWorktree | null };
       try {
         created = JSON.parse(output) as typeof created;
       } catch (error) {

@@ -1,7 +1,9 @@
+from concurrent.futures import ThreadPoolExecutor
 import importlib.util
 from importlib.machinery import SourceFileLoader
 import os
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -34,6 +36,18 @@ class PickerTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def make_git_repository(self, name="repository"):
+        repository = self.root / name
+        repository.mkdir()
+        subprocess.run(["git", "init", "-q", str(repository)], check=True)
+        (repository / "README.md").write_text("initial\n")
+        subprocess.run(["git", "-C", str(repository), "add", "README.md"], check=True)
+        subprocess.run([
+            "git", "-C", str(repository), "-c", "user.name=Test", "-c", "user.email=test@example.invalid",
+            "commit", "-qm", "initial",
+        ], check=True)
+        return repository.resolve()
 
     def test_picker_items_keep_registry_order_when_runtime_state_changes(self):
         second_project = {"id": str(uuid.uuid4()), "name": "Beta", "mainDirectory": str(self.root)}
@@ -133,7 +147,7 @@ class PickerTests(unittest.TestCase):
         self.picker.initialize_project_home(self.project)
         registry = {"version": 1, "streams": []}
         with mock.patch.object(self.picker, "live_workspace_exists", return_value=False):
-            stream = self.picker.create_stream(self.project, registry, "Focused Work")
+            stream = self.picker.create_stream(self.project, registry, "Focused Work", use_worktree=False)
         home = self.picker.stream_home(self.project, stream)
         self.assertEqual(self.picker.stream_workspace_name(self.project, stream), "Alpha · Focused Work")
         for name in ("AGENTS.md", "NOTES.md", "TODO.md"):
@@ -151,6 +165,85 @@ class PickerTests(unittest.TestCase):
             self.assertEqual((home / name).stat().st_mode & 0o777, 0o700)
         saved = __import__("json").loads((self.picker.project_home(self.project) / "streams.json").read_text())
         self.assertEqual(saved["streams"][0]["id"], stream["id"])
+
+    def test_git_stream_records_worktree_immediately_and_prepares_it_lazily(self):
+        repository = self.make_git_repository()
+        project = {**self.project, "mainDirectory": str(repository)}
+        self.picker.initialize_project_home(project)
+        registry = {"version": 1, "streams": []}
+        with mock.patch.object(self.picker, "live_workspace_exists", return_value=False):
+            stream = self.picker.create_stream(project, registry, "Focused Work")
+
+        directory = Path(stream["worktree"]["directory"])
+        self.assertEqual(stream["mainDirectory"], str(directory))
+        self.assertFalse(directory.exists())
+        branch = stream["worktree"]["branch"]
+        self.assertNotEqual(subprocess.run(["git", "-C", str(repository), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode, 0)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _index: self.picker.prepare_stream_worktree(project, stream), range(2)))
+        self.assertEqual(results, [None, None])
+        self.assertTrue(directory.is_dir())
+        self.assertEqual(subprocess.check_output(["git", "-C", str(directory), "branch", "--show-current"], text=True).strip(), branch)
+        self.picker.prepare_stream_worktree(project, stream)
+
+    def test_multi_repository_project_requires_choice_or_explicit_non_code_opt_out(self):
+        first = self.make_git_repository("first")
+        self.make_git_repository("second")
+        project = {**self.project, "mainDirectory": str(self.root)}
+        self.picker.initialize_project_home(project)
+        with mock.patch.object(self.picker, "live_workspace_exists", return_value=False):
+            with self.assertRaisesRegex(ValueError, "multiple Git repositories"):
+                self.picker.create_stream(project, {"version": 1, "streams": []}, "Ambiguous")
+            selected = self.picker.create_stream(project, {"version": 1, "streams": []}, "Selected", repository=str(first))
+            non_code = self.picker.create_stream(project, {"version": 1, "streams": []}, "Writing", use_worktree=False)
+        self.assertEqual(selected["worktree"]["repository"], str(first))
+        self.assertNotIn("worktree", non_code)
+        self.assertIsNone(non_code["mainDirectory"])
+
+    def test_missing_or_out_of_bounds_repository_requires_explicit_non_code_opt_out(self):
+        deep = self.root / "one" / "two" / "three" / "four" / "repository"
+        deep.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(deep)], check=True)
+        project = {**self.project, "mainDirectory": str(self.root)}
+        self.picker.initialize_project_home(project)
+        with mock.patch.object(self.picker, "live_workspace_exists", return_value=False):
+            with self.assertRaisesRegex(ValueError, "No Git repository was detected"):
+                self.picker.create_stream(project, {"version": 1, "streams": []}, "Unbound")
+            non_code = self.picker.create_stream(project, {"version": 1, "streams": []}, "Writing", use_worktree=False)
+        self.assertNotIn("worktree", non_code)
+
+    def test_root_repository_with_nested_repository_is_not_treated_as_unambiguous(self):
+        root_repository = self.make_git_repository("root-repository")
+        nested_parent = root_repository / "components"
+        nested_parent.mkdir()
+        nested = nested_parent / "nested"
+        nested.mkdir()
+        subprocess.run(["git", "init", "-q", str(nested)], check=True)
+        (nested / "README.md").write_text("nested\n")
+        subprocess.run(["git", "-C", str(nested), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(nested), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "nested"], check=True)
+        project = {**self.project, "mainDirectory": str(root_repository)}
+        self.picker.initialize_project_home(project)
+        with mock.patch.object(self.picker, "live_workspace_exists", return_value=False):
+            with self.assertRaisesRegex(ValueError, "multiple Git repositories"):
+                self.picker.create_stream(project, {"version": 1, "streams": []}, "Ambiguous")
+
+    def test_concurrent_stream_registration_serializes_registry_updates(self):
+        self.picker.initialize_project_home(self.project)
+        self.picker.ensure_directory(self.picker.DATA_ROOT)
+        self.picker.write_json_atomic(self.picker.REGISTRY_PATH, {"version": 1, "projects": [self.project]})
+
+        def create(name):
+            registry = {"version": 1, "streams": []}
+            return self.picker.create_stream(self.project, registry, name, use_worktree=False)
+
+        with mock.patch.object(self.picker, "live_workspace_exists", return_value=False), \
+             ThreadPoolExecutor(max_workers=2) as executor:
+            streams = list(executor.map(create, ["First", "Second"]))
+        saved = __import__("json").loads((self.picker.project_home(self.project) / "streams.json").read_text())
+        self.assertEqual({stream["name"] for stream in saved["streams"]}, {"First", "Second"})
+        self.assertEqual({stream["id"] for stream in streams}, {stream["id"] for stream in saved["streams"]})
 
     def test_stream_creation_rejects_registered_workspace_ambiguity(self):
         colliding_project = {
@@ -178,7 +271,7 @@ class PickerTests(unittest.TestCase):
 
         with mock.patch.object(self.picker, "live_workspace_exists", return_value=False), \
              mock.patch.object(self.picker, "durable_write_json_atomic", side_effect=committed_then_failed):
-            stream = self.picker.create_stream(self.project, registry, "Committed Stream")
+            stream = self.picker.create_stream(self.project, registry, "Committed Stream", use_worktree=False)
         home = self.picker.stream_home(self.project, stream)
         self.assertTrue(home.is_dir())
         saved = json.loads((self.picker.project_home(self.project) / "streams.json").read_text())
@@ -271,6 +364,25 @@ class PickerTests(unittest.TestCase):
 
         self.assertEqual(calls, ["close", "write"])
         self.assertNotEqual(stream["updatedAt"], "before")
+
+    def test_archive_stream_retains_managed_worktree_branch_and_uncommitted_files(self):
+        repository = self.make_git_repository()
+        project = {**self.project, "mainDirectory": str(repository)}
+        self.picker.initialize_project_home(project)
+        with mock.patch.object(self.picker, "live_workspace_exists", return_value=False):
+            stream = self.picker.create_stream(project, {"version": 1, "streams": []}, "Focused Work")
+        self.picker.prepare_stream_worktree(project, stream)
+        directory = Path(stream["mainDirectory"])
+        (directory / "uncommitted.txt").write_text("keep me\n")
+        stream_registry = {"version": 1, "streams": [stream]}
+        with mock.patch.object(self.picker, "close_stream"), \
+             mock.patch.object(self.picker, "write_json_atomic"):
+            self.picker.archive_stream(project, stream, stream_registry, self.session)
+        self.assertTrue(directory.is_dir())
+        self.assertEqual((directory / "uncommitted.txt").read_text(), "keep me\n")
+        branch = stream["worktree"]["branch"]
+        self.assertEqual(subprocess.run(["git", "-C", str(repository), "show-ref", "--verify", "--quiet", f"refs/heads/{branch}"]).returncode, 0)
+        self.assertIsNotNone(stream["archivedAt"])
 
     def test_archive_stream_close_failure_leaves_stream_active(self):
         stream = {"id": str(uuid.uuid4()), "name": "Focused Work", "archivedAt": None, "updatedAt": "before"}

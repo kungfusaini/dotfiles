@@ -253,6 +253,7 @@ const pi = {
 m.default(pi);
 const result = await tools.project_stream_create.execute('call', {
   name: 'Picker Polish',
+  useWorktree: false,
   scope: 'Improve the project picker while preserving its keyboard-first behavior.',
   initialTasks: ['Review picker interaction pain points.', 'Implement the agreed picker improvements.'],
 });
@@ -301,6 +302,7 @@ const pi = {
 m.default(pi);
 const result = await tools.project_stream_create.execute('call', {
   name: 'Sibling Cleanup',
+  useWorktree: false,
   scope: 'Clean inherited lint failures without changing product behavior.',
   initialTasks: ['Categorize inherited lint failures.'],
 });
@@ -491,6 +493,7 @@ console.log(JSON.stringify({
   prompt: event.systemPromptOptions.sections.project_object,
   description: tools.project_stream_create.description,
   guidelines: tools.project_stream_create.promptGuidelines,
+  createParameters: tools.project_stream_create.parameters,
   archiveDescription: tools.project_stream_archive.description,
   archiveGuidelines: tools.project_stream_archive.promptGuidelines,
 }));
@@ -501,7 +504,11 @@ console.log(JSON.stringify({
         self.assertIn("use project_stream_create", output["prompt"])
         self.assertIn("Do not use the workstream skill", output["prompt"])
         self.assertIn("project picker", output["description"])
+        self.assertIn("prepared lazily", output["description"])
+        self.assertIn("repository", output["createParameters"]["properties"])
+        self.assertIn("useWorktree", output["createParameters"]["properties"])
         self.assertTrue(any("project_stream_create" in text for text in output["guidelines"]))
+        self.assertTrue(any("useWorktree=false" in text for text in output["guidelines"]))
         self.assertIn("sibling stream is snapshotted", output["archiveDescription"])
         self.assertTrue(any("sibling archival completes immediately" in text for text in output["archiveGuidelines"]))
         self.assertTrue(any("final tool operation" in text for text in output["archiveGuidelines"]))

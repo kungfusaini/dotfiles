@@ -12,6 +12,7 @@
 , vivaldi
 , libsecret
 , fd
+, git
 }:
 
 let
@@ -47,17 +48,17 @@ stdenvNoCC.mkDerivation {
 
   postFixup = ''
     wrapGApp "$out/bin/project-picker-gui" \
-      --prefix PATH : ${lib.makeBinPath [ fd hyprland libnotify ]} \
+      --prefix PATH : ${lib.makeBinPath [ fd git hyprland libnotify ]} \
       --set PROJECT_OBJECT_TERMINAL "$out/bin/project-terminal"
     wrapProgram "$out/bin/project-picker-tui" \
-      --prefix PATH : ${lib.makeBinPath [ kitty hyprland libnotify ]} \
+      --prefix PATH : ${lib.makeBinPath [ git kitty hyprland libnotify ]} \
       --set PROJECT_OBJECT_TERMINAL "$out/bin/project-terminal"
     wrapProgram "$out/bin/project-snapshot" \
       --prefix PATH : ${lib.makeBinPath [ hyprland ]}
     wrapProgram "$out/bin/project-api" \
       --prefix PATH : ${lib.makeBinPath [ libsecret ]}
     wrapProgram "$out/bin/project-terminal" \
-      --prefix PATH : ${lib.makeBinPath [ kitty hyprland ]}
+      --prefix PATH : ${lib.makeBinPath [ git kitty hyprland ]}
     wrapProgram "$out/bin/project-workspace-exec" \
       --prefix PATH : ${lib.makeBinPath [ hyprland ]}
     wrapProgram "$out/bin/project-browser" \

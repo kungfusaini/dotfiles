@@ -20,6 +20,7 @@ from project_object import (  # noqa: E402
     stream_home,
     stream_session_directory,
     stream_workspace_name,
+    verify_worktree_checkout,
 )
 
 HOME = Path.home()
@@ -28,6 +29,7 @@ STATE_ROOT = Path(os.environ.get("PROJECT_OBJECT_STATE_DIR", Path(os.environ.get
 REGISTRY_PATH = DATA_ROOT / "projects.json"
 KITTY = os.environ.get("PROJECT_PICKER_KITTY", "kitty")
 HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
+GIT = os.environ.get("PROJECT_OBJECT_GIT", "git")
 
 
 def active_workspace_name():
@@ -131,6 +133,11 @@ def main():
             stream_data_home = stream_home(DATA_ROOT, project_id, stream_id)
             session_directory = stream_session_directory(STATE_ROOT, project_id, stream_id)
             working_directory = stream.get("mainDirectory") or working_directory
+            if stream.get("worktree"):
+                try:
+                    verify_worktree_checkout(stream["worktree"], GIT)
+                except RegistryError as error:
+                    raise SystemExit(f"project-terminal: stream worktree is not safely prepared; open the stream through the project picker: {error}") from error
             directories.extend([
                 home / "streams",
                 stream_data_home,

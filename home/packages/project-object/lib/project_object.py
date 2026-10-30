@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import re
+import subprocess
 import time
 import unicodedata
 import uuid
@@ -310,6 +312,23 @@ def validate_stream_registry(value: object, data_root: Path, project: dict) -> d
 
         if "mainDirectory" in stream and stream["mainDirectory"] is not None:
             validate_main_directory(stream["mainDirectory"])
+        worktree = stream.get("worktree")
+        if worktree is not None:
+            if not isinstance(worktree, dict):
+                raise RegistryError(f"Stream {stream_id} has invalid worktree metadata")
+            expected_directory = str((data_root / "worktrees" / project_id / stream_id).resolve(strict=False))
+            repository = worktree.get("repository")
+            directory = worktree.get("directory")
+            branch = worktree.get("branch")
+            base_commit = worktree.get("baseCommit")
+            if not isinstance(repository, str) or validate_main_directory(repository) != repository:
+                raise RegistryError(f"Stream {stream_id} has invalid worktree repository")
+            if directory != expected_directory or stream.get("mainDirectory") != expected_directory:
+                raise RegistryError(f"Stream {stream_id} has invalid worktree directory")
+            if branch != f"project-object/{stream_id}":
+                raise RegistryError(f"Stream {stream_id} has invalid worktree branch")
+            if not isinstance(base_commit, str) or not re.fullmatch(r"[0-9a-f]{40,64}", base_commit):
+                raise RegistryError(f"Stream {stream_id} has invalid worktree base commit")
         archived_at = stream.get("archivedAt")
         if archived_at is not None and not isinstance(archived_at, str):
             raise RegistryError(f"Stream {stream_id} has invalid archivedAt")
@@ -334,6 +353,36 @@ def read_stream_registry(data_root: Path, project: dict) -> dict:
     except (OSError, json.JSONDecodeError) as error:
         raise RegistryError(f"Cannot read {registry_path}: {error}") from error
     return validate_stream_registry(parsed, data_root, project)
+
+
+def verify_worktree_checkout(worktree: dict, git_executable: str = "git") -> None:
+    directory = Path(worktree["directory"])
+    if directory.is_symlink() or not directory.is_dir():
+        raise RegistryError(f"Stream worktree is not a safe prepared directory: {directory}")
+
+    def git_output(repository: str | Path, *arguments: str) -> str:
+        result = subprocess.run(
+            [git_executable, "-C", str(repository), *arguments],
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or "Git command failed"
+            raise RegistryError(detail)
+        return result.stdout.strip()
+
+    top_level = str(Path(git_output(directory, "rev-parse", "--show-toplevel")).resolve())
+    if top_level != str(directory.resolve()):
+        raise RegistryError(f"Stream worktree resolves to an unexpected checkout: {top_level}")
+    branch = git_output(directory, "branch", "--show-current")
+    if branch != worktree["branch"]:
+        raise RegistryError(f"Stream worktree is on unexpected branch {branch or '(detached)'}")
+    source_common = Path(git_output(worktree["repository"], "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+    worktree_common = Path(git_output(directory, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
+    if source_common != worktree_common:
+        raise RegistryError("Stream worktree belongs to a different Git repository")
 
 
 def find_stream(stream_registry: dict, stream_id: str | None = None, name: str | None = None) -> dict | None:

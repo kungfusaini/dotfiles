@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import curses
+import fcntl
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,7 @@ from project_object import (  # noqa: E402
     stream_home as canonical_stream_home,
     stream_workspace_name as canonical_stream_workspace_name,
     validate_project_name,
+    verify_worktree_checkout,
     write_json_atomic as durable_write_json_atomic,
 )
 
@@ -44,6 +46,7 @@ KITTY = os.environ.get("PROJECT_PICKER_KITTY", "kitty")
 NOTIFY = os.environ.get("PROJECT_PICKER_NOTIFY", "notify-send")
 PROJECT_TERMINAL = os.environ.get("PROJECT_OBJECT_TERMINAL", str(SCRIPT_PATH.with_name("project-terminal")))
 PROJECT_SNAPSHOT = os.environ.get("PROJECT_OBJECT_SNAPSHOT", str(SCRIPT_PATH.with_name("project-snapshot")))
+GIT = os.environ.get("PROJECT_OBJECT_GIT", "git")
 
 def notify_error(message):
     subprocess.run([NOTIFY, APP_NAME, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
@@ -346,6 +349,133 @@ def validate_directory(value):
     return str(directory.resolve())
 
 
+def git_output(repository, *arguments):
+    result = run([GIT, "-C", str(repository), *arguments])
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "Git command failed"
+        raise RuntimeError(detail)
+    return result.stdout.strip()
+
+
+def git_repository(value):
+    directory = validate_directory(value)
+    try:
+        top_level = git_output(directory, "rev-parse", "--show-toplevel")
+        git_output(directory, "rev-parse", "--git-common-dir")
+    except RuntimeError as error:
+        raise ValueError(f"Not a Git working tree: {directory}: {error}") from error
+    return str(Path(top_level).resolve())
+
+
+def immediate_git_repositories(directory):
+    """Discover the project root and bounded nested repositories without scanning repository contents deeply."""
+    root = Path(directory)
+    repositories = []
+    try:
+        root_repository = git_repository(root)
+    except ValueError:
+        root_repository = None
+    if root_repository:
+        repositories.append(root_repository)
+
+    excluded = {".audit-worktrees", ".cache", ".direnv", ".git", ".venv", ".worktrees", "node_modules", "target", "vendor", "worktrees"}
+    try:
+        walker = os.walk(root, topdown=True, followlinks=False)
+        for current_text, directories, _files in walker:
+            current = Path(current_text)
+            depth = len(current.relative_to(root).parts)
+            directories[:] = sorted((name for name in directories if name not in excluded), key=str.casefold)
+            if depth >= 3:
+                directories[:] = []
+            if current == root or not (current / ".git").exists():
+                continue
+            try:
+                repository = git_repository(current)
+            except ValueError:
+                directories[:] = []
+                continue
+            if repository not in repositories:
+                repositories.append(repository)
+            directories[:] = []
+    except OSError:
+        pass
+    return repositories
+
+
+def resolve_stream_repository(project, repository=None, use_worktree=True):
+    if not use_worktree:
+        return None
+    if repository:
+        return git_repository(repository)
+    candidates = immediate_git_repositories(project["mainDirectory"])
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        choices = ", ".join(str(Path(candidate).name) for candidate in candidates[:8])
+        raise ValueError(f"This project contains multiple Git repositories ({choices}); choose one for the stream worktree or explicitly disable worktree isolation")
+    raise ValueError("No Git repository was detected; pass its absolute path or explicitly disable worktree isolation for a non-code stream")
+
+
+def stream_worktree_metadata(project, stream_id, repository):
+    if repository is None:
+        return None
+    base_commit = git_output(repository, "rev-parse", "HEAD")
+    if not re.fullmatch(r"[0-9a-f]{40,64}", base_commit):
+        raise RuntimeError(f"Git returned an invalid base commit for {repository}")
+    directory = str((DATA_ROOT / "worktrees" / project["id"] / stream_id).resolve(strict=False))
+    return {
+        "repository": repository,
+        "directory": directory,
+        "branch": f"project-object/{stream_id}",
+        "baseCommit": base_commit,
+    }
+
+
+def verify_stream_worktree(worktree):
+    try:
+        verify_worktree_checkout(worktree, GIT)
+    except RegistryError as error:
+        raise RuntimeError(str(error)) from error
+
+
+def prepare_stream_worktree(project, stream):
+    worktree = stream.get("worktree")
+    if not worktree:
+        return
+    directory = Path(worktree["directory"])
+    ensure_directory(directory.parent)
+    lock_path = directory.parent / f".{directory.name}.prepare.lock"
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        if directory.exists() or directory.is_symlink():
+            if directory.is_symlink() or not directory.is_dir():
+                raise RuntimeError(f"Unsafe stream worktree path: {directory}")
+            verify_stream_worktree(worktree)
+            return
+        branch_exists = run([GIT, "-C", worktree["repository"], "show-ref", "--verify", "--quiet", f"refs/heads/{worktree['branch']}"]).returncode == 0
+        command = [GIT, "-C", worktree["repository"], "worktree", "add"]
+        if not branch_exists:
+            command.extend(["-b", worktree["branch"]])
+        command.extend([str(directory), worktree["branch"] if branch_exists else worktree["baseCommit"]])
+        result = run(command)
+        if result.returncode != 0:
+            try:
+                verify_stream_worktree(worktree)
+                return
+            except RuntimeError:
+                detail = result.stderr.strip() or result.stdout.strip() or "Git worktree creation failed"
+                raise RuntimeError(f"Could not prepare isolated stream worktree: {detail}")
+        try:
+            verify_stream_worktree(worktree)
+        except Exception:
+            run([GIT, "-C", worktree["repository"], "worktree", "remove", str(directory)])
+            raise
+    finally:
+        os.close(descriptor)
+
+
 def focus_existing_picker():
     try:
         clients = hypr_json("clients")
@@ -412,6 +542,7 @@ def enter_project(project, session, launch_terminal):
 
 
 def enter_stream(project, stream, session, launch_terminal=True, *, pi_arguments=None):
+    prepare_stream_worktree(project, stream)
     enter_workspace(project, session, launch_terminal, stream=stream, pi_arguments=pi_arguments)
 
 
@@ -578,7 +709,26 @@ def archive_project(project, registry, session):
         raise
 
 
-def create_stream(project, registry, name, scope=None, initial_tasks=None):
+def create_stream(project, registry, name, scope=None, initial_tasks=None, repository=None, use_worktree=True):
+    home = project_home(project)
+    ensure_directory(home)
+    lock_path = home / ".streams.lock"
+    descriptor = os.open(lock_path, os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        os.fchmod(descriptor, 0o600)
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        registry_path = home / "streams.json"
+        current_registry = load_stream_registry(project) if registry_path.exists() else registry
+        stream = _create_stream_locked(project, current_registry, name, scope, initial_tasks, repository, use_worktree)
+        if current_registry is not registry:
+            registry.clear()
+            registry.update(current_registry)
+        return stream
+    finally:
+        os.close(descriptor)
+
+
+def _create_stream_locked(project, registry, name, scope=None, initial_tasks=None, repository=None, use_worktree=True):
     trimmed = name.strip()
     if scope is not None:
         if not isinstance(scope, str) or not scope.strip() or len(scope.strip()) > 4000:
@@ -608,8 +758,18 @@ def create_stream(project, registry, name, scope=None, initial_tasks=None):
     if live_workspace_exists(workspace):
         raise ValueError(f"A live Hyprland workspace named ‘{workspace}’ already exists")
 
+    selected_repository = resolve_stream_repository(project, repository, use_worktree)
+    worktree = stream_worktree_metadata(project, candidate["id"], selected_repository)
     now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-    stream = {**candidate, "mainDirectory": None, "archivedAt": None, "createdAt": now, "updatedAt": now}
+    stream = {
+        **candidate,
+        "mainDirectory": worktree["directory"] if worktree else None,
+        "archivedAt": None,
+        "createdAt": now,
+        "updatedAt": now,
+    }
+    if worktree:
+        stream["worktree"] = worktree
     final_home = stream_home(project, stream)
     ensure_directory(final_home.parent)
     staging_home = final_home.with_name(f".{stream['id']}.creating-{os.getpid()}-{time.time_ns()}")
@@ -998,18 +1158,20 @@ def archive_stream_noninteractive(project_id, stream_id):
         release_lock()
 
 
-def create_stream_noninteractive(project_id, name, scope, initial_tasks):
+def create_stream_noninteractive(project_id, name, scope, initial_tasks, repository=None, use_worktree=True):
     registry = load_registry()
     project = next((item for item in registry["projects"] if item["id"] == project_id and not item.get("archivedAt")), None)
     if project is None:
         raise ValueError(f"Active project not found: {project_id}")
-    stream = create_stream(project, load_stream_registry(project), name, scope, initial_tasks)
+    stream = create_stream(project, load_stream_registry(project), name, scope, initial_tasks, repository, use_worktree)
     print(json.dumps({
         "projectId": project["id"],
         "streamId": stream["id"],
         "name": stream["name"],
         "streamHome": str(stream_home(project, stream)),
         "workspaceName": stream_workspace_name(project, stream),
+        "mainDirectory": stream.get("mainDirectory") or project["mainDirectory"],
+        "worktree": stream.get("worktree"),
     }))
 
 
@@ -1036,13 +1198,35 @@ def main():
     noninteractive = mode in ("--create-stream", "--check-archive-stream", "--archive-stream")
     try:
         if mode == "--create-stream":
-            if len(arguments) != 8 or arguments[2] != "--project-id" or arguments[4] != "--scope" or arguments[6] != "--tasks-json":
-                raise ValueError("Usage: project-picker-tui --create-stream NAME --project-id UUID --scope TEXT --tasks-json JSON")
+            if len(arguments) < 8:
+                raise ValueError("Usage: project-picker-tui --create-stream NAME --project-id UUID --scope TEXT --tasks-json JSON [--repository PATH | --no-worktree]")
+            values = {}
+            flags = set()
+            index = 2
+            while index < len(arguments):
+                option = arguments[index]
+                if option == "--no-worktree":
+                    flags.add(option)
+                    index += 1
+                    continue
+                if option not in ("--project-id", "--scope", "--tasks-json", "--repository") or index + 1 >= len(arguments):
+                    raise ValueError(f"Invalid stream creation argument: {option}")
+                if option in values:
+                    raise ValueError(f"Duplicate stream creation argument: {option}")
+                values[option] = arguments[index + 1]
+                index += 2
+            if not all(option in values for option in ("--project-id", "--scope", "--tasks-json")):
+                raise ValueError("Stream creation requires --project-id, --scope and --tasks-json")
+            if "--repository" in values and "--no-worktree" in flags:
+                raise ValueError("--repository and --no-worktree cannot be combined")
             try:
-                initial_tasks = json.loads(arguments[7])
+                initial_tasks = json.loads(values["--tasks-json"])
             except json.JSONDecodeError as error:
                 raise ValueError(f"Initial tasks must be valid JSON: {error}") from error
-            create_stream_noninteractive(arguments[3], arguments[1], arguments[5], initial_tasks)
+            create_stream_noninteractive(
+                values["--project-id"], arguments[1], values["--scope"], initial_tasks,
+                values.get("--repository"), "--no-worktree" not in flags,
+            )
         elif mode in ("--check-archive-stream", "--archive-stream"):
             if len(arguments) != 5 or arguments[1] != "--project-id" or arguments[3] != "--stream-id":
                 raise ValueError(f"Usage: project-picker-tui {mode} --project-id UUID --stream-id UUID")

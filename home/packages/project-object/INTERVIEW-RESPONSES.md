@@ -376,11 +376,11 @@ A stream may contain multiple agents working concurrently.
 
 ### Worktrees
 
-Git worktrees may be needed when multiple streams operate concurrently against the same repository within one project.
+Git-backed streams use one worktree per stream, with all agents in that stream sharing it. This prevents concurrent streams from colliding in a dirty checkout or unrelated branch.
 
-When isolation is needed, one worktree per stream is the preferred model, with all agents in that stream sharing it. A worktree is optional rather than intrinsic to every stream. For example, an Elijah timeline stream operating in a separate non-code directory would not need one, while concurrent software streams changing the same repository may each need their own worktree.
+Worktree preparation is lazy: stream registration remains immediate, and the isolated checkout is created on first open. A single repository is selected automatically; projects containing multiple repositories require an explicit repository choice. A genuinely non-code stream, such as an Elijah timeline scope in a separate writing directory, may explicitly opt out and inherit the project directory.
 
-Creating a worktree should be an explicit choice when the stream is created or configured, not an automatic decision made by the system.
+Opening fails closed if repository discovery, worktree preparation, or identity verification is ambiguous or fails. Archiving preserves both the worktree and branch; automatic deletion is deliberately avoided because background writers could race any cleanliness check. Cleanup requires a future explicit, separately confirmed lifecycle.
 
 ## Persistence and portability
 

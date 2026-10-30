@@ -84,6 +84,36 @@ Path(os.environ['CAPTURE']).write_text(json.dumps({'argv': sys.argv[1:], 'env': 
         self.assertIn(f"/streams/{stream_id}/pi-sessions", captured["env"]["PI_CODING_AGENT_SESSION_DIR"])
         self.assertNotEqual(captured["env"]["PI_CODING_AGENT_SESSION_DIR"], str(self.state / "projects" / self.project_id / "pi-sessions"))
 
+    def test_direct_stream_terminal_rejects_unverified_worktree_path(self):
+        stream_id = str(uuid.uuid4())
+        worktree = self.data / "worktrees" / self.project_id / stream_id
+        worktree.parent.mkdir(parents=True)
+        worktree.symlink_to(self.main, target_is_directory=True)
+        project_home = self.data / "projects" / self.project_id
+        project_home.mkdir(parents=True)
+        (project_home / "streams.json").write_text(json.dumps({
+            "version": 1,
+            "streams": [{
+                "id": stream_id,
+                "name": "Focused Work",
+                "mainDirectory": str(worktree),
+                "worktree": {
+                    "repository": str(self.main),
+                    "directory": str(worktree),
+                    "branch": f"project-object/{stream_id}",
+                    "baseCommit": "a" * 40,
+                },
+                "archivedAt": None,
+            }],
+        }))
+        result = subprocess.run(
+            [str(TERMINAL), "--project-id", self.project_id, "--stream-id", stream_id],
+            env=self.environment(), text=True, capture_output=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertRegex(result.stderr, "not safely prepared|must be normalized")
+        self.assertFalse(self.capture.exists())
+
     def test_two_projects_sharing_directory_get_distinct_sessions(self):
         second_id = str(uuid.uuid4())
         self.registry["projects"].append({**self.registry["projects"][0], "id": second_id, "name": "Second"})

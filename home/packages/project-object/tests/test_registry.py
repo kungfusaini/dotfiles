@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
 from unittest import mock
@@ -23,6 +24,7 @@ from project_object import (
     stream_workspace_name,
     validate_registry,
     validate_stream_registry,
+    verify_worktree_checkout,
     write_json_atomic,
 )
 
@@ -166,6 +168,61 @@ class RegistryTests(unittest.TestCase):
         self.assertEqual(stream_home(self.data, self.project_id, stream_id), self.data / "projects" / self.project_id / "streams" / stream_id)
         self.assertEqual(stream_session_directory(self.root / "state", self.project_id, stream_id), self.root / "state" / "projects" / self.project_id / "streams" / stream_id / "pi-sessions")
         self.assertEqual(stream_workspace_name("Alpha", "Focused Work"), "Alpha · Focused Work")
+
+    def test_stream_registry_validates_managed_worktree_identity(self):
+        project = self.base["projects"][0]
+        stream_id = str(uuid.uuid4())
+        directory = str((self.data / "worktrees" / self.project_id / stream_id).resolve())
+        stream = {
+            "id": stream_id,
+            "name": "Focused Work",
+            "mainDirectory": directory,
+            "worktree": {
+                "repository": str(self.root.resolve()),
+                "directory": directory,
+                "branch": f"project-object/{stream_id}",
+                "baseCommit": "a" * 40,
+            },
+            "archivedAt": None,
+        }
+        validated = validate_stream_registry({"version": 1, "streams": [stream]}, self.data, project)
+        self.assertEqual(validated["streams"][0]["worktree"]["directory"], directory)
+        stream["worktree"]["directory"] = str(self.root / "elsewhere")
+        with self.assertRaisesRegex(RegistryError, "invalid worktree directory"):
+            validate_stream_registry({"version": 1, "streams": [stream]}, self.data, project)
+
+    def test_prepared_worktree_verification_rejects_symlink_empty_wrong_branch_and_wrong_repository(self):
+        repository = self.root / "repository"
+        repository.mkdir()
+        subprocess.run(["git", "init", "-q", str(repository)], check=True)
+        (repository / "README.md").write_text("initial\n")
+        subprocess.run(["git", "-C", str(repository), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(repository), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "-qm", "initial"], check=True)
+        branch = f"project-object/{uuid.uuid4()}"
+        directory = self.root / "worktree"
+        subprocess.run(["git", "-C", str(repository), "worktree", "add", "-qb", branch, str(directory), "HEAD"], check=True)
+        worktree = {"repository": str(repository), "directory": str(directory), "branch": branch, "baseCommit": "a" * 40}
+        verify_worktree_checkout(worktree)
+
+        subprocess.run(["git", "-C", str(directory), "switch", "-qc", "wrong-branch"], check=True)
+        with self.assertRaisesRegex(RegistryError, "unexpected branch"):
+            verify_worktree_checkout(worktree)
+        subprocess.run(["git", "-C", str(directory), "switch", "-q", branch], check=True)
+
+        other = self.root / "other"
+        other.mkdir()
+        subprocess.run(["git", "init", "-q", str(other)], check=True)
+        with self.assertRaisesRegex(RegistryError, "different Git repository"):
+            verify_worktree_checkout({**worktree, "repository": str(other)})
+
+        empty = self.root / "empty"
+        empty.mkdir()
+        with self.assertRaises(RegistryError):
+            verify_worktree_checkout({**worktree, "directory": str(empty)})
+        symlink = self.root / "symlink"
+        symlink.symlink_to(directory, target_is_directory=True)
+        with self.assertRaisesRegex(RegistryError, "not a safe prepared directory"):
+            verify_worktree_checkout({**worktree, "directory": str(symlink)})
 
     def test_stream_registry_rejects_duplicates_and_symlink_escape(self):
         project = self.base["projects"][0]

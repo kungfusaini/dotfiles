@@ -85,7 +85,9 @@ The canonical Pi session directory is:
 $XDG_STATE_HOME/project-object/projects/<project-id>/streams/<stream-id>/pi-sessions/
 ```
 
-A stream may override its working directory. If it does not, it inherits the project main directory. Worktrees remain an explicit later configuration rather than an intrinsic part of stream creation.
+A stream may override its working directory. Git-backed streams bind to a repository at creation and record a dedicated branch and managed working directory. The worktree is prepared lazily on first open, so registration remains fast; every agent in that stream shares it. A single-repository project is detected automatically, while a multi-repository project requires choosing the repository. Explicitly non-code streams may disable worktree isolation and inherit the project main directory.
+
+Managed worktrees live under `$XDG_DATA_HOME/project-object/worktrees/<project-id>/<stream-id>/`. Opening fails closed if repository discovery, preparation, or identity verification fails; it never falls back to a shared checkout. Archiving preserves both the worktree and its branch because automatic deletion cannot exclude races with background writers. Explicit, separately confirmed garbage collection is deferred.
 
 ## Tasks and plans
 
@@ -110,6 +112,5 @@ The first stream implementation does not include:
 - importing old stream records or historical chats;
 - recursive substreams;
 - automatic project-level worklog roll-up;
-- automatic worktree creation;
 - full restoration of arbitrary graphical applications;
 - cross-machine synchronization.
