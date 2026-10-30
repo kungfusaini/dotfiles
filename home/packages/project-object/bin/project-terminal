@@ -11,6 +11,7 @@ from project_object import (  # noqa: E402
     RegistryError,
     ensure_private_directory,
     find_project,
+    project_browser_workspace_name,
     project_home,
     project_session_directory,
     read_registry,
@@ -56,7 +57,7 @@ def resolve_scope(project_id, stream_id):
         for candidate in registry["projects"]:
             if candidate.get("archivedAt"):
                 continue
-            if candidate["name"] == workspace:
+            if candidate["name"] == workspace or project_browser_workspace_name(candidate["name"]) == workspace:
                 matches.append((candidate, None))
             streams = read_stream_registry(DATA_ROOT, candidate)
             for stream in streams["streams"]:

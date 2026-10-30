@@ -123,6 +123,20 @@ print(json.dumps({'name':'Project With Spaces · Focused Work'}))
         self.assertIsNone(captured["env"]["PROJECT_OBJECT_STREAM_ID"])
         self.assertNotIn("confirm_os_window_close=0", captured["argv"])
 
+    def test_project_browser_workspace_inherits_project_context(self):
+        hyprctl = self.root / "hyprctl"
+        hyprctl.write_text("""#!/usr/bin/env python3
+import json
+print(json.dumps({'name':'Project With Spaces · Browser'}))
+""")
+        hyprctl.chmod(0o755)
+        environment = self.environment()
+        environment["PROJECT_PICKER_HYPRCTL"] = str(hyprctl)
+        subprocess.run([str(TERMINAL)], env=environment, check=True)
+        captured = json.loads(self.capture.read_text())
+        self.assertEqual(captured["env"]["PROJECT_OBJECT_ID"], self.project_id)
+        self.assertIsNone(captured["env"]["PROJECT_OBJECT_STREAM_ID"])
+
     def test_archived_explicit_id_is_rejected(self):
         self.registry["projects"][0]["archivedAt"] = "2026-01-01T00:00:00Z"
         (self.data / "projects.json").write_text(json.dumps(self.registry))

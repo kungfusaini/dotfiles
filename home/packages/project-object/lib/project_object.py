@@ -10,6 +10,7 @@ import uuid
 REGISTRY_VERSION = 1
 STREAM_REGISTRY_VERSION = 1
 STREAM_WORKSPACE_SEPARATOR = " · "
+BROWSER_ROLE_NAME = "Browser"
 DIRECTORY_MODE = 0o700
 FILE_MODE = 0o600
 
@@ -224,6 +225,10 @@ def stream_session_directory(state_root: Path, project_id: str, stream_id: str) 
 
 def stream_workspace_name(project_name: str, stream_name: str) -> str:
     return f"{validate_project_name(project_name)}{STREAM_WORKSPACE_SEPARATOR}{validate_project_name(stream_name)}"
+
+
+def project_browser_workspace_name(project_name: str) -> str:
+    return f"{validate_project_name(project_name)}{STREAM_WORKSPACE_SEPARATOR}{BROWSER_ROLE_NAME}"
 
 
 def validate_registry(value: object, data_root: Path) -> tuple[dict, bool]:

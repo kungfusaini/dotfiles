@@ -465,7 +465,7 @@ class PickerApplication(Adw.Application):
             for project in self.registry["projects"]:
                 if project.get("archivedAt"):
                     continue
-                if project["name"] == self.current_workspace:
+                if self.current_workspace in (project["name"], backend.project_browser_workspace_name(project)):
                     self.selected_scope = {"kind": "project", "projectId": project["id"]}
                     break
                 try:

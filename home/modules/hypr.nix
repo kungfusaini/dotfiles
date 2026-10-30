@@ -189,9 +189,9 @@ in
         "$mod, Return, exec, $terminal"
         "$mod, W, killactive"
 
-        "$mod, B, workspace, $browserWorkspace"
-        "$mod, B, exec, /home/sumeet/.config/hypr/scripts/hypr-browser-workspace-launch"
-        "$mod SHIFT, B, movetoworkspace, $browserWorkspace"
+        # Resolve Super+B to the active project's persistent browser, with the
+        # original global browser workspace as the non-project fallback.
+        "$mod, B, exec, project-browser focus"
 
         "$mod, C, workspace, $commsWorkspace"
         "$mod, C, exec, /home/sumeet/.config/hypr/scripts/hypr-comms-workspace-launch"
@@ -305,7 +305,6 @@ in
 
         "match:class .*, suppress_event maximize"
         "match:class ^(thunderbird|Thunderbird)$, workspace name:comms"
-        "match:class ^vivaldi.*$, workspace name:browser"
         "match:class ^(slack|Slack)$, workspace name:comms"
         "match:class ^com\\.rtosta\\.zapzap$, workspace name:comms"
         # Keep only the main Teams window eligible for the comms tab group.

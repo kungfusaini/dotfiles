@@ -34,6 +34,16 @@ in
       source = "${package}/share/project-object/pi/skills/init";
       recursive = true;
     };
+    xdg.desktopEntries.project-browser = {
+      name = "Project Browser";
+      comment = "Open web links in the active Project Object context";
+      exec = "${package}/bin/project-browser open --mode adjacent %U";
+      icon = "vivaldi";
+      terminal = false;
+      type = "Application";
+      mimeType = [ "x-scheme-handler/http" "x-scheme-handler/https" ];
+      noDisplay = true;
+    };
 
     wayland.windowManager.hyprland.settings = lib.mkIf cfg.enableHyprlandBinding {
       "$terminal" = lib.mkForce "${package}/bin/project-terminal";

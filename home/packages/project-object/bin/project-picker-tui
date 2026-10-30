@@ -19,6 +19,7 @@ from project_object import (  # noqa: E402
     ensure_private_file,
     fuzzy_directory_matches,
     normalized_name as canonical_normalized_name,
+    project_browser_workspace_name as canonical_project_browser_workspace_name,
     project_home as canonical_project_home,
     read_registry,
     read_stream_registry as canonical_read_stream_registry,
@@ -80,6 +81,10 @@ def stream_home(project, stream):
 
 def stream_workspace_name(project, stream):
     return canonical_stream_workspace_name(project["name"], stream["name"])
+
+
+def project_browser_workspace_name(project):
+    return canonical_project_browser_workspace_name(project["name"])
 
 
 def initialize_project_home(project, home=None):
@@ -199,7 +204,7 @@ def project_picker_items(registry, session, current_workspace):
     for project in registry["projects"]:
         if project.get("archivedAt"):
             continue
-        state = "current" if project["name"] == current_workspace else "open" if scope_is_open(session, project_scope(project)) else "closed"
+        state = "current" if current_workspace in (project["name"], project_browser_workspace_name(project)) else "open" if scope_is_open(session, project_scope(project)) else "closed"
         items.append((project, state))
     return items
 
@@ -477,11 +482,52 @@ def close_workspace(project, session, stream=None):
     write_json_atomic(SESSION_PATH, session)
 
 
+def project_has_other_open_scope(project, session, excluding):
+    return any(
+        scope != excluding and scope.get("projectId") == project["id"]
+        for scope in session["openWorkspaces"]
+    )
+
+
+def close_browser_workspace(project):
+    name = project_browser_workspace_name(project)
+    if not live_workspace_exists(name):
+        return
+    clients = workspace_clients(name)
+    addresses = []
+    for client in clients:
+        address = str(client.get("address", ""))
+        if not re.fullmatch(r"0x[0-9a-fA-F]+", address):
+            raise RuntimeError(f"Could not safely identify a browser window in {name}")
+        addresses.append(address)
+    if active_workspace_name() == name:
+        result = run([HYPRCTL, "dispatch", "workspace", "previous"])
+        if result.returncode != 0:
+            raise RuntimeError(f"Could not leave project browser workspace {name}")
+    for address in addresses:
+        result = run([HYPRCTL, "dispatch", "closewindow", f"address:{address}"])
+        if result.returncode != 0:
+            raise RuntimeError(f"Could not close a browser window in {name}")
+    deadline = time.monotonic() + 2.0
+    while addresses and time.monotonic() < deadline:
+        if not workspace_clients(name):
+            break
+        time.sleep(0.05)
+    if workspace_clients(name):
+        raise RuntimeError(f"A browser window did not close in {name}")
+
+
 def close_project(project, session):
+    scope = project_scope(project)
+    if not project_has_other_open_scope(project, session, scope):
+        close_browser_workspace(project)
     close_workspace(project, session)
 
 
 def close_stream(project, stream, session):
+    scope = stream_scope(project, stream)
+    if not project_has_other_open_scope(project, session, scope):
+        close_browser_workspace(project)
     close_workspace(project, session, stream)
 
 
@@ -672,7 +718,7 @@ class PickerUI:
                 continue
             if self.query.casefold() not in project["name"].casefold():
                 continue
-            state = "current" if workspace_name(project) == self.current_workspace else "open" if project["id"] in self.open_ids else "closed"
+            state = "current" if self.current_workspace in (workspace_name(project), project_browser_workspace_name(project)) else "open" if project["id"] in self.open_ids else "closed"
             items.append((project, state))
         return sorted(items, key=lambda item: (rank[item[1]], item[0]["name"].casefold()))
 

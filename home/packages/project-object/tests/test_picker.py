@@ -233,6 +233,7 @@ class PickerTests(unittest.TestCase):
         session = {"version": 2, "hyprlandInstance": "test-instance", "openWorkspaces": [scope]}
         success = mock.Mock(returncode=0, stdout="", stderr="")
         client = {"address": "0xabc", "workspace": {"name": "Alpha · Focused Work"}}
+        browser_client = {"address": "0xdef", "workspace": {"name": "Alpha · Browser"}}
         commands = []
         def run(command):
             commands.append(command)
@@ -240,12 +241,13 @@ class PickerTests(unittest.TestCase):
         with mock.patch.object(self.picker, "run", side_effect=run), \
              mock.patch.object(self.picker, "active_workspace_name", return_value="Elsewhere"), \
              mock.patch.object(self.picker, "live_workspace_exists", return_value=True), \
-             mock.patch.object(self.picker, "workspace_clients", side_effect=[[client], [], []]), \
+             mock.patch.object(self.picker, "workspace_clients", side_effect=[[browser_client], [], [], [client], [], []]), \
              mock.patch.object(self.picker, "write_json_atomic") as write:
             self.picker.close_stream(self.project, stream, session)
         self.assertEqual(session["openWorkspaces"], [])
         self.assertIn([self.picker.PROJECT_SNAPSHOT, "--project-id", self.project["id"], "--stream-id", stream["id"]], commands)
         self.assertIn([self.picker.HYPRCTL, "dispatch", "closewindow", "address:0xabc"], commands)
+        self.assertIn([self.picker.HYPRCTL, "dispatch", "closewindow", "address:0xdef"], commands)
         write.assert_called_once()
 
     def test_archive_stream_closes_workspace_before_registry_update(self):
