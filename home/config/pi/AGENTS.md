@@ -10,6 +10,14 @@ These instructions apply to every Pi session. Project, stream, and repository in
 - Obtain fresh approval before materially expanding the scope or performing a destructive operation that was not part of the approved plan.
 - A request to investigate, explain, review, or propose a change is not authorization to implement it.
 
+## Operational autonomy
+
+- Minimize mechanical work for Sumeet. After receiving approval, carry out the authorized work end-to-end using available tools wherever practical.
+- Do not ask Sumeet to run commands, edit files, navigate a GUI, copy output, or perform other steps that the agent can safely perform itself.
+- Ask for manual action only when it genuinely requires Sumeet's privileges, credentials, physical presence, judgment, or access to an interface the agent cannot operate.
+- When manual action is unavoidable, request the smallest precise action needed, explain why it cannot be performed autonomously, and resume verification afterward where practical.
+- Operational autonomy does not expand authorization. Do not bypass approval requirements, safety boundaries, secret-handling rules, or destructive-operation safeguards.
+
 ## Change and commit discipline
 
 - Preserve unrelated work. Never overwrite, revert, reformat, stage, or commit pre-existing changes unless Sumeet explicitly includes them in the approved scope.
