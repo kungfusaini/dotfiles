@@ -99,7 +99,7 @@ Plans follow the same rule. A stream plan remains local unless it is deliberatel
 
 The project workspace and each stream workspace can be opened and closed independently. Opening a project does not reopen all streams.
 
-A pristine stream may be initialized once with `/init [optional goal]`. Initialization creates only the minimum durable orientation state and records `.project-object-initialized.json` in the stream home. It refuses when that marker exists or core artifacts already contain meaningful material. It does not begin substantive work, perform remote operations, or edit project-level artifacts.
+A stream may be initialized once with `/init [optional goal]`. Initialization creates only the minimum durable orientation state and records `.project-object-initialized.json` in the stream home. Existing artifacts and worklog entries are preserved and incorporated; only the completed marker blocks another `/init`. Initialization does not begin substantive work, perform remote operations, or edit project-level artifacts.
 
 Opening a stream creates or focuses its derived named workspace and launches a stream-aware terminal or Pi session. Closing a stream must preserve artifacts and session history, capture restoration evidence, and avoid silently terminating active work.
 

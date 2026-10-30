@@ -157,7 +157,7 @@ console.log(JSON.stringify({idle, working, settled, existsAfterShutdown: fs.exis
         self.assertFalse(output["existsAfterShutdown"])
         self.assertEqual((runtime / "pi-activity").stat().st_mode & 0o777, 0o700)
 
-    def test_init_command_supports_projects_and_streams_with_guarded_skill_request(self):
+    def test_init_command_supports_projects_and_streams_with_preserving_skill_request(self):
         expression = """
 const commands = {};
 let sent;
@@ -177,7 +177,7 @@ console.log(JSON.stringify({sent, notices}));
         project_result = self.node(expression, {"PROJECT_OBJECT_ID": self.project_id})
         self.assertEqual(project_result.returncode, 0, project_result.stderr)
         project_output = json.loads(project_result.stdout)
-        self.assertIn("Initialize the pristine Alpha project", project_output["sent"])
+        self.assertIn("Initialize the Alpha project", project_output["sent"])
         self.assertIn("Coordinate agent tooling safely", project_output["sent"])
 
         stream_id = str(uuid.uuid4())
@@ -192,6 +192,7 @@ console.log(JSON.stringify({sent, notices}));
         output = json.loads(result.stdout)
         self.assertIn("project-object/init/SKILL.md", output["sent"])
         self.assertIn("Inspect model separation safely", output["sent"])
+        self.assertIn("existing scope artifacts or worklog entries", output["sent"])
         self.assertIn("do not begin substantive", output["sent"])
 
         (stream_home / ".project-object-initialized.json").write_text("{}\n")

@@ -159,7 +159,7 @@ class PickerTests(unittest.TestCase):
         self.assertIn("# Focused Work", instructions)
         self.assertIn("<!-- project-object:init-scope -->", instructions)
         self.assertNotIn(".creating-", instructions)
-        self.assertIn("## Now", (home / "TODO.md").read_text())
+        self.assertEqual((home / "TODO.md").read_text(), "# Todo\n\n## Now\n\n## Next\n\n## Waiting\n")
         for name in ("plans", "worklogs", "snapshots"):
             self.assertTrue((home / name).is_dir())
             self.assertEqual((home / name).stat().st_mode & 0o777, 0o700)

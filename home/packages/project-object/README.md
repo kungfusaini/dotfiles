@@ -55,7 +55,7 @@ Web links are project-aware. In Kitty, a normal click opens or reuses a companio
 
 Agents launch other graphical applications with `project-workspace-exec COMMAND [ARG ...]`. It identifies the Hyprland workspace containing the invoking terminal from process ancestry, falls back to the exact workspace recorded by `project-terminal`, and applies a silent one-shot Hyprland exec rule so the new window opens beside the agent even if another workspace is currently focused. It refuses to guess from the globally active workspace.
 
-Inside a newly created pristine project or stream, `/init [optional goal]` performs a one-time low-ceremony setup of concise stable scope in `AGENTS.md`, immediate tasks in `TODO.md`, any essential operational guardrail, and one start worklog entry. It refuses to run when the attached scope has already been initialized or its core artifacts contain meaningful material. Initialization never begins substantive work or external operations.
+Inside a project or stream, `/init [optional goal]` performs a one-time low-ceremony setup of concise stable scope in `AGENTS.md`, immediate tasks in `TODO.md`, any essential operational guardrail, and a start worklog entry when one is not already present. Existing artifacts and worklog events are preserved and incorporated rather than blocking initialization. Only the completed initialization marker prevents another `/init`. Initialization never begins substantive work or external operations.
 
 A read-only workspace snapshot can be captured without dispatching, focusing, moving, or closing windows:
 

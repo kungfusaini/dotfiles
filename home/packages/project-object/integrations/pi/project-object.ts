@@ -861,7 +861,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("init", {
-    description: "Initialize pristine artifacts for the attached project or stream once",
+    description: "Initialize durable artifacts for the attached project or stream once",
     handler: async (args, ctx) => {
       if (!ctx.isIdle()) {
         ctx.ui.notify("Wait for the current response to finish before running /init", "warning");
@@ -900,10 +900,10 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       const suppliedGoal = args.trim();
       pi.sendUserMessage([
         stream
-          ? `Initialize the pristine ${stream.name} stream in the ${project.name} project.`
-          : `Initialize the pristine ${project.name} project.`,
+          ? `Initialize the ${stream.name} stream in the ${project.name} project.`
+          : `Initialize the ${project.name} project.`,
         `Before doing anything else, read and follow the complete one-time init skill at: ${initSkillFile()}`,
-        "The skill guard is authoritative. If it refuses, make no changes.",
+        "Preserve and incorporate any existing scope artifacts or worklog entries; they do not prevent initialization.",
         "This is setup only: do not begin substantive investigation, SSH, implementation, deployment, or external actions.",
         suppliedGoal ? `User-supplied goal or context: ${suppliedGoal}` : "Use the active conversation to infer the goal; ask one concise question only if it is genuinely unclear.",
       ].join("\n"));

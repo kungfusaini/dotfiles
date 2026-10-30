@@ -125,6 +125,7 @@ def initialize_stream_home(project, stream, home=None, scope=None, initial_tasks
         ensure_directory(home / directory)
     scope_text = scope.strip() if scope else "<!-- project-object:init-scope -->"
     task_lines = "\n".join(f"- {task}" for task in (initial_tasks or []))
+    task_block = f"{task_lines}\n\n" if task_lines else ""
     files = {
         "AGENTS.md": f"""# {stream['name']}
 
@@ -137,7 +138,7 @@ Keep stable stream scope and rules here, rough or changing information in `NOTES
 {scope_text}
 """,
         "NOTES.md": "# Notes\n",
-        "TODO.md": f"# Todo\n\n## Now\n\n{task_lines}\n\n## Next\n\n## Waiting\n",
+        "TODO.md": f"# Todo\n\n## Now\n\n{task_block}## Next\n\n## Waiting\n",
     }
     for name, content in files.items():
         target = home / name
