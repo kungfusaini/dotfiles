@@ -210,8 +210,11 @@ class PickerTests(unittest.TestCase):
         registry = {"version": 1, "projects": []}
         with mock.patch.object(self.picker, "live_workspace_exists", return_value=False):
             project = self.picker.create_project(registry, "New Project", str(self.root))
-        agents = self.picker.project_home(project) / "AGENTS.md"
+        home = self.picker.project_home(project)
+        agents = home / "AGENTS.md"
         self.assertIn("<!-- project-object:init-scope -->", agents.read_text())
+        self.assertTrue((home / "skills").is_dir())
+        self.assertEqual((home / "skills").stat().st_mode & 0o777, 0o700)
 
     def test_registry_write_failure_removes_new_project_home(self):
         ui = self.picker.PickerUI.__new__(self.picker.PickerUI)
@@ -266,7 +269,7 @@ class PickerTests(unittest.TestCase):
         self.assertIn("<!-- project-object:init-scope -->", instructions)
         self.assertNotIn(".creating-", instructions)
         self.assertEqual((home / "TODO.md").read_text(), "# Todo\n\n## Now\n\n## Next\n\n## Waiting\n")
-        for name in ("plans", "worklogs", "snapshots"):
+        for name in ("plans", "skills", "worklogs", "snapshots"):
             self.assertTrue((home / name).is_dir())
             self.assertEqual((home / name).stat().st_mode & 0o777, 0o700)
         saved = __import__("json").loads((self.picker.project_home(self.project) / "streams.json").read_text())

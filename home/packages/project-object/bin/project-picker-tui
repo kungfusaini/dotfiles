@@ -106,6 +106,7 @@ def initialize_project_home(project, home=None):
     home = home or project_home(project)
     ensure_directory(home)
     ensure_directory(home / "plans")
+    ensure_directory(home / "skills")
     ensure_directory(home / "snapshots")
     ensure_directory(home / "worklogs")
 
@@ -114,7 +115,7 @@ def initialize_project_home(project, home=None):
 
 This file holds concise, stable project scope and guidance that every attached agent should receive. Keep changing facts in the repository or `NOTES.md`, current work in `TODO.md`, detailed plans in `plans/`, and completed history in the worklog.
 
-Project guidance is inherited by streams. Repository-local `AGENTS.md` files remain authoritative for repository-specific commands and implementation rules.
+Project guidance and Project Object-owned skills are inherited by streams. Repository-local `AGENTS.md` files remain authoritative for repository-specific commands and implementation rules.
 
 ## Scope
 
@@ -133,7 +134,7 @@ Project guidance is inherited by streams. Repository-local `AGENTS.md` files rem
 def initialize_stream_home(project, stream, home=None, scope=None, initial_tasks=None):
     home = home or stream_home(project, stream)
     ensure_directory(home)
-    for directory in ("plans", "snapshots", "worklogs"):
+    for directory in ("plans", "skills", "snapshots", "worklogs"):
         ensure_directory(home / directory)
     scope_text = scope.strip() if scope else "<!-- project-object:init-scope -->"
     task_lines = "\n".join(f"- {task}" for task in (initial_tasks or []))
@@ -141,7 +142,7 @@ def initialize_stream_home(project, stream, home=None, scope=None, initial_tasks
     files = {
         "AGENTS.md": f"""# {stream['name']}
 
-This is a stream within the **{project['name']}** project. Project guidance is inherited and remains authoritative. Repository-local `AGENTS.md` files govern repository-specific commands and implementation rules.
+This is a stream within the **{project['name']}** project. Project guidance and skills are inherited and remain authoritative. Repository-local `AGENTS.md` files govern repository-specific commands and implementation rules.
 
 Keep stable stream scope and rules here, rough or changing information in `NOTES.md`, current work in `TODO.md`, detailed plans in `plans/`, and completed history in the worklog. Do not copy stream detail into project artifacts automatically. Use `projectAttention: true` only when parent-project review is genuinely needed.
 

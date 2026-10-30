@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
+import { chmodSync, closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
@@ -11,6 +11,9 @@ const MAX_WORKLOG_BYTES = 32 * 1024 * 1024;
 const MAX_WORKLOG_ENTRY_BYTES = 16 * 1024;
 const MAX_RECENT_WORKLOG_EVENTS = 10;
 const MAX_RECENT_WORKLOG_BYTES = 8 * 1024;
+const MAX_SCOPE_SKILLS = 128;
+const MAX_SKILL_SNAPSHOT_ENTRIES = 2048;
+const MAX_SKILL_SNAPSHOT_BYTES = 32 * 1024 * 1024;
 const MAX_WORKLOG_TAIL_BYTES = 12 * MAX_WORKLOG_ENTRY_BYTES;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const WORKLOG_TYPES = ["start", "progress", "decision", "mistake", "stuck", "finish", "next", "note"] as const;
@@ -685,6 +688,183 @@ export function readAgentInstructions(project: ProjectContext, afterProjectDirec
   }
 }
 
+type ScopeSkillSnapshot = { skillPaths: string[]; snapshotRoot?: string };
+type SkillSnapshotBudget = { entries: number; bytes: number };
+
+function createSkillSnapshotRoot(): string {
+  const root = runtimeRoot();
+  mkdirSync(root, { recursive: true, mode: 0o700 });
+  const rootMetadata = lstatSync(root);
+  if (rootMetadata.isSymbolicLink() || !rootMetadata.isDirectory()) throw new Error("Project Object runtime root must be a regular non-symlink directory");
+  chmodSync(root, 0o700);
+  const snapshots = join(root, "skill-snapshots");
+  mkdirSync(snapshots, { recursive: true, mode: 0o700 });
+  const snapshotsMetadata = lstatSync(snapshots);
+  if (snapshotsMetadata.isSymbolicLink() || !snapshotsMetadata.isDirectory()) throw new Error("skill snapshot root must be a regular non-symlink directory");
+  chmodSync(snapshots, 0o700);
+  const snapshot = mkdtempSync(join(snapshots, `${process.pid}-`));
+  chmodSync(snapshot, 0o700);
+  return snapshot;
+}
+
+function copyValidatedSkillTree(sourceDescriptor: number, destination: string, budget: SkillSnapshotBudget): void {
+  for (const name of readdirSync(`/proc/self/fd/${sourceDescriptor}`).sort()) {
+    budget.entries += 1;
+    if (budget.entries > MAX_SKILL_SNAPSHOT_ENTRIES) throw new Error(`skill snapshot exceeds the ${MAX_SKILL_SNAPSHOT_ENTRIES}-entry limit`);
+    const sourcePath = `/proc/self/fd/${sourceDescriptor}/${name}`;
+    const destinationPath = join(destination, name);
+    const metadata = lstatSync(sourcePath);
+    if (metadata.isSymbolicLink()) throw new Error(`skill content must not contain symlinks: ${name}`);
+    if (metadata.isDirectory()) {
+      let childDescriptor: number;
+      try {
+        childDescriptor = openSync(sourcePath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+      } catch (error) {
+        throw new Error(`cannot open skill content directory safely (${name}): ${(error as Error).message}`);
+      }
+      try {
+        mkdirSync(destinationPath, { mode: 0o700 });
+        copyValidatedSkillTree(childDescriptor, destinationPath, budget);
+      } finally {
+        closeSync(childDescriptor);
+      }
+      continue;
+    }
+    if (!metadata.isFile()) throw new Error(`skill content must contain only regular files and directories: ${name}`);
+
+    let fileDescriptor: number;
+    try {
+      fileDescriptor = openSync(sourcePath, constants.O_RDONLY | constants.O_NOFOLLOW);
+    } catch (error) {
+      throw new Error(`cannot open skill content safely (${name}): ${(error as Error).message}`);
+    }
+    try {
+      const openedMetadata = fstatSync(fileDescriptor);
+      if (!openedMetadata.isFile() || openedMetadata.nlink !== 1) throw new Error(`skill content must be a singly linked regular file: ${name}`);
+      const remaining = MAX_SKILL_SNAPSHOT_BYTES - budget.bytes;
+      if (openedMetadata.size > remaining) throw new Error(`skill snapshot exceeds the ${MAX_SKILL_SNAPSHOT_BYTES}-byte limit`);
+      let destinationDescriptor: number | undefined;
+      try {
+        destinationDescriptor = openSync(destinationPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+        let copied = 0;
+        while (copied <= remaining) {
+          const chunk = Buffer.alloc(Math.min(8192, remaining + 1 - copied));
+          const count = readSync(fileDescriptor, chunk, 0, chunk.length, null);
+          if (count === 0) break;
+          let written = 0;
+          while (written < count) {
+            const bytesWritten = writeSync(destinationDescriptor, chunk, written, count - written);
+            if (bytesWritten <= 0) throw new Error(`could not complete skill snapshot write: ${name}`);
+            written += bytesWritten;
+          }
+          copied += count;
+        }
+        if (copied > remaining) throw new Error(`skill snapshot exceeds the ${MAX_SKILL_SNAPSHOT_BYTES}-byte limit`);
+        fchmodSync(destinationDescriptor, openedMetadata.mode & 0o111 ? 0o700 : 0o600);
+        budget.bytes += copied;
+        closeSync(destinationDescriptor);
+        destinationDescriptor = undefined;
+      } catch (error) {
+        if (destinationDescriptor !== undefined) closeSync(destinationDescriptor);
+        try { unlinkSync(destinationPath); } catch { /* The destination may not have been created. */ }
+        throw error;
+      }
+    } finally {
+      closeSync(fileDescriptor);
+    }
+  }
+}
+
+export function discoverScopeSkills(project: ProjectContext, stream?: StreamContext): ScopeSkillSnapshot {
+  const scopeHome = stream?.streamHome || project.projectHome;
+  const scopeLabel = stream ? "stream" : "project";
+  let scopeDescriptor: number;
+  try {
+    scopeDescriptor = openSync(scopeHome, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { skillPaths: [] };
+    throw new Error(`cannot open ${scopeLabel} home safely for skill discovery: ${(error as Error).message}`);
+  }
+
+  try {
+    const expectedHome = stream
+      ? join(realpathSync(dataRoot()), "projects", project.id, "streams", stream.id)
+      : join(realpathSync(dataRoot()), "projects", project.id);
+    const openedHome = realpathSync(`/proc/self/fd/${scopeDescriptor}`);
+    if (openedHome !== expectedHome) throw new Error(`opened ${scopeLabel} home does not match the canonical UUID path during skill discovery`);
+
+    let skillsDescriptor: number;
+    try {
+      skillsDescriptor = openSync(`/proc/self/fd/${scopeDescriptor}/skills`, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return { skillPaths: [] };
+      throw new Error(`cannot open ${scopeLabel} skills directory safely: ${(error as Error).message}`);
+    }
+
+    try {
+      const openedSkills = realpathSync(`/proc/self/fd/${skillsDescriptor}`);
+      if (relative(openedHome, openedSkills) !== "skills") throw new Error(`${scopeLabel} skills directory escapes its scope home`);
+      const names = readdirSync(`/proc/self/fd/${skillsDescriptor}`).sort();
+      if (names.length > MAX_SCOPE_SKILLS) throw new Error(`${scopeLabel} skills directory exceeds the ${MAX_SCOPE_SKILLS}-entry limit`);
+
+      const skillFiles: string[] = [];
+      const budget = { entries: 0, bytes: 0 };
+      let snapshotRoot: string | undefined;
+      try {
+        for (const name of names) {
+          const entryPath = `/proc/self/fd/${skillsDescriptor}/${name}`;
+          const entryMetadata = lstatSync(entryPath);
+          if (entryMetadata.isSymbolicLink()) throw new Error(`${scopeLabel} skill entry must not be a symlink: ${name}`);
+          if (!entryMetadata.isDirectory()) continue;
+
+          let skillDescriptor: number;
+          try {
+            skillDescriptor = openSync(entryPath, constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW);
+          } catch (error) {
+            throw new Error(`cannot open ${scopeLabel} skill directory safely (${name}): ${(error as Error).message}`);
+          }
+          try {
+            const openedSkill = realpathSync(`/proc/self/fd/${skillDescriptor}`);
+            if (relative(openedSkills, openedSkill) !== name) throw new Error(`${scopeLabel} skill directory escapes its skills root: ${name}`);
+
+            let instructionsDescriptor: number;
+            try {
+              instructionsDescriptor = openSync(`/proc/self/fd/${skillDescriptor}/SKILL.md`, constants.O_RDONLY | constants.O_NOFOLLOW);
+            } catch (error) {
+              if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+              throw new Error(`cannot open ${scopeLabel} skill instructions safely (${name}): ${(error as Error).message}`);
+            }
+            try {
+              const instructionsMetadata = fstatSync(instructionsDescriptor);
+              if (!instructionsMetadata.isFile() || instructionsMetadata.nlink !== 1) throw new Error(`${scopeLabel} skill instructions must be a singly linked regular file: ${name}/SKILL.md`);
+              const openedInstructions = realpathSync(`/proc/self/fd/${instructionsDescriptor}`);
+              if (relative(openedSkill, openedInstructions) !== "SKILL.md") throw new Error(`${scopeLabel} skill instructions escape their skill directory: ${name}/SKILL.md`);
+            } finally {
+              closeSync(instructionsDescriptor);
+            }
+
+            snapshotRoot ||= createSkillSnapshotRoot();
+            const snapshotSkill = join(snapshotRoot, name);
+            mkdirSync(snapshotSkill, { mode: 0o700 });
+            copyValidatedSkillTree(skillDescriptor, snapshotSkill, budget);
+            skillFiles.push(join(snapshotSkill, "SKILL.md"));
+          } finally {
+            closeSync(skillDescriptor);
+          }
+        }
+        return { skillPaths: skillFiles, snapshotRoot };
+      } catch (error) {
+        if (snapshotRoot) rmSync(snapshotRoot, { recursive: true, force: true });
+        throw error;
+      }
+    } finally {
+      closeSync(skillsDescriptor);
+    }
+  } finally {
+    closeSync(scopeDescriptor);
+  }
+}
+
 export default function projectObjectExtension(pi: ExtensionAPI) {
   let resolution: Resolution = {};
   let startupWorklog = "";
@@ -693,6 +873,30 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   let activeSessionId: string | undefined;
   let activityState: "working" | "idle" = "idle";
   let closePoll: NodeJS.Timeout | undefined;
+  let skillSnapshotRoots: string[] = [];
+
+  const removeSkillSnapshots = () => {
+    for (const snapshot of skillSnapshotRoots) {
+      try { rmSync(snapshot, { recursive: true, force: true }); } catch { /* Private runtime snapshots are best-effort cleanup. */ }
+    }
+    skillSnapshotRoots = [];
+  };
+
+  pi.on("resources_discover", () => {
+    removeSkillSnapshots();
+    if (!resolution.project && !resolution.error) resolution = resolveProject();
+    if (resolution.error || !resolution.project) return {};
+    try {
+      const projectSkills = discoverScopeSkills(resolution.project);
+      if (projectSkills.snapshotRoot) skillSnapshotRoots.push(projectSkills.snapshotRoot);
+      const streamSkills = resolution.stream ? discoverScopeSkills(resolution.project, resolution.stream) : { skillPaths: [] };
+      if (streamSkills.snapshotRoot) skillSnapshotRoots.push(streamSkills.snapshotRoot);
+      return { skillPaths: [...streamSkills.skillPaths, ...projectSkills.skillPaths] };
+    } catch (error) {
+      removeSkillSnapshots();
+      throw error;
+    }
+  });
 
   pi.on("session_start", async (_event, ctx) => {
     startupWorklog = "";
@@ -764,6 +968,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
 
   pi.on("session_shutdown", () => {
     if (closePoll) clearInterval(closePoll);
+    removeSkillSnapshots();
     closePoll = undefined;
     try { removeActivity(); } catch { /* advisory */ }
     try { removeCloseAck(); } catch { /* advisory */ }

@@ -217,6 +217,136 @@ console.log(JSON.stringify({sent, notices}));
         self.assertIsNone(output.get("sent"))
         self.assertTrue(any("already been initialized" in notice for notice in output["notices"]))
 
+    def test_project_object_skills_are_discovered_with_stream_inheritance(self):
+        project_home = self.home / self.project_id
+        project_skill = project_home / "skills" / "project-guide"
+        project_skill.mkdir(parents=True)
+        (project_skill / "SKILL.md").write_text("---\nname: project-guide\ndescription: Project guidance.\n---\n")
+        script = project_skill / "scripts" / "run.sh"
+        script.parent.mkdir()
+        script.write_text("#!/bin/sh\nprintf 'project skill\\n'\n")
+        script.chmod(0o700)
+
+        expression = """
+const handlers = {};
+const pi = {
+  on: (name, handler) => { handlers[name] = handler; },
+  registerTool: () => {}, registerCommand: () => {},
+};
+m.default(pi);
+console.log(JSON.stringify(handlers.resources_discover({ type: 'resources_discover', cwd: process.cwd(), reason: 'startup' }, {})));
+"""
+        runtime = self.root / "runtime"
+        result = self.node(expression, {
+            "PROJECT_OBJECT_ID": self.project_id,
+            "PROJECT_OBJECT_RUNTIME_DIR": str(runtime),
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        project_paths = json.loads(result.stdout)["skillPaths"]
+        self.assertEqual(len(project_paths), 1)
+        self.assertTrue(project_paths[0].endswith("/project-guide/SKILL.md"))
+        self.assertTrue(Path(project_paths[0]).is_relative_to(runtime / "skill-snapshots"))
+        snapshot_skill = Path(project_paths[0]).parent
+        self.assertEqual(Path(project_paths[0]).read_text(), (project_skill / "SKILL.md").read_text())
+        self.assertEqual((snapshot_skill / "scripts" / "run.sh").read_text(), script.read_text())
+        self.assertEqual((snapshot_skill / "scripts" / "run.sh").stat().st_mode & 0o777, 0o700)
+        (project_skill / "SKILL.md").write_text("replaced after discovery")
+        self.assertIn("name: project-guide", Path(project_paths[0]).read_text())
+
+        stream_id = str(uuid.uuid4())
+        stream_home = project_home / "streams" / stream_id
+        stream_skill = stream_home / "skills" / "stream-guide"
+        stream_skill.mkdir(parents=True)
+        (stream_skill / "SKILL.md").write_text("---\nname: stream-guide\ndescription: Stream guidance.\n---\n")
+        (project_home / "streams.json").write_text(json.dumps({
+            "version": 1,
+            "streams": [{"id": stream_id, "name": "Focused Work", "mainDirectory": None, "archivedAt": None}],
+        }))
+        (project_skill / "SKILL.md").write_text("---\nname: project-guide\ndescription: Project guidance.\n---\n")
+        result = self.node(expression, {
+            "PROJECT_OBJECT_ID": self.project_id,
+            "PROJECT_OBJECT_STREAM_ID": stream_id,
+            "PROJECT_OBJECT_RUNTIME_DIR": str(runtime),
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        stream_paths = json.loads(result.stdout)["skillPaths"]
+        self.assertEqual([Path(path).parent.name for path in stream_paths], ["stream-guide", "project-guide"])
+        self.assertTrue(all(Path(path).is_relative_to(runtime / "skill-snapshots") for path in stream_paths))
+
+    def test_project_object_skill_snapshots_are_removed_on_shutdown(self):
+        project_home = self.home / self.project_id
+        skill = project_home / "skills" / "cleanup"
+        skill.mkdir(parents=True)
+        (skill / "SKILL.md").write_text("---\nname: cleanup\ndescription: Cleanup test.\n---\n")
+        expression = """
+const handlers = {};
+const pi = {
+  on: (name, handler) => { handlers[name] = handler; },
+  registerTool: () => {}, registerCommand: () => {},
+};
+m.default(pi);
+const discovered = handlers.resources_discover({ type: 'resources_discover', cwd: process.cwd(), reason: 'startup' }, {});
+const snapshot = discovered.skillPaths[0];
+const existedBefore = fs.existsSync(snapshot);
+await handlers.session_shutdown({}, {});
+console.log(JSON.stringify({ existedBefore, existsAfter: fs.existsSync(snapshot) }));
+"""
+        result = self.node(expression, {
+            "PROJECT_OBJECT_ID": self.project_id,
+            "PROJECT_OBJECT_RUNTIME_DIR": str(self.root / "runtime"),
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {"existedBefore": True, "existsAfter": False})
+
+    def test_project_object_skill_discovery_rejects_symlinked_roots_and_entries(self):
+        project_home = self.home / self.project_id
+        outside = self.root / "outside-skills"
+        outside.mkdir()
+        (project_home / "skills").symlink_to(outside, target_is_directory=True)
+        project = {
+            "id": self.project_id,
+            "name": "Alpha",
+            "mainDirectory": str(self.main),
+            "projectHome": str(project_home),
+            "agentsFile": str(project_home / "AGENTS.md"),
+        }
+        expression = f"try {{ m.discoverScopeSkills({json.dumps(project)}); }} catch (error) {{ console.log(error.message); }}"
+        result = self.node(expression)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("cannot open project skills directory safely", result.stdout)
+
+        (project_home / "skills").unlink()
+        (project_home / "skills").mkdir()
+        (project_home / "skills" / "escaped").symlink_to(outside, target_is_directory=True)
+        result = self.node(expression)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("skill entry must not be a symlink", result.stdout)
+
+    def test_project_object_skill_discovery_rejects_linked_skill_instructions(self):
+        project_home = self.home / self.project_id
+        skill = project_home / "skills" / "unsafe"
+        skill.mkdir(parents=True)
+        outside = self.root / "outside-skill.md"
+        outside.write_text("unsafe")
+        (skill / "SKILL.md").symlink_to(outside)
+        project = {
+            "id": self.project_id,
+            "name": "Alpha",
+            "mainDirectory": str(self.main),
+            "projectHome": str(project_home),
+            "agentsFile": str(project_home / "AGENTS.md"),
+        }
+        expression = f"try {{ m.discoverScopeSkills({json.dumps(project)}); }} catch (error) {{ console.log(error.message); }}"
+        result = self.node(expression)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("cannot open project skill instructions safely", result.stdout)
+
+        (skill / "SKILL.md").unlink()
+        os.link(outside, skill / "SKILL.md")
+        result = self.node(expression)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("singly linked regular file", result.stdout)
+
     def test_catchup_command_requests_recent_work_and_next_step_only(self):
         expression = """
 const commands = {};

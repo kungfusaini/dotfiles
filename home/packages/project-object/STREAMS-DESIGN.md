@@ -36,8 +36,9 @@ A stream-scoped agent receives, in order:
 
 1. project `AGENTS.md`;
 2. stream `AGENTS.md`;
-3. up to ten newest stream worklog events within an 8 KiB rendered limit;
-4. normal repository-local instructions discovered by the coding agent.
+3. stream-local skills followed by inherited project skills;
+4. up to ten newest stream worklog events within an 8 KiB rendered limit;
+5. normal repository-local instructions and skills discovered by the coding agent.
 
 Older worklog history, notes, tasks, plans, and repository facts remain available on demand. Project worklogs are not copied into stream context.
 
@@ -66,6 +67,7 @@ AGENTS.md
 NOTES.md
 TODO.md
 plans/
+skills/
 worklogs/
 snapshots/
 ```
@@ -74,6 +76,7 @@ snapshots/
 - `NOTES.md` is an informal scratchpad for rough, changing, or unverified material.
 - `TODO.md` is the authoritative current task list for the stream, organized around now, next, and waiting work.
 - `plans/` contains stream-owned detailed plans when they are useful.
+- `skills/` contains Project Object-owned Pi skills as `<skill-name>/SKILL.md`; stream sessions load these before inherited project skills.
 - `worklogs/` contains append-only stream history, decisions, blockers, and outcomes.
 - `snapshots/` contains system-managed workspace restoration evidence.
 

@@ -47,7 +47,7 @@ Keyboard controls:
 - `a` — from a project header, archive the project after confirmation, safely closing its project and stream workspaces while retaining artifacts and Pi sessions
 - `Esc` — leave search or close the picker
 
-Projects can contain independently openable streams. Each stream receives its own literal Hyprland workspace (`Project · Stream`), inherited project instructions, isolated notes, tasks, plans and artifacts, stream-scoped worklogs, and a separate Pi session directory. Git-backed streams also receive a shared stream-specific branch and worktree. Registration is immediate; the checkout is prepared on first open. Multi-repository projects require choosing the repository, while explicitly non-code streams can inherit the project directory. Preparation failures never fall back to a shared checkout. The scope boundary and artifact model are defined in [`STREAMS-DESIGN.md`](STREAMS-DESIGN.md).
+Projects can contain independently openable streams. Each stream receives its own literal Hyprland workspace (`Project · Stream`), inherited project instructions and skills, isolated notes, tasks, plans, local skills and artifacts, stream-scoped worklogs, and a separate Pi session directory. Git-backed streams also receive a shared stream-specific branch and worktree. Registration is immediate; the checkout is prepared on first open. Multi-repository projects require choosing the repository, while explicitly non-code streams can inherit the project directory. Preparation failures never fall back to a shared checkout. The scope boundary and artifact model are defined in [`STREAMS-DESIGN.md`](STREAMS-DESIGN.md).
 
 An attached stream agent can use `project_stream_archive` after its finish worklog as its final tool operation. Once the final response settles, a detached lifecycle process snapshots and closes the stream workspace—including the invoking Pi session—and marks the stream archived only after closure succeeds. Managed worktrees and branches are retained to avoid racing background writers and discarding data; cleanup is a separate future lifecycle. The parent project, sibling streams, artifacts, worklogs, and session history remain intact.
 
@@ -56,6 +56,8 @@ Web links are project-aware. In Kitty, a normal click opens or reuses a companio
 Agents launch other graphical applications with `project-workspace-exec COMMAND [ARG ...]`. It identifies the Hyprland workspace containing the invoking terminal from process ancestry, falls back to the exact workspace recorded by `project-terminal`, and applies a silent one-shot Hyprland exec rule so the new window opens beside the agent even if another workspace is currently focused. It refuses to guess from the globally active workspace.
 
 Inside a project or stream, `/init [optional goal]` performs a one-time low-ceremony setup of concise stable scope in `AGENTS.md`, immediate tasks in `TODO.md`, any essential operational guardrail, and a start worklog entry when one is not already present. Existing artifacts and worklog events are preserved and incorporated rather than blocking initialization. Only the completed initialization marker prevents another `/init`. Initialization never begins substantive work or external operations.
+
+Project Object-owned Pi skills live in `skills/<skill-name>/SKILL.md` under the project or stream home, alongside the other durable scope artifacts rather than in a repository. Project sessions load project skills; stream sessions load stream skills first and then inherit project skills. Supporting scripts, references, and assets stay inside the same skill directory. Run Pi's `/reload` after adding or changing a skill. Discovery accepts only direct `SKILL.md` files and singly linked regular supporting files in non-symlinked skill directories contained by the canonical private scope home. Pi loads a private, size-bounded runtime snapshot, while the Project Object directory remains the editable source of truth.
 
 A read-only workspace snapshot can be captured without dispatching, focusing, moving, or closing windows:
 
@@ -72,6 +74,7 @@ The hardened implementation also includes:
 - private `0700` directories and `0600` state files;
 - rollback-aware project creation and workspace opening;
 - bounded, error-handled Pi `AGENTS.md` injection;
+- canonical, containment-checked project and stream Pi skill discovery;
 - a private append-only project worklog with a validated Pi append tool, size-bounded recent-event injection at session start, and deeper on-demand `/catchup` retrieval;
 - private, atomic, read-only capture of project workspace and window metadata;
 - a Nix package and Home Manager module;

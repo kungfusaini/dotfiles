@@ -34,9 +34,9 @@ Separate known facts from hypotheses. Do not claim that exploratory assumptions 
 
 Use the existing `Now`, `Next`, and `Waiting` sections. Preserve existing tasks and merge roughly three to seven immediate, scope-owned actions without duplication. Prefer discovery and decision steps before implementation when the goal is exploratory. Put real external blockers under `Waiting`; do not duplicate completed history.
 
-### `NOTES.md` and `plans/`
+### `NOTES.md`, `plans/`, and `skills/`
 
-Leave them untouched by default. Use `NOTES.md` only when the user already supplied rough, changing, or unverified material worth retaining. Use `plans/` only for an actual detailed plan; do not create one merely because the directory exists.
+Leave them untouched by default. Use `NOTES.md` only when the user already supplied rough, changing, or unverified material worth retaining. Use `plans/` only for an actual detailed plan; do not create one merely because the directory exists. Create or change a Project Object-owned skill only when the user separately requests that reusable workflow.
 
 ### Worklog
 

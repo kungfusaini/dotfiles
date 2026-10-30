@@ -19,6 +19,7 @@ AGENTS.md
 NOTES.md
 TODO.md
 plans/
+skills/
 snapshots/
 worklogs/
 ```
@@ -65,13 +66,16 @@ integrations/pi/project-object.ts
 
 The Nix package installs the extension in the immutable store and the Home Manager integration links Pi directly to that packaged file. Hyprland likewise invokes packaged picker and terminal executables rather than mutable checkout paths.
 
-At Pi session start, the extension:
+At Pi resource discovery and session start, the extension:
 
 - resolves `PROJECT_OBJECT_ID`, with active-workspace fallback;
 - displays `Project: <name>` in Pi's status area;
 - exposes `/project` to show the resolved project paths;
 - exposes `project_worklog_append` for validated, private, append-only continuity events at `worklogs/events.jsonl`;
-- exposes `/catchup [optional focus]` to ask Pi for a concise account of recent work, the stopping point, and the next action using that worklog, the current TODO, relevant notes, and Git evidence.
+- exposes `/catchup [optional focus]` to ask Pi for a concise account of recent work, the stopping point, and the next action using that worklog, the current TODO, relevant notes, and Git evidence;
+- advertises Project Object-owned skills from `skills/<skill-name>/SKILL.md`, with stream skills ordered before inherited project skills.
+
+Skill discovery validates the canonical UUID scope home, skills root, immediate skill directory, and singly linked regular skill contents without following symlinks. It copies each validated skill into a private, size-bounded runtime snapshot so later Pi invocation cannot reopen a replaced source path; the Project Object skill directory remains the editable source of truth. Missing skill roots and directories without `SKILL.md` are ignored. Pi handles skill metadata validation and command/model routing; `/reload` refreshes changed skills.
 
 At session start, the extension securely reads the project-owned `AGENTS.md`, the stream `AGENTS.md` when attached, and up to ten newest events from the attached scope worklog. The instructions are limited to 64 KiB each; the rendered worklog is capped at 8 KiB and omits IDs, file lists, and other structural metadata. Files must be regular, non-symlinked, singly linked where applicable, and contained beneath the canonical UUID scope home. Registry and read failures are surfaced without injecting untrusted content. Repository-local instructions continue loading through Pi's normal discovery.
 
