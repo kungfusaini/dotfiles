@@ -49,6 +49,8 @@ Keyboard controls:
 
 Projects can contain independently openable streams. Each stream receives its own literal Hyprland workspace (`Project · Stream`), inherited project instructions, isolated notes, tasks, plans and artifacts, stream-scoped worklogs, and a separate Pi session directory. The scope boundary and artifact model are defined in [`STREAMS-DESIGN.md`](STREAMS-DESIGN.md).
 
+An attached stream agent can use `project_stream_archive` after its finish worklog as its final tool operation. Once the final response settles, a detached lifecycle process snapshots and closes the stream workspace—including the invoking Pi session—and marks the stream archived only after closure succeeds. The parent project, sibling streams, artifacts, worklogs, and session history remain intact.
+
 Inside a newly created pristine project or stream, `/init [optional goal]` performs a one-time low-ceremony setup of concise stable scope in `AGENTS.md`, immediate tasks in `TODO.md`, any essential operational guardrail, and one start worklog entry. It refuses to run when the attached scope has already been initialized or its core artifacts contain meaningful material. Initialization never begins substantive work or external operations.
 
 A read-only workspace snapshot can be captured without dispatching, focusing, moving, or closing windows:

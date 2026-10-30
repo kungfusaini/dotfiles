@@ -248,6 +248,39 @@ class PickerTests(unittest.TestCase):
         self.assertIn([self.picker.HYPRCTL, "dispatch", "closewindow", "address:0xabc"], commands)
         write.assert_called_once()
 
+    def test_archive_stream_closes_workspace_before_registry_update(self):
+        stream = {"id": str(uuid.uuid4()), "name": "Focused Work", "archivedAt": None, "updatedAt": "before"}
+        stream_registry = {"version": 1, "streams": [stream]}
+        calls = []
+
+        def close(_project, _stream, _session):
+            calls.append("close")
+            self.assertIsNone(stream["archivedAt"])
+
+        def write(path, value):
+            calls.append("write")
+            self.assertEqual(path, self.picker.project_home(self.project) / "streams.json")
+            self.assertIs(value, stream_registry)
+            self.assertIsNotNone(stream["archivedAt"])
+
+        with mock.patch.object(self.picker, "close_stream", side_effect=close), \
+             mock.patch.object(self.picker, "write_json_atomic", side_effect=write):
+            self.picker.archive_stream(self.project, stream, stream_registry, self.session)
+
+        self.assertEqual(calls, ["close", "write"])
+        self.assertNotEqual(stream["updatedAt"], "before")
+
+    def test_archive_stream_close_failure_leaves_stream_active(self):
+        stream = {"id": str(uuid.uuid4()), "name": "Focused Work", "archivedAt": None, "updatedAt": "before"}
+        stream_registry = {"version": 1, "streams": [stream]}
+        with mock.patch.object(self.picker, "close_stream", side_effect=RuntimeError("window refused")), \
+             mock.patch.object(self.picker, "write_json_atomic") as write:
+            with self.assertRaisesRegex(RuntimeError, "window refused"):
+                self.picker.archive_stream(self.project, stream, stream_registry, self.session)
+        self.assertIsNone(stream["archivedAt"])
+        self.assertEqual(stream["updatedAt"], "before")
+        write.assert_not_called()
+
     def test_archive_project_closes_streams_and_project_before_registry_update(self):
         stream_one = {"id": str(uuid.uuid4()), "name": "One", "archivedAt": None}
         stream_two = {"id": str(uuid.uuid4()), "name": "Two", "archivedAt": None}

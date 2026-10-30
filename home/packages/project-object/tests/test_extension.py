@@ -320,6 +320,76 @@ console.log(JSON.stringify(result));
         self.assertEqual(response["details"]["projectId"], self.project_id)
         self.assertNotEqual(response["details"]["streamId"], current_stream_id)
 
+    def test_stream_archive_runs_only_after_final_response_settles(self):
+        stream_id = str(uuid.uuid4())
+        (self.home / self.project_id / "streams.json").write_text(json.dumps({
+            "version": 1,
+            "streams": [{"id": stream_id, "name": "Finished Work", "mainDirectory": None, "archivedAt": None}],
+        }))
+        calls = self.root / "archive-calls"
+        lifecycle = self.root / "stream-lifecycle"
+        lifecycle.write_text(f"""#!/usr/bin/env python3
+import json
+import sys
+with open({str(calls)!r}, "a") as output:
+    output.write(json.dumps(sys.argv[1:]) + "\\n")
+if sys.argv[1] == "--check-archive-stream":
+    print(json.dumps({{"projectId": {self.project_id!r}, "streamId": {stream_id!r}, "name": "Finished Work"}}))
+""")
+        lifecycle.chmod(0o755)
+        expression = """
+const handlers = {};
+const tools = {};
+const pi = {
+  on: (name, handler) => { handlers[name] = handler; },
+  registerTool: (tool) => { tools[tool.name] = tool; },
+  registerCommand: () => {},
+};
+m.default(pi);
+const result = await tools.project_stream_archive.execute('call', {});
+const beforeSettled = fs.readFileSync(process.env.ARCHIVE_CALLS, 'utf8').trim().split('\\n').length;
+handlers.agent_settled();
+await new Promise((resolve) => setTimeout(resolve, 200));
+const calls = fs.readFileSync(process.env.ARCHIVE_CALLS, 'utf8').trim().split('\\n').map(JSON.parse);
+console.log(JSON.stringify({ result, beforeSettled, calls }));
+"""
+        result = self.node(expression, {
+            "PROJECT_OBJECT_ID": self.project_id,
+            "PROJECT_OBJECT_STREAM_ID": stream_id,
+            "PROJECT_OBJECT_STREAM_CLI": str(lifecycle),
+            "PROJECT_OBJECT_RUNTIME_DIR": str(self.root / "runtime"),
+            "ARCHIVE_CALLS": str(calls),
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        self.assertEqual(output["beforeSettled"], 1)
+        self.assertEqual(output["calls"], [
+            ["--check-archive-stream", "--project-id", self.project_id, "--stream-id", stream_id],
+            ["--archive-stream", "--project-id", self.project_id, "--stream-id", stream_id],
+        ])
+        self.assertTrue(output["result"]["details"]["pending"])
+        self.assertIn("final response", output["result"]["content"][0]["text"])
+
+    def test_stream_archive_rejects_project_scoped_session(self):
+        expression = """
+const tools = {};
+const pi = {
+  on: () => {},
+  registerTool: (tool) => { tools[tool.name] = tool; },
+  registerCommand: () => {},
+};
+m.default(pi);
+try {
+  await tools.project_stream_archive.execute('call', {});
+  console.log('unexpected success');
+} catch (error) {
+  console.log(error.message);
+}
+"""
+        result = self.node(expression, {"PROJECT_OBJECT_ID": self.project_id})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("only from an attached stream session", result.stdout)
+
     def test_project_stream_routing_is_global_not_project_specific(self):
         expression = """
 const handlers = {};
@@ -337,6 +407,8 @@ console.log(JSON.stringify({
   prompt: event.systemPromptOptions.sections.project_object,
   description: tools.project_stream_create.description,
   guidelines: tools.project_stream_create.promptGuidelines,
+  archiveDescription: tools.project_stream_archive.description,
+  archiveGuidelines: tools.project_stream_archive.promptGuidelines,
 }));
 """
         result = self.node(expression, {"PROJECT_OBJECT_ID": self.project_id})
@@ -346,6 +418,8 @@ console.log(JSON.stringify({
         self.assertIn("Do not use the workstream skill", output["prompt"])
         self.assertIn("project picker", output["description"])
         self.assertTrue(any("project_stream_create" in text for text in output["guidelines"]))
+        self.assertIn("closes all stream workspace windows", output["archiveDescription"])
+        self.assertTrue(any("final tool operation" in text for text in output["archiveGuidelines"]))
 
     def test_worklog_tool_appends_private_structured_entry(self):
         expression = """

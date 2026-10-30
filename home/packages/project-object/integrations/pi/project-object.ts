@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -15,6 +15,12 @@ const MAX_WORKLOG_TAIL_BYTES = 12 * MAX_WORKLOG_ENTRY_BYTES;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const WORKLOG_TYPES = ["start", "progress", "decision", "mistake", "stuck", "finish", "next", "note"] as const;
 const WORKLOG_TYPE_SET = new Set<string>(WORKLOG_TYPES);
+
+const StreamArchiveParameters = {
+  type: "object",
+  additionalProperties: false,
+  properties: {},
+} as const;
 
 const StreamCreateParameters = {
   type: "object",
@@ -590,6 +596,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   let resolution: Resolution = {};
   let startupWorklog = "";
   let startupWorklogError: string | undefined;
+  let pendingStreamArchive: { executable: string; projectId: string; streamId: string } | undefined;
 
   pi.on("session_start", async (_event, ctx) => {
     startupWorklog = "";
@@ -624,6 +631,19 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
 
   pi.on("agent_settled", () => {
     try { writeActivity(resolution, "idle"); } catch { /* advisory */ }
+    const pending = pendingStreamArchive;
+    pendingStreamArchive = undefined;
+    if (!pending) return;
+    const child = spawn(pending.executable, [
+      "--archive-stream",
+      "--project-id", pending.projectId,
+      "--stream-id", pending.streamId,
+    ], {
+      detached: true,
+      stdio: "ignore",
+    });
+    child.on("error", () => { /* Preflight already verified the executable; detached failure is reported by the lifecycle command when possible. */ });
+    child.unref();
   });
 
   pi.on("session_shutdown", () => {
@@ -659,7 +679,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
     }
     if (startupWorklog) instructions.push(`Recent ${stream ? "stream" : "project"} worklog (up to 10 newest events):\n${startupWorklog}`);
     if (startupWorklogError) instructions.push(`Recent worklog was not loaded: ${startupWorklogError}`);
-    instructions.push(`When the user asks to create a stream under this project, a stream in the picker, or a project workspace, use project_stream_create. ${stream ? "From this stream-scoped session, it creates a sibling stream under the same parent project. " : ""}Do not use the workstream skill unless the user explicitly asks for an isolated Git worktree or worker session.`);
+    instructions.push(`When the user asks to create a stream under this project, a stream in the picker, or a project workspace, use project_stream_create. ${stream ? "From this stream-scoped session, it creates a sibling stream under the same parent project. When the user asks to archive this stream, or its work is genuinely complete with no remaining tasks or next steps, use project_stream_archive as the final tool operation after writing the finish worklog. It snapshots and closes the whole stream workspace, including this Pi session, after your final response settles. " : ""}Do not use the workstream skill unless the user explicitly asks for an isolated Git worktree or worker session.`);
     instructions.push(worklogGuidance);
     instructions.push("For configured external APIs, use `project-api list` to discover APIs enabled for this project, `project-api describe <id>` for docs and authentication metadata, and `project-api request <id> <GET|POST|PUT|PATCH|DELETE> </path>` for authenticated calls. Never put credentials in prompts or worklogs. Existing CLIs such as `gh` are separate.");
     event.systemPromptOptions.sections.project_object = instructions.join("\n\n");
@@ -706,6 +726,55 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       return {
         content: [{ type: "text", text: `Created stream “${created.name}” in ${project.name}. It is now available in the project picker.` }],
         details: created,
+      };
+    },
+  });
+
+  pi.registerTool({
+    name: "project_stream_archive",
+    label: "Archive current project stream",
+    description: "Archive the attached Project Object stream when the user explicitly requests it or the stream is genuinely complete with no remaining tasks or next steps. Use this only from a stream-scoped session, as the final tool operation after appending the finish worklog. After the final response settles, a detached lifecycle process snapshots the stream, closes all stream workspace windows and their processes including this Pi session, verifies closure, and only then marks the stream archived. Sibling streams, the parent project, artifacts, worklogs, and Pi session history are retained.",
+    promptSnippet: "Archive the attached stream only when explicitly requested or genuinely complete; this terminates its workspace after the final response.",
+    promptGuidelines: ["Use project_stream_archive only for the attached stream, only when explicitly requested or genuinely complete, and only as the final tool operation after its finish worklog."],
+    parameters: StreamArchiveParameters,
+    async execute() {
+      if (!resolution.project && !resolution.error) resolution = resolveProject();
+      if (resolution.error) throw new Error(`Project context error: ${resolution.error}`);
+      const project = resolution.project;
+      const stream = resolution.stream;
+      if (!project) throw new Error("No project object is attached to this Pi session");
+      if (!stream) throw new Error("Stream archiving is available only from an attached stream session");
+      if (pendingStreamArchive) throw new Error("This stream is already scheduled for archival");
+
+      const executable = process.env.PROJECT_OBJECT_STREAM_CLI || "project-picker-tui";
+      let output: string;
+      try {
+        output = execFileSync(executable, [
+          "--check-archive-stream",
+          "--project-id", project.id,
+          "--stream-id", stream.id,
+        ], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 5000,
+        });
+      } catch (error) {
+        const failure = error as Error & { stderr?: Buffer | string };
+        const stderr = String(failure.stderr || "").trim();
+        throw new Error(stderr || `Could not prepare stream archival: ${failure.message}`);
+      }
+
+      let checked: { projectId: string; streamId: string; name: string };
+      try {
+        checked = JSON.parse(output) as typeof checked;
+      } catch (error) {
+        throw new Error(`Stream archive preflight returned invalid output: ${(error as Error).message}`);
+      }
+      if (checked.projectId !== project.id || checked.streamId !== stream.id) throw new Error("Stream archive preflight returned a different scope");
+      pendingStreamArchive = { executable, projectId: project.id, streamId: stream.id };
+      return {
+        content: [{ type: "text", text: `Stream “${stream.name}” is ready to archive. Give your brief final response now; after it settles, the workspace and this Pi session will close, and the stream will be archived only if closure succeeds.` }],
+        details: { projectId: project.id, streamId: stream.id, pending: true },
       };
     },
   });
