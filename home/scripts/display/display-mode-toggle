@@ -53,6 +53,5 @@ else
   mkdir -p "${position_file%/*}"
   printf '%s %s\n' "$current_dx" "$current_dy" > "$position_file"
   hyprctl keyword monitor "$external,preferred,auto,$external_scale,mirror,eDP-1" >/dev/null
-  display-wallpaper-refresh
   hyprctl notify -1 2500 'rgb(00ff99)' "Mirroring eDP-1 to $external" >/dev/null
 fi

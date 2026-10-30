@@ -15,6 +15,26 @@ raise SystemExit(not any(m.get("name") != "eDP-1" and not m.get("disabled", Fals
 ' 2>/dev/null
 }
 
+apply_saved_layout() {
+  local state_file=${XDG_STATE_HOME:-$HOME/.local/state}/external-display-position
+  [[ -r "$state_file" && -r /run/headless-mode/state ]] || return 0
+  [[ $(</run/headless-mode/state) == off ]] || return 0
+  # Only extend an actual two-monitor desktop. Headless restoration has its
+  # own layout path, and mirroring must not silently become extended.
+  if ! hyprctl monitors all -j | python3 -c '
+import json, sys
+ms=json.load(sys.stdin)
+i=next((m for m in ms if m.get("name")=="eDP-1" and not m.get("disabled",False)),None)
+e=next((m for m in ms if m.get("name")!="eDP-1" and not m.get("disabled",False)),None)
+raise SystemExit(not (i and e and e.get("mirrorOf","none")=="none"))
+' 2>/dev/null; then return 0; fi
+  local dx dy _
+  read -r dx dy _ < "$state_file" || return 0
+  [[ $dx =~ ^-?[0-9]+$ && $dy =~ ^-?[0-9]+$ ]] || return 0
+  DISPLAY_LAYOUT_SILENT=1 display-layout-apply custom "$dx" "$dy" 1 \
+    >>"$runtime/headless-layout.log" 2>&1 || true
+}
+
 check_recovery() {
   local state
   state=off
@@ -32,6 +52,9 @@ check_recovery() {
   fi
 }
 
+# Restore the Shift-F7 layout on session startup as well as future hotplugs.
+apply_saved_layout
+
 # Socket events provide immediate restoration. While active, a bounded DRM
 # detect probe also catches a disconnected sink whose Type-C adapter remains
 # attached and whose connector is incorrectly reported as still connected.
@@ -39,7 +62,8 @@ while true; do
   if [[ -S "$socket" ]]; then
     while IFS= read -r event; do
       case "$event" in
-        monitorremoved*|monitoradded*) check_recovery ;;
+        monitorremoved*) check_recovery ;;
+        monitoradded*) check_recovery; apply_saved_layout ;;
       esac
     done < <(socat -T 2 -u "UNIX-CONNECT:$socket" - 2>/dev/null)
   fi

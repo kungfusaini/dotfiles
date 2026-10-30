@@ -4,7 +4,7 @@ runtime=${XDG_RUNTIME_DIR:-/tmp}/headless-mode
 lock_file=$runtime/lock
 control=/run/current-system/sw/bin/headless-mode-control
 sudo=/run/wrappers/bin/sudo
-countdown=${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/headless-countdown
+workspace_file=$runtime/origin-workspace
 position_file=${XDG_STATE_HOME:-$HOME/.local/state}/external-display-position
 self=$(readlink -f "$0")
 mkdir -p "$runtime"
@@ -55,21 +55,65 @@ raise SystemExit(not any(m.get("name") == "eDP-1" and not m.get("disabled", Fals
     "$sudo" -n "$control" begin-restore || true
   fi
 
-  # wlr-randr blocked for 17 seconds after the external sink disappeared.
-  # Try Hyprland's native monitor command first and bound BOTH IPC paths. Do
-  # not delay ISH restoration indefinitely if neither compositor call works.
-  log_timing 'restore: enabling eDP-1 through Hyprland'
-  if ! timeout -k 1 2 hyprctl keyword monitor 'eDP-1,preferred,0x0,1.25' >/dev/null; then
+  # Restore the saved relative positions in the FIRST display transaction.
+  # During headless mode the external output is at 0,0. If it already belongs
+  # at 0,0, a native eDP-1 enable at its saved position needs no later layout
+  # refresh at all. With an unplugged external sink, enable eDP-1 at 0,0.
+  local dx=1536 dy=0 _
+  if [[ -r "$position_file" ]]; then
+    read -r dx dy _ < "$position_file" || true
+  fi
+  if [[ ! $dx =~ ^-?[0-9]+$ || ! $dy =~ ^-?[0-9]+$ ]]; then
+    dx=1536 dy=0
+  fi
+  local -a geometry
+  mapfile -t geometry < <(hyprctl monitors all -j | python3 -c '
+import json, sys
+ms=json.load(sys.stdin)
+dx,dy=map(int,sys.argv[1:3])
+e=next((m for m in ms if m.get("name")!="eDP-1" and not m.get("disabled",False)),None)
+ix,iy=max(0,-dx),max(0,-dy)
+ex,ey=max(0,dx),max(0,dy)
+if not e: ix=iy=0
+print(f"{ix}x{iy}")
+print(f"{ix},{iy}")
+print(e["name"] if e else "")
+print(f"{ex},{ey}")
+print(e.get("scale") or 1 if e else 1)
+' "$dx" "$dy")
+  local panel_pos=${geometry[0]:-0x0} panel_wlr_pos=${geometry[1]:-0,0}
+  # wlr-randr blocked for 17 seconds after external loss. Enable the panel
+  # through Hyprland first, then bound every optional wlr-randr fallback.
+  log_timing "restore: enabling eDP-1 at $panel_pos through Hyprland"
+  if ! timeout -k 1 2 hyprctl keyword monitor "eDP-1,preferred,$panel_pos,1.25" >/dev/null; then
     log_timing 'restore: native panel command timed out or failed'
   fi
   if ! timeout -k 1 2 hyprctl monitors all -j | python3 -c '
 import json, sys
 raise SystemExit(not any(m.get("name") == "eDP-1" and not m.get("disabled", False) for m in json.load(sys.stdin)))
 '; then
-    log_timing 'restore: trying bounded wlr-randr fallback'
-    timeout -k 1 2 wlr-randr --output eDP-1 --on --preferred --pos 0,0 --scale 1.25 || true
+    log_timing 'restore: trying bounded wlr-randr panel fallback'
+    timeout -k 1 2 wlr-randr --output eDP-1 --on --preferred --pos "$panel_wlr_pos" --scale 1.25 || true
   fi
-  log_timing 'restore: panel re-enable attempted; reloading sensors'
+  # Hyprland can auto-place the external output when eDP-1 reappears even if
+  # it was correctly positioned a moment earlier. Check AFTER enabling the
+  # panel, and fix any displacement before sensor recovery/notification.
+  if [[ -n ${geometry[2]:-} ]] && hyprctl monitors all -j | python3 -c '
+import json, sys
+ms=json.load(sys.stdin)
+i=next((m for m in ms if m.get("name")=="eDP-1" and not m.get("disabled",False)),None)
+e=next((m for m in ms if m.get("name")==sys.argv[1] and not m.get("disabled",False)),None)
+ix,iy=map(int,sys.argv[2].split(","))
+ex,ey=map(int,sys.argv[3].split(","))
+raise SystemExit(not (i and e and ((i.get("x"),i.get("y"))!=(ix,iy) or (e.get("x"),e.get("y"))!=(ex,ey))))
+' "${geometry[2]}" "$panel_wlr_pos" "${geometry[3]}"; then
+    log_timing 'restore: positioning external before sensor reload'
+    if ! timeout -k 1 2 wlr-randr --output eDP-1 --on --preferred --pos "$panel_wlr_pos" --scale 1.25 \
+      --output "${geometry[2]}" --on --preferred --pos "${geometry[3]}" --scale "${geometry[4]}"; then
+      timeout -k 1 2 hyprctl keyword monitor "${geometry[2]},preferred,${geometry[3]/,/x},${geometry[4]}" >/dev/null || true
+    fi
+  fi
+  log_timing 'restore: panel and layout attempted; reloading sensors'
 
   # Even if ISH recovery fails, the laptop display and base input stay usable.
   # The root helper reports restore-failed for a later retry.
@@ -77,19 +121,18 @@ raise SystemExit(not any(m.get("name") == "eDP-1" and not m.get("disabled", Fals
     recovery_failed=1
   fi
   log_timing "restore: sensor reload finished (failed=$recovery_failed)"
-  if load_external; then
-    local dx=1536 dy=0 _
-    if [[ -r "$position_file" ]]; then
-      read -r dx dy _ < "$position_file" || true
+  # Return the laptop's original workspace (including named workspaces) to
+  # eDP-1; Hyprland otherwise leaves it on the external output after re-enable.
+  if [[ -r "$workspace_file" ]]; then
+    local workspace
+    read -r workspace < "$workspace_file" || true
+    if [[ -n ${workspace:-} ]]; then
+      timeout -k 1 2 hyprctl dispatch moveworkspacetomonitor "$workspace eDP-1" >/dev/null || true
+      timeout -k 1 2 hyprctl dispatch focusmonitor eDP-1 >/dev/null || true
+      timeout -k 1 2 hyprctl dispatch workspace "$workspace" >/dev/null || true
     fi
-    if [[ ${ext[2]} == 1 ]]; then
-      hyprctl keyword monitor "${ext[0]},preferred,auto-right,${ext[1]}" >/dev/null || true
-    fi
-    DISPLAY_LAYOUT_SILENT=1 display-layout-apply custom "$dx" "$dy" 1 || true
-  else
-    display-wallpaper-refresh || true
+    rm -f "$workspace_file"
   fi
-  quickshell kill --path "$countdown" >/dev/null 2>&1 || true
   if (( recovery_failed == 0 )) && grep -qlx hinge /sys/bus/iio/devices/iio:device*/name 2>/dev/null; then
     hyprctl notify -1 3000 'rgb(00ff99)' 'Laptop display, pen/touch, and hinge restored' >/dev/null || true
   else
@@ -123,44 +166,53 @@ prime_mode() {
     load_external || return 1
   fi
   mkdir -p "${position_file%/*}"
-  printf '%s %s\n' "${ext[3]}" "${ext[4]}" > "$position_file"
-
-  rm -f "$runtime/cancel-requested"
-  if ! "$sudo" -n "$control" prime; then
-    hyprctl notify -1 4500 'rgb(ff5555)' 'Could not prime headless mode; no display was disabled' >/dev/null
-    return 1
+  # Shift-F7 owns this saved layout. Headless entry must not replace it with
+  # temporary compositor coordinates (especially after mirror transitions).
+  if [[ ! -r "$position_file" ]]; then
+    printf '%s %s\n' "${ext[3]}" "${ext[4]}" > "$position_file"
+  fi
+  # Remember the workspace visible on the laptop, not whichever monitor
+  # happened to have keyboard focus before the switch.
+  local laptop_workspace
+  laptop_workspace=$(hyprctl monitors all -j | python3 -c '
+import json, sys
+m=next((m for m in json.load(sys.stdin) if m.get("name")=="eDP-1"), {})
+w=m.get("activeWorkspace", {}).get("name", "")
+print(("name:" if not w.isdecimal() else "")+w if w and w!="-1" else "")
+') || laptop_workspace=""
+  if [[ -n "$laptop_workspace" ]]; then
+    printf '%s\n' "$laptop_workspace" > "$workspace_file"
+  else
+    rm -f "$workspace_file"
   fi
 
-  # Both detached workers explicitly close the controller's lock descriptor.
-  # If Quickshell exits unexpectedly or deployment stalls, the failsafe restores
-  # ISH after 20 seconds rather than leaving hinge sensing down indefinitely.
-  nohup "$self" countdown 9>&- >"$runtime/countdown.log" 2>&1 </dev/null &
-  nohup "$self" priming-failsafe 9>&- >"$runtime/failsafe.log" 2>&1 </dev/null &
-}
-
-finish_countdown() {
-  local started=$SECONDS rc=0
-  HEADLESS_CANCEL_COMMAND="$self" quickshell --no-duplicate --path "$countdown" || rc=$?
-
-  log_timing 'countdown: requesting controller lock'
-  exec 9>"$lock_file"
-  flock 9
-  log_timing 'countdown: controller lock acquired'
-  [[ $(status) == primed ]] || return 0
-  if [[ -e "$runtime/cancel-requested" ]] || (( rc != 0 || SECONDS-started < 9 )); then
-    restore_mode
+  # The display and base input stay available while ISH is being prepared.
+  # Never kill modprobe halfway through teardown merely to hide the wait.
+  local prime_failed=0
+  log_timing 'prime: ISH module removal started'
+  "$sudo" -n "$control" prime || prime_failed=1
+  log_timing "prime: ISH module removal returned (failed=$prime_failed)"
+  if (( prime_failed != 0 )); then
+    hyprctl notify -1 6000 'rgb(ff5555)' 'ISH priming failed; both displays stay on — see /run/headless-mode/prime.log' >/dev/null || true
     return 1
   fi
-  local -a ext
+  # No countdown: once ISH is ready, deploy immediately. The panel remains
+  # on if the external monitor vanished while priming.
   if ! load_external; then
     restore_mode
     return 1
   fi
 
+  # A worker still restores ISH if this process dies between prime and deploy.
+  nohup "$self" priming-failsafe 9>&- >"$runtime/failsafe.log" 2>&1 </dev/null &
+
   # The keyboard, TrackPoint, touchpad and ThinkPad buttons are NEVER blocked.
   # Only the display-side touchscreen and pen are inhibited.
-  "$sudo" -n "$control" deploy
-  if ! wlr-randr --output eDP-1 --off \
+  if ! "$sudo" -n "$control" deploy; then
+    restore_mode
+    return 1
+  fi
+  if ! timeout -k 1 5 wlr-randr --output eDP-1 --off \
       --output "${ext[0]}" --on --preferred --pos 0,0 --scale "${ext[1]}"; then
     restore_mode
     return 1
@@ -170,16 +222,21 @@ finish_countdown() {
   flock -u 9
   log_timing 'deployment complete; controller lock released'
   if [[ $(status) == active ]]; then
-    display-wallpaper-refresh || true
-  fi
-  if [[ $(status) == active ]]; then
+    if [[ -r "$workspace_file" ]]; then
+      local workspace
+      read -r workspace < "$workspace_file" || true
+      if [[ -n ${workspace:-} ]]; then
+        timeout -k 1 2 hyprctl dispatch moveworkspacetomonitor "$workspace ${ext[0]}" >/dev/null || true
+        timeout -k 1 2 hyprctl dispatch focusmonitor "${ext[0]}" >/dev/null || true
+        timeout -k 1 2 hyprctl dispatch workspace "$workspace" >/dev/null || true
+      fi
+    fi
     hyprctl notify -1 3000 'rgb(00ff99)' 'Headless active — double-tap F7 to restore' >/dev/null || true
   fi
 }
 
 case "${1:-toggle}" in
   status) status; exit 0 ;;
-  restore) touch "$runtime/cancel-requested" ;;
   priming-failsafe)
     sleep 20
     if [[ $(status) == primed ]]; then
@@ -187,7 +244,6 @@ case "${1:-toggle}" in
     fi
     exit 0
     ;;
-  countdown) finish_countdown; exit $? ;;
 esac
 
 log_timing "${1:-toggle}: requesting controller lock"

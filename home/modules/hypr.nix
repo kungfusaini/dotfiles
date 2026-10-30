@@ -1,4 +1,4 @@
-{ displayLayoutOpen, displayModeToggle, headlessMonitorWatch, lib, micMuteButton, pkgs, ... }:
+{ displayKeyHandler, displayLayoutOpen, headlessMonitorWatch, lib, micMuteButton, pkgs, ... }:
 
 let
   # Keep this pinned to the same Hyprland-compatible hyprgrass build used by
@@ -218,9 +218,9 @@ in
         ", Print, exec, ${screenshotFull}"
         ", F16, exec, ${screenshotSelection}"
 
-        # Keep F7 on display switching until external-loss recovery passes an
-        # open-laptop test with the current safety watcher.
-        ", XF86Display, exec, ${displayModeToggle}/bin/display-mode-toggle"
+        # Single F7 switches mirror/extended after the double-tap window;
+        # double F7 primes or restores headless mode.
+        ", XF86Display, exec, ${displayKeyHandler}/bin/display-key-handler"
         "SHIFT, XF86Display, exec, ${displayLayoutOpen}/bin/display-layout-open"
 
         ", F23, exec, voxtype record start"

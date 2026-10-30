@@ -3,8 +3,14 @@ set -euo pipefail
 state_dir=/run/headless-mode
 state_file=$state_dir/state
 input_state=$state_dir/input-state
+prime_log=$state_dir/prime.log
+child_state=$state_dir/ish-children
 mkdir -p "$state_dir"
 chmod 0755 "$state_dir"
+
+log_prime() {
+  printf '%s %s\n' "$(date --iso-8601=ns)" "$*" >> "$prime_log"
+}
 
 # The folded laptop base is the user's keyboard and pointing device. Never
 # inhibit its keys, TrackPoint, touchpad, or buttons.
@@ -133,6 +139,61 @@ recover_hinge() {
   return 1
 }
 
+# Detach only MFD children of this ThinkPad's Intel ISH PCI function. Leaving
+# the parent transport alive lets child remove callbacks finish their feature
+# requests instead of timing out after the HID transport has stopped.
+collect_ish_children() {
+  local d path driver count=0
+  : > "$child_state"
+  for d in /sys/bus/platform/devices/HID-SENSOR-2000e1.* \
+           /sys/bus/platform/devices/HID-SENSOR-200073.* \
+           /sys/bus/platform/devices/HID-SENSOR-200076.*; do
+    [[ -L "$d/driver" ]] || continue
+    path=$(readlink -f "$d")
+    [[ $path == /sys/devices/pci0000:00/0000:00:12.0/* ]] || continue
+    driver=$(basename "$(readlink -f "$d/driver")")
+    case "$driver" in hid_sensor_custom|hid_sensor_accel_3d|hid_sensor_gyro_3d) ;; *) continue ;; esac
+    printf '%s %s\n' "${d##*/}" "$driver" >> "$child_state"
+    ((count+=1))
+  done
+  if ((count < 10)); then
+    echo "Found only $count ISH sensor children; refusing to prime" >&2
+    rm -f "$child_state"
+    return 1
+  fi
+  log_prime "identified $count ISH sensor children"
+}
+
+unbind_ish_children() {
+  local name driver
+  while read -r name driver; do
+    log_prime "unbinding $name ($driver)"
+    printf '%s' "$name" > "/sys/bus/platform/drivers/$driver/unbind" || return 1
+  done < "$child_state"
+  log_prime 'ISH sensor children detached; starting module removal'
+}
+
+rebind_surviving_children() {
+  [[ -r "$child_state" ]] || return 0
+  local name driver errors=0
+  while read -r name driver; do
+    if [[ -e /sys/bus/platform/devices/$name && ! -L /sys/bus/platform/devices/$name/driver ]]; then
+      printf '%s' "$name" > "/sys/bus/platform/drivers/$driver/bind" || errors=1
+    fi
+  done < "$child_state"
+  ((errors == 0))
+}
+
+sensor_readable() {
+  local name=$1 attribute=$2 d
+  for d in /sys/bus/iio/devices/iio:device*; do
+    if [[ -r "$d/name" && $(<"$d/name") == "$name" ]]; then
+      timeout 2 cat "$d/$attribute" >/dev/null 2>&1 && return 0
+    fi
+  done
+  return 1
+}
+
 restore_modules() {
   local attempt hubs=() d
   modprobe intel_ish_ipc || return 1
@@ -151,6 +212,9 @@ restore_modules() {
     echo 'ISH HID devices did not enumerate after firmware reload' >&2
     return 1
   fi
+  # If module removal stopped partway through, original MFD children may
+  # still exist but remain manually unbound. Full removal recreates them.
+  rebind_surviving_children || echo 'Some ISH sensor children did not rebind' >&2
   udevadm settle --timeout=5 || true
   if ! hinge_present; then
     recover_hinge || {
@@ -159,6 +223,12 @@ restore_modules() {
     }
   fi
   hinge_readable || { echo 'Hinge registered but angle readings failed' >&2; return 1; }
+  sensor_readable accel_3d in_accel_x_raw || {
+    echo 'ISH accelerometer did not return' >&2; return 1;
+  }
+  sensor_readable gyro_3d in_anglvel_x_raw || {
+    echo 'ISH gyroscope did not return' >&2; return 1;
+  }
 }
 
 case "${1:-}" in
@@ -171,15 +241,33 @@ case "${1:-}" in
       echo "Hinge sensor is unavailable; refusing to prime until ISH recovers" >&2
       exit 1
     fi
+    collect_ish_children || exit 1
     save_input_state
     echo priming > "$state_file"
-    # Remove the hinge-driven hardware keyboard lock before folding, without
-    # filtering the keyboard or any base input during the countdown.
-    if ! modprobe -r intel_ishtp_hid intel_ish_ipc; then
+    log_prime 'begin child-first ISH removal; eDP-1 and all base input remain on'
+    prime_failed=0
+    if ! unbind_ish_children; then
+      log_prime 'sensor child detach failed'
+      prime_failed=1
+    # Never kill modprobe mid-teardown; recover from any partial removal.
+    elif ! modprobe -r intel_ishtp_hid intel_ish_ipc 2>"$state_dir/prime-error"; then
+      log_prime "module removal failed: $(<"$state_dir/prime-error")"
+      prime_failed=1
+    fi
+    if ((prime_failed)); then
       restore_input_state || true
-      if restore_modules; then echo off > "$state_file"; else echo restore-failed > "$state_file"; fi
+      if restore_modules; then
+        echo off > "$state_file"
+        rm -f "$child_state" "$input_state"
+        log_prime 'sensor stack recovered after failed prime'
+      else
+        echo restore-failed > "$state_file"
+        log_prime 'sensor recovery FAILED after failed prime'
+      fi
+      echo 'ISH priming failed; see /run/headless-mode/prime.log' >&2
       exit 1
     fi
+    log_prime 'ISH modules removed successfully'
     echo primed > "$state_file"
     ;;
 
@@ -206,7 +294,7 @@ case "${1:-}" in
     restore_input_state || true
     if restore_modules; then
       echo off > "$state_file"
-      rm -f "$input_state"
+      rm -f "$input_state" "$child_state"
     else
       echo restore-failed > "$state_file"
       exit 1

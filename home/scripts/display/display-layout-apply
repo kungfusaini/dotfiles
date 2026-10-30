@@ -50,7 +50,8 @@ mkdir -p "${XDG_STATE_HOME:-$HOME/.local/state}"
 printf '%s %s\n' "$logical_dx" "$logical_dy" \
   > "${XDG_STATE_HOME:-$HOME/.local/state}/external-display-position"
 
-display-wallpaper-refresh
+# swaybg tracks output hotplug itself; restarting it tears down wallpaper
+# surfaces and flashes Hyprland's default background during a layout swap.
 if [[ "${DISPLAY_LAYOUT_SILENT:-0}" != 1 ]]; then
   hyprctl notify -1 2200 'rgb(00ff99)' 'Display layout applied' >/dev/null
 fi
