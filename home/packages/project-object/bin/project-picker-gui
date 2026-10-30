@@ -54,9 +54,9 @@ window { background: transparent; }
 .project-dot { color: #676f86; font-size: 12px; min-width: 20px; }
 .running-scope-row .project-dot { color: #74d3ae; }
 .working-scope-row .project-dot { color: #e7bd63; }
-.stream-row .row-content { min-height: 30px; margin-left: 28px; }
+.scope-row .row-content { min-height: 30px; margin-left: 28px; }
 .project-name { font-size: 12px; font-weight: 650; }
-.stream-row .project-name { font-weight: 540; }
+.scope-row .project-name { font-weight: 540; }
 .stream-count { color: #8990a3; font-size: 10px; }
 .footer { padding: 14px 28px 18px; color: #777f93; font-size: 11px; }
 .footer-key { color: #c2c7d4; font-weight: 650; }
@@ -78,37 +78,54 @@ window { background: transparent; }
 
 
 class ProjectRow(Gtk.ListBoxRow):
-    def __init__(self, project, state, expanded=False, stream_count=0, open_stream_count=0, running=False, working=False):
+    def __init__(self, project, expanded=False, workspace_count=1, open_workspace_count=0):
         super().__init__()
         self.project = project
-        self.state = state
         self.add_css_class("project-row")
-        if running:
-            self.add_css_class("running-scope-row")
-        if working:
-            self.add_css_class("working-scope-row")
-        if state == "current":
-            self.add_css_class("active-workspace-row")
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.add_css_class("row-content")
         arrow = Gtk.Label(label="▾" if expanded else "▸")
         arrow.add_css_class("project-arrow")
         content.append(arrow)
-        dot = Gtk.Label(label="●" if running else "○")
-        dot.add_css_class("project-dot")
-        content.append(dot)
 
         name = Gtk.Label(label=project["name"], xalign=0, ellipsize=3)
         name.add_css_class("project-name")
         name.set_hexpand(True)
         content.append(name)
 
-        if stream_count:
-            count_text = f"{open_stream_count} open · {stream_count} total" if open_stream_count else f"{stream_count} stream{'s' if stream_count != 1 else ''}"
-            count = Gtk.Label(label=count_text)
-            count.add_css_class("stream-count")
-            content.append(count)
+        count_text = f"{open_workspace_count} open · {workspace_count} total" if open_workspace_count else f"{workspace_count} workspace{'s' if workspace_count != 1 else ''}"
+        count = Gtk.Label(label=count_text)
+        count.add_css_class("stream-count")
+        content.append(count)
+        self.set_child(content)
+
+
+class ProjectWorkspaceRow(Gtk.ListBoxRow):
+    def __init__(self, project, state, working=False):
+        super().__init__()
+        self.project = project
+        self.state = state
+        self.add_css_class("project-row")
+        self.add_css_class("scope-row")
+        self.add_css_class("project-workspace-row")
+        if state != "closed":
+            self.add_css_class("running-scope-row")
+        if working and state != "closed":
+            self.add_css_class("working-scope-row")
+        if state == "current":
+            self.add_css_class("active-workspace-row")
+
+        content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
+        content.add_css_class("row-content")
+        dot = Gtk.Label(label="●" if state != "closed" else "○")
+        dot.add_css_class("project-dot")
+        content.append(dot)
+
+        name = Gtk.Label(label="Project workspace", xalign=0, ellipsize=3)
+        name.add_css_class("project-name")
+        name.set_hexpand(True)
+        content.append(name)
         self.set_child(content)
 
 
@@ -119,6 +136,7 @@ class StreamRow(Gtk.ListBoxRow):
         self.stream = stream
         self.state = state
         self.add_css_class("project-row")
+        self.add_css_class("scope-row")
         self.add_css_class("stream-row")
         if state != "closed":
             self.add_css_class("running-scope-row")
@@ -260,7 +278,7 @@ class PickerApplication(Adw.Application):
 
         footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
         footer.add_css_class("footer")
-        self.footer_hint = Gtk.Label(label="j/k Move   Tab Streams   Enter Open   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream", xalign=0, ellipsize=3)
+        self.footer_hint = Gtk.Label(label="j/k Move   Tab Expand   Enter Open/Expand   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream", xalign=0, ellipsize=3)
         self.footer_hint.add_css_class("footer-key")
         footer.append(self.footer_hint)
         page.append(footer)
@@ -458,6 +476,8 @@ class PickerApplication(Adw.Application):
             selection = value.get("selection")
             if isinstance(selection, dict) and selection.get("projectId") in known_ids:
                 self.selected_scope = selection
+                if selection.get("kind") == "project":
+                    self.expanded_project_ids.add(selection["projectId"])
 
         # On first use in a compositor session, reveal and select the active
         # scope. Explicitly saved expansion and selection otherwise win.
@@ -465,8 +485,12 @@ class PickerApplication(Adw.Application):
             for project in self.registry["projects"]:
                 if project.get("archivedAt"):
                     continue
-                if self.current_workspace in (project["name"], backend.project_browser_workspace_name(project)):
+                if self.current_workspace == project["name"]:
+                    self.expanded_project_ids.add(project["id"])
                     self.selected_scope = {"kind": "project", "projectId": project["id"]}
+                    break
+                if self.current_workspace == backend.project_browser_workspace_name(project):
+                    self.selected_scope = {"kind": "project-header", "projectId": project["id"]}
                     break
                 try:
                     streams = backend.load_stream_registry(project)["streams"]
@@ -498,8 +522,10 @@ class PickerApplication(Adw.Application):
     def row_scope(row):
         if isinstance(row, StreamRow):
             return {"kind": "stream", "projectId": row.project["id"], "streamId": row.stream["id"]}
-        if isinstance(row, ProjectRow):
+        if isinstance(row, ProjectWorkspaceRow):
             return {"kind": "project", "projectId": row.project["id"]}
+        if isinstance(row, ProjectRow):
+            return {"kind": "project-header", "projectId": row.project["id"]}
         return None
 
     def on_row_selected(self, _listbox, row):
@@ -525,7 +551,12 @@ class PickerApplication(Adw.Application):
     def list_rows(self):
         query = self.search.get_text().strip().casefold() if hasattr(self, "search") else ""
         values = []
-        for project, state in self.project_items():
+        for project, _state in self.project_items():
+            state = (
+                "current" if self.current_workspace == backend.workspace_name(project)
+                else "open" if backend.scope_is_open(self.session, backend.project_scope(project))
+                else "closed"
+            )
             project_matches = query in project["name"].casefold() or query in project["mainDirectory"].casefold()
             expanded = project["id"] in self.expanded_project_ids
             streams = self.stream_items(project)
@@ -537,19 +568,16 @@ class PickerApplication(Adw.Application):
                 stream["id"] for stream, stream_state in streams
                 if stream_state != "closed" and (project["id"], stream["id"]) in self.working_scopes
             }
-            project_working = (
-                state != "closed" and (project["id"], None) in self.working_scopes
-            ) or bool(working_stream_ids)
+            project_working = state != "closed" and (project["id"], None) in self.working_scopes
             values.append(ProjectRow(
                 project,
-                state,
                 expanded=expanded,
-                stream_count=len(streams),
-                open_stream_count=open_stream_count,
-                running=state != "closed" or open_stream_count > 0,
-                working=project_working,
+                workspace_count=len(streams) + 1,
+                open_workspace_count=open_stream_count + (state != "closed"),
             ))
             if expanded or query:
+                if not query or project_matches:
+                    values.append(ProjectWorkspaceRow(project, state, working=project_working))
                 for stream, stream_state in matching_streams:
                     values.append(StreamRow(
                         project,
@@ -604,7 +632,7 @@ class PickerApplication(Adw.Application):
         project_id = project["id"]
         if project_id in self.expanded_project_ids:
             self.expanded_project_ids.remove(project_id)
-            self.selected_scope = {"kind": "project", "projectId": project_id}
+            self.selected_scope = {"kind": "project-header", "projectId": project_id}
         else:
             self.expanded_project_ids.add(project_id)
         try:
@@ -621,6 +649,9 @@ class PickerApplication(Adw.Application):
         try:
             self.save_picker_state()
             if isinstance(row, ProjectRow):
+                self.toggle_selected_project()
+                return
+            if isinstance(row, ProjectWorkspaceRow):
                 backend.enter_project(row.project, self.session, row.state == "closed")
             else:
                 backend.enter_stream(row.project, row.stream, self.session, row.state == "closed")
@@ -669,6 +700,9 @@ class PickerApplication(Adw.Application):
     def request_close_workspace(self):
         row = self.listbox.get_selected_row()
         if not row:
+            return
+        if isinstance(row, ProjectRow):
+            backend.notify_error("Select a project workspace or stream before closing")
             return
         stream = row.stream if isinstance(row, StreamRow) else None
         scope_name = stream["name"] if stream else f"{row.project['name']} project workspace"
@@ -846,7 +880,7 @@ class PickerApplication(Adw.Application):
 
     def show_list(self):
         self.list_title.set_text("Projects")
-        self.footer_hint.set_text("j/k Move   Tab Streams   Enter Open   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream")
+        self.footer_hint.set_text("j/k Move   Tab Expand   Enter Open/Expand   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream")
         self.search.set_placeholder_text("Press / to search projects and streams…")
         self.stack.set_visible_child_name("list")
         self.refresh_rows()
@@ -1014,6 +1048,7 @@ class PickerApplication(Adw.Application):
             directory = str(Path(os.path.expanduser(raw_directory)).resolve(strict=False)) if raw_directory else raw_directory
             self.directory_entry.set_text(directory)
             project = backend.create_project(self.registry, self.name_entry.get_text(), directory)
+            self.expanded_project_ids.add(project["id"])
             self.selected_scope = {"kind": "project", "projectId": project["id"]}
             self.save_picker_state()
             backend.enter_project(project, self.session, True)
@@ -1071,7 +1106,7 @@ class PickerApplication(Adw.Application):
             self.working_scopes = self.load_working_scopes()
             if hasattr(self, "listbox"):
                 self.list_title.set_text("Projects")
-                self.footer_hint.set_text("j/k Move   Tab Streams   Enter Open   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream")
+                self.footer_hint.set_text("j/k Move   Tab Expand   Enter Open/Expand   x Close   a Archive   Ctrl N Project   Ctrl Shift N Stream")
                 self.search.set_placeholder_text("Press / to search projects and streams…")
                 self.refresh_rows()
         except Exception as error:

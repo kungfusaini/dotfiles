@@ -30,7 +30,7 @@ The working slice is a native, keyboard-first Hyprland project picker:
 Super+P
 ```
 
-[`bin/project-picker`](bin/project-picker) is a lightweight client for the preloaded GTK4/libadwaita interface in [`bin/project-picker-gui`](bin/project-picker-gui). It focuses an existing window or wakes the persistent hidden process, avoiding both duplicate windows and repeated GTK startup cost. Project creation keeps directory selection inside the picker: type path fragments to filter `fd`-discovered directories, use arrows or `Ctrl+J` / `Ctrl+K`, and press `Enter` to select; exact existing paths are also accepted. Projects and streams share one inline list: `Tab` expands or collapses a project's streams, while the current expansion and selection survive hiding, reopening, and daemon replacement within the Hyprland session. A filled green dot means the workspace is open and its Pi chat is idle or settled; yellow means an attached Pi agent is actively working; and a hollow grey dot means closed. Project rows aggregate child state, preferring yellow when any child stream is working. The active Hyprland workspace uses a slim row-edge marker, independently of the keyboard selection highlight. When shown, the picker is moved to the workspace that was active when requested and remains pinned across workspace changes until dismissed. The UI also provides integrated search, project and stream creation, and focus-independent keyboard navigation. The original curses interface remains available as [`bin/project-picker-tui`](bin/project-picker-tui) for fallback and backend reuse.
+[`bin/project-picker`](bin/project-picker) is a lightweight client for the preloaded GTK4/libadwaita interface in [`bin/project-picker-gui`](bin/project-picker-gui). It focuses an existing window or wakes the persistent hidden process, avoiding both duplicate windows and repeated GTK startup cost. Project creation keeps directory selection inside the picker: type path fragments to filter `fd`-discovered directories, use arrows or `Ctrl+J` / `Ctrl+K`, and press `Enter` to select; exact existing paths are also accepted. Each project is a collapsible, status-neutral header containing an explicit **Project workspace** row followed by its stream rows. The header summarizes open and total workspaces without inheriting a workspace or agent state. A filled green dot means that exact workspace is open and its Pi chat is idle or settled; yellow means that exact scope's attached Pi agent is actively working; and a hollow grey dot means closed. Expansion and selection survive hiding, reopening, and daemon replacement within the Hyprland session. The active Hyprland workspace uses a slim row-edge marker, independently of the keyboard selection highlight. When shown, the picker is moved to the workspace that was active when requested and remains pinned across workspace changes until dismissed. The UI also provides integrated search, project and stream creation, and focus-independent keyboard navigation. The original curses interface remains available as [`bin/project-picker-tui`](bin/project-picker-tui) for fallback and backend reuse.
 
 Keyboard controls:
 
@@ -38,13 +38,13 @@ Keyboard controls:
 - `gg` / `G` — jump to the first or last visible entry
 - `/` — enter search mode and filter projects and streams
 - `Ctrl+J` / `Ctrl+K` — navigate while searching
-- `Tab` — expand or collapse the selected project's streams inline
-- `Enter` — open or focus the selected project or stream workspace
+- `Tab` — expand or collapse the selected project
+- `Enter` — expand or collapse a project header, or open/focus the selected project or stream workspace
 - `Ctrl+N` — create a project
 - `Ctrl+Shift+N` — create a stream under the selected project
 - `r` — resume the selected stream’s latest Pi chat
-- `x` — safely close the selected project or stream workspace after confirmation
-- `a` — archive the selected project after confirmation, safely closing its project and stream workspaces while retaining artifacts and Pi sessions
+- `x` — safely close the selected explicit workspace row after confirmation
+- `a` — from a project header, archive the project after confirmation, safely closing its project and stream workspaces while retaining artifacts and Pi sessions
 - `Esc` — leave search or close the picker
 
 Projects can contain independently openable streams. Each stream receives its own literal Hyprland workspace (`Project · Stream`), inherited project instructions, isolated notes, tasks, plans and artifacts, stream-scoped worklogs, and a separate Pi session directory. The scope boundary and artifact model are defined in [`STREAMS-DESIGN.md`](STREAMS-DESIGN.md).
