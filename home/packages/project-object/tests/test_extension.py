@@ -280,6 +280,46 @@ console.log(JSON.stringify(result));
         self.assertEqual(calls.read_text().splitlines(), ['["workspaces", "-j"]'])
         self.assertFalse((self.root / "runtime" / "session.json").exists())
 
+    def test_stream_scoped_session_creates_sibling_under_parent_project(self):
+        current_stream_id = str(uuid.uuid4())
+        current_stream_home = self.home / self.project_id / "streams" / current_stream_id
+        current_stream_home.mkdir(parents=True)
+        (self.home / self.project_id / "streams.json").write_text(json.dumps({
+            "version": 1,
+            "streams": [{"id": current_stream_id, "name": "Current Work", "mainDirectory": None, "archivedAt": None}],
+        }))
+        hyprctl = self.root / "hyprctl"
+        hyprctl.write_text("#!/bin/sh\nprintf '[]\\n'\n")
+        hyprctl.chmod(0o755)
+        expression = """
+const tools = {};
+const pi = {
+  on: () => {},
+  registerTool: (tool) => { tools[tool.name] = tool; },
+  registerCommand: () => {},
+};
+m.default(pi);
+const result = await tools.project_stream_create.execute('call', {
+  name: 'Sibling Cleanup',
+  scope: 'Clean inherited lint failures without changing product behavior.',
+  initialTasks: ['Categorize inherited lint failures.'],
+});
+console.log(JSON.stringify(result));
+"""
+        result = self.node(expression, {
+            "PROJECT_OBJECT_ID": self.project_id,
+            "PROJECT_OBJECT_STREAM_ID": current_stream_id,
+            "PROJECT_OBJECT_STREAM_CLI": str(ROOT / "bin" / "project-picker-tui"),
+            "PROJECT_PICKER_HYPRCTL": str(hyprctl),
+            "PROJECT_OBJECT_RUNTIME_DIR": str(self.root / "runtime"),
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        response = json.loads(result.stdout)
+        streams = json.loads((self.home / self.project_id / "streams.json").read_text())["streams"]
+        self.assertEqual([stream["name"] for stream in streams], ["Current Work", "Sibling Cleanup"])
+        self.assertEqual(response["details"]["projectId"], self.project_id)
+        self.assertNotEqual(response["details"]["streamId"], current_stream_id)
+
     def test_project_stream_routing_is_global_not_project_specific(self):
         expression = """
 const handlers = {};

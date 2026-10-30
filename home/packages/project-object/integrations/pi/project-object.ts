@@ -659,7 +659,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
     }
     if (startupWorklog) instructions.push(`Recent ${stream ? "stream" : "project"} worklog (up to 10 newest events):\n${startupWorklog}`);
     if (startupWorklogError) instructions.push(`Recent worklog was not loaded: ${startupWorklogError}`);
-    if (!stream) instructions.push("When the user asks to create a stream under this project, a stream in the picker, or a project workspace, use project_stream_create. Do not use the workstream skill unless the user explicitly asks for an isolated Git worktree or worker session.");
+    instructions.push(`When the user asks to create a stream under this project, a stream in the picker, or a project workspace, use project_stream_create. ${stream ? "From this stream-scoped session, it creates a sibling stream under the same parent project. " : ""}Do not use the workstream skill unless the user explicitly asks for an isolated Git worktree or worker session.`);
     instructions.push(worklogGuidance);
     instructions.push("For configured external APIs, use `project-api list` to discover APIs enabled for this project, `project-api describe <id>` for docs and authentication metadata, and `project-api request <id> <GET|POST|PUT|PATCH|DELETE> </path>` for authenticated calls. Never put credentials in prompts or worklogs. Existing CLIs such as `gh` are separate.");
     event.systemPromptOptions.sections.project_object = instructions.join("\n\n");
@@ -668,7 +668,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "project_stream_create",
     label: "Create project stream",
-    description: "Create and register a ready-to-use Project Object stream under the attached project so it appears in the project picker. Use this whenever the user asks for a stream under this project, a picker stream, or a project workspace. Never substitute the Git workstream skill. Derive a concise AGENTS.md scope and concrete initial TODO.md tasks from the user's request. NOTES.md remains blank. This does not open the stream workspace or launch an agent.",
+    description: "Create and register a ready-to-use Project Object stream under the attached project so it appears in the project picker. A stream-scoped session creates a sibling under its parent project. Use this whenever the user asks for a stream under this project, a picker stream, or a project workspace. Never substitute the Git workstream skill. Derive a concise AGENTS.md scope and concrete initial TODO.md tasks from the user's request. NOTES.md remains blank. This does not open the stream workspace or launch an agent.",
     promptSnippet: "Create Project Object streams that appear under the attached project in the picker.",
     promptGuidelines: ["For a stream under the attached project or in the picker, use project_stream_create rather than the Git workstream skill."],
     parameters: StreamCreateParameters,
@@ -677,7 +677,6 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       if (resolution.error) throw new Error(`Project context error: ${resolution.error}`);
       const project = resolution.project;
       if (!project) throw new Error("No project object is attached to this Pi session");
-      if (resolution.stream) throw new Error("Streams can only be created from a project-level Pi session");
 
       const executable = process.env.PROJECT_OBJECT_STREAM_CLI || "project-picker-tui";
       let output: string;
