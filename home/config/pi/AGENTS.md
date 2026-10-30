@@ -16,6 +16,7 @@ These instructions apply to every Pi session. Project, stream, and repository in
 - Do not ask Sumeet to run commands, edit files, navigate a GUI, copy output, or perform other steps that the agent can safely perform itself.
 - Ask for manual action only when it genuinely requires Sumeet's privileges, credentials, physical presence, judgment, or access to an interface the agent cannot operate.
 - When manual action is unavoidable, request the smallest precise action needed, explain why it cannot be performed autonomously, and resume verification afterward where practical.
+- From a Project Object terminal, launch graphical applications with `project-workspace-exec COMMAND [ARG ...]` so their windows open on the agent's own Hyprland workspace. Use another workspace only when the task explicitly requires it.
 - Operational autonomy does not expand authorization. Do not bypass approval requirements, safety boundaries, secret-handling rules, or destructive-operation safeguards.
 
 ## Change and commit discipline

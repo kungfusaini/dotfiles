@@ -40,7 +40,7 @@ def active_workspace_name():
         return None
 
 
-def resolve_scope(project_id, stream_id):
+def resolve_scope(project_id, stream_id, workspace=None):
     try:
         registry, _changed = read_registry(REGISTRY_PATH, DATA_ROOT)
         if project_id:
@@ -52,7 +52,7 @@ def resolve_scope(project_id, stream_id):
             stream = find_stream(read_stream_registry(DATA_ROOT, project), stream_id=stream_id)
             return project, stream
 
-        workspace = active_workspace_name()
+        workspace = workspace if workspace is not None else active_workspace_name()
         matches = []
         for candidate in registry["projects"]:
             if candidate.get("archivedAt"):
@@ -93,8 +93,9 @@ def main():
     if requested_stream_id and not requested_project_id:
         raise SystemExit("project-terminal: --stream-id requires --project-id")
 
+    launch_workspace = active_workspace_name()
     try:
-        project, stream = resolve_scope(requested_project_id, requested_stream_id)
+        project, stream = resolve_scope(requested_project_id, requested_stream_id, launch_workspace)
     except RegistryError as error:
         raise SystemExit(f"project-terminal: {error}") from error
     if requested_project_id and not project:
@@ -114,6 +115,7 @@ def main():
             "PROJECT_OBJECT_STREAM_ID",
             "PROJECT_OBJECT_STREAM_NAME",
             "PROJECT_OBJECT_STREAM_HOME",
+            "PROJECT_OBJECT_WORKSPACE_NAME",
             "PI_CODING_AGENT_SESSION_DIR",
         ):
             environment.pop(variable, None)
@@ -147,11 +149,15 @@ def main():
         for directory in directories:
             ensure_private_directory(directory)
 
+        workspace = stream_workspace_name(project["name"], stream["name"]) if stream else project["name"]
+        if not requested_project_id and launch_workspace:
+            workspace = launch_workspace
         environment.update({
             "PROJECT_OBJECT_ID": project_id,
             "PROJECT_OBJECT_NAME": project["name"],
             "PROJECT_OBJECT_HOME": str(home),
             "PROJECT_OBJECT_MAIN_DIRECTORY": working_directory,
+            "PROJECT_OBJECT_WORKSPACE_NAME": workspace,
             "PI_CODING_AGENT_SESSION_DIR": str(session_directory),
         })
         if not has_directory_argument(arguments):

@@ -36,7 +36,7 @@ class TerminalTests(unittest.TestCase):
         self.fake_kitty.write_text("""#!/usr/bin/env python3
 import json, os, sys
 from pathlib import Path
-keys = ('PROJECT_OBJECT_ID','PROJECT_OBJECT_NAME','PROJECT_OBJECT_HOME','PROJECT_OBJECT_MAIN_DIRECTORY','PROJECT_OBJECT_STREAM_ID','PROJECT_OBJECT_STREAM_NAME','PROJECT_OBJECT_STREAM_HOME','PI_CODING_AGENT_SESSION_DIR')
+keys = ('PROJECT_OBJECT_ID','PROJECT_OBJECT_NAME','PROJECT_OBJECT_HOME','PROJECT_OBJECT_MAIN_DIRECTORY','PROJECT_OBJECT_STREAM_ID','PROJECT_OBJECT_STREAM_NAME','PROJECT_OBJECT_STREAM_HOME','PROJECT_OBJECT_WORKSPACE_NAME','PI_CODING_AGENT_SESSION_DIR')
 Path(os.environ['CAPTURE']).write_text(json.dumps({'argv': sys.argv[1:], 'env': {key: os.environ.get(key) for key in keys}}))
 """)
         self.fake_kitty.chmod(0o755)
@@ -59,6 +59,7 @@ Path(os.environ['CAPTURE']).write_text(json.dumps({'argv': sys.argv[1:], 'env': 
         self.assertEqual(captured["env"]["PROJECT_OBJECT_ID"], self.project_id)
         self.assertEqual(captured["env"]["PROJECT_OBJECT_NAME"], "Project With Spaces")
         self.assertEqual(captured["env"]["PROJECT_OBJECT_MAIN_DIRECTORY"], str(self.main))
+        self.assertEqual(captured["env"]["PROJECT_OBJECT_WORKSPACE_NAME"], "Project With Spaces")
         self.assertEqual(captured["argv"][:2], ["--directory", str(self.main)])
         self.assertIn(["--override", "confirm_os_window_close=0"], [captured["argv"][index:index + 2] for index in range(len(captured["argv"]) - 1)])
         session = Path(captured["env"]["PI_CODING_AGENT_SESSION_DIR"])
@@ -78,6 +79,7 @@ Path(os.environ['CAPTURE']).write_text(json.dumps({'argv': sys.argv[1:], 'env': 
         captured = json.loads(self.capture.read_text())
         self.assertEqual(captured["env"]["PROJECT_OBJECT_STREAM_ID"], stream_id)
         self.assertEqual(captured["env"]["PROJECT_OBJECT_STREAM_NAME"], "Focused Work")
+        self.assertEqual(captured["env"]["PROJECT_OBJECT_WORKSPACE_NAME"], "Project With Spaces · Focused Work")
         self.assertEqual(captured["argv"][:2], ["--directory", str(self.main)])
         self.assertIn(f"/streams/{stream_id}/pi-sessions", captured["env"]["PI_CODING_AGENT_SESSION_DIR"])
         self.assertNotEqual(captured["env"]["PI_CODING_AGENT_SESSION_DIR"], str(self.state / "projects" / self.project_id / "pi-sessions"))
@@ -136,6 +138,7 @@ print(json.dumps({'name':'Project With Spaces · Browser'}))
         captured = json.loads(self.capture.read_text())
         self.assertEqual(captured["env"]["PROJECT_OBJECT_ID"], self.project_id)
         self.assertIsNone(captured["env"]["PROJECT_OBJECT_STREAM_ID"])
+        self.assertEqual(captured["env"]["PROJECT_OBJECT_WORKSPACE_NAME"], "Project With Spaces · Browser")
 
     def test_archived_explicit_id_is_rejected(self):
         self.registry["projects"][0]["archivedAt"] = "2026-01-01T00:00:00Z"
@@ -155,6 +158,7 @@ print(json.dumps({'name':'Project With Spaces · Browser'}))
             "PROJECT_OBJECT_STREAM_ID",
             "PROJECT_OBJECT_STREAM_NAME",
             "PROJECT_OBJECT_STREAM_HOME",
+            "PROJECT_OBJECT_WORKSPACE_NAME",
             "PI_CODING_AGENT_SESSION_DIR",
         ):
             environment[variable] = "inherited-project-value"

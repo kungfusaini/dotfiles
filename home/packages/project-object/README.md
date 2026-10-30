@@ -53,6 +53,8 @@ An attached stream agent can use `project_stream_archive` after its finish workl
 
 Web links are project-aware. In Kitty, a normal click opens or reuses a companion Vivaldi window beside the current project or stream terminal; Shift-click opens the link in the parent project's persistent `Project · Browser` workspace. `Super+B` toggles between the persistent project browser and the live project or stream workspace it was opened from, and falls back to the global `browser` workspace outside Project Object. Browser windows use the normal Vivaldi profile, while runtime window addresses are recorded only to route later links to the intended project window.
 
+Agents launch other graphical applications with `project-workspace-exec COMMAND [ARG ...]`. It identifies the Hyprland workspace containing the invoking terminal from process ancestry, falls back to the exact workspace recorded by `project-terminal`, and applies a silent one-shot Hyprland exec rule so the new window opens beside the agent even if another workspace is currently focused. It refuses to guess from the globally active workspace.
+
 Inside a newly created pristine project or stream, `/init [optional goal]` performs a one-time low-ceremony setup of concise stable scope in `AGENTS.md`, immediate tasks in `TODO.md`, any essential operational guardrail, and one start worklog entry. It refuses to run when the attached scope has already been initialized or its core artifacts contain meaningful material. Initialization never begins substantive work or external operations.
 
 A read-only workspace snapshot can be captured without dispatching, focusing, moving, or closing windows:
