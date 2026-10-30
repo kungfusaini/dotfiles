@@ -164,7 +164,7 @@ def validate_browser_role(registry: dict, project: dict) -> str:
 
 
 def empty_state() -> dict:
-    return {"version": 1, "primary": {}, "companions": {}}
+    return {"version": 1, "primary": {}, "companions": {}, "returns": {}}
 
 
 def load_state() -> dict:
@@ -180,6 +180,8 @@ def load_state() -> dict:
         return empty_state()
     if not isinstance(value.get("primary"), dict) or not isinstance(value.get("companions"), dict):
         return empty_state()
+    if not isinstance(value.get("returns"), dict):
+        value["returns"] = {}
     return value
 
 
@@ -278,8 +280,23 @@ def ensure_global_browser(urls: list[str], *, focus_only: bool = False) -> None:
         launch_new_browser(GLOBAL_WORKSPACE, [] if focus_only else urls)
 
 
-def ensure_project_browser(registry: dict, project: dict, urls: list[str], state: dict, *, focus_only: bool = False) -> None:
+def ensure_project_browser(
+    registry: dict,
+    project: dict,
+    urls: list[str],
+    state: dict,
+    *,
+    focus_only: bool = False,
+    origin_workspace: str | None = None,
+) -> None:
     workspace = validate_browser_role(registry, project)
+    if (
+        origin_workspace
+        and origin_workspace != workspace
+        and workspace_belongs_to_project(registry, origin_workspace, project)
+    ):
+        state["returns"][project["id"]] = origin_workspace
+        save_state(state)
     dispatch("workspace", f"name:{workspace}")
     primary = state["primary"].get(project["id"])
     address = discover_address(workspace, primary)
@@ -347,6 +364,33 @@ def validate_urls(urls: list[str]) -> list[str]:
     return result
 
 
+def live_workspace_names() -> set[str]:
+    value = hypr_json("workspaces")
+    if not isinstance(value, list):
+        raise RuntimeError("hyprctl workspaces did not return a list")
+    return {
+        str(workspace.get("name", ""))
+        for workspace in value
+        if isinstance(workspace, dict)
+    }
+
+
+def return_from_project_browser(registry: dict, project: dict, state: dict) -> bool:
+    target = state["returns"].get(project["id"])
+    live = live_workspace_names()
+    if (
+        isinstance(target, str)
+        and target != project_browser_workspace_name(project["name"])
+        and target in live
+        and workspace_belongs_to_project(registry, target, project)
+    ):
+        dispatch("workspace", f"name:{target}")
+        return True
+    state["returns"].pop(project["id"], None)
+    save_state(state)
+    return False
+
+
 def open_urls(mode: str, urls: list[str]) -> None:
     urls = validate_urls(urls)
     workspace = active_workspace_name()
@@ -360,7 +404,7 @@ def open_urls(mode: str, urls: list[str]) -> None:
     with browser_lock():
         state = load_state()
         if mode == "project" or workspace == project_browser_workspace_name(project["name"]):
-            ensure_project_browser(registry, project, urls, state)
+            ensure_project_browser(registry, project, urls, state, origin_workspace=workspace)
         else:
             ensure_companion_browser(project, workspace, urls, state)
 
@@ -371,7 +415,18 @@ def focus_browser() -> None:
     project = resolve_project(registry, workspace)
     with browser_lock():
         if project:
-            ensure_project_browser(registry, project, [], load_state(), focus_only=True)
+            state = load_state()
+            role = project_browser_workspace_name(project["name"])
+            if workspace == role and return_from_project_browser(registry, project, state):
+                return
+            ensure_project_browser(
+                registry,
+                project,
+                [],
+                state,
+                focus_only=True,
+                origin_workspace=workspace,
+            )
         else:
             ensure_global_browser([], focus_only=True)
 

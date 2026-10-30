@@ -85,6 +85,34 @@ class BrowserTests(unittest.TestCase):
             primary.assert_called_once()
             companion.assert_not_called()
 
+    def test_super_b_returns_from_project_browser_to_last_live_stream(self):
+        state = self.browser.empty_state()
+        state["returns"][self.project_id] = "Alpha · Focused"
+        with mock.patch.object(self.browser, "live_workspace_names", return_value={"Alpha · Browser", "Alpha · Focused"}), \
+                mock.patch.object(self.browser, "workspace_belongs_to_project", return_value=True), \
+                mock.patch.object(self.browser, "dispatch") as dispatch:
+            returned = self.browser.return_from_project_browser(self.registry, self.project, state)
+        self.assertTrue(returned)
+        dispatch.assert_called_once_with("workspace", "name:Alpha · Focused")
+
+    def test_project_browser_records_the_origin_workspace(self):
+        state = self.browser.empty_state()
+        with mock.patch.object(self.browser, "validate_browser_role", return_value="Alpha · Browser"), \
+                mock.patch.object(self.browser, "workspace_belongs_to_project", return_value=True), \
+                mock.patch.object(self.browser, "save_state"), \
+                mock.patch.object(self.browser, "dispatch"), \
+                mock.patch.object(self.browser, "discover_address", return_value="0xabc"), \
+                mock.patch.object(self.browser, "open_in_window"):
+            self.browser.ensure_project_browser(
+                self.registry,
+                self.project,
+                [],
+                state,
+                focus_only=True,
+                origin_workspace="Alpha · Focused",
+            )
+        self.assertEqual(state["returns"][self.project_id], "Alpha · Focused")
+
     def test_shift_click_marker_is_one_shot_and_scoped_to_kitty_window(self):
         with mock.patch.dict(os.environ, {"KITTY_WINDOW_ID": "42"}):
             self.browser.mark_project_click()
