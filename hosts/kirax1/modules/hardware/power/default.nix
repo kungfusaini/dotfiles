@@ -143,8 +143,12 @@ let
         return 1;
       }
 
-      const char *profile_paths[] = { thinkpad_profile, soc_profile };
-      struct pollfd fds[2];
+      const char *profile_paths[] = {
+        thinkpad_profile,
+        soc_profile,
+        "/sys/firmware/acpi/platform_profile",
+      };
+      struct pollfd fds[3];
       nfds_t nfds = 0;
 
       for (size_t i = 0; i < sizeof(profile_paths) / sizeof(profile_paths[0]); i++) {
@@ -286,12 +290,14 @@ in
   #   performance -> performance
   #
   # This is event-driven: the daemon blocks in poll(2) on both provider profile
-  # attributes, reasserts the ThinkPad profile if either changes, and signals
-  # Waybar's custom/platform-profile module immediately.
+  # attributes and the legacy aggregate attribute. The aggregate is required
+  # because writes to an individual provider notify it, but do not necessarily
+  # notify that provider's own attribute. Reassert the ThinkPad profile when any
+  # of them changes and signal Waybar's custom/platform-profile module immediately.
   systemd.services.lenovo-platform-profile-epp-sync = {
     description = "Sync Intel platform profile and EPP from ThinkPad profile";
     wantedBy = [ "multi-user.target" ];
-    after = [ "multi-user.target" ];
+    after = [ "multi-user.target" "lenovo-ac-platform-profile.service" ];
     serviceConfig = {
       Type = "simple";
       ExecStart = "${syncProgram}/bin/sync-lenovo-platform-profile-epp";
