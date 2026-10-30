@@ -20,6 +20,7 @@
 
     ./modules/programs/mewtion.nix
     ./modules/services/backup.nix
+    ./modules/services/credential-store.nix
     ./modules/services/pi-secrets.nix
 
     ./modules/hardware/headless-mode.nix
