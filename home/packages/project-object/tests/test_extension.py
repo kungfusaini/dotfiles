@@ -642,6 +642,7 @@ console.log(JSON.stringify({
   createParameters: tools.project_stream_create.parameters,
   archiveDescription: tools.project_stream_archive.description,
   archiveGuidelines: tools.project_stream_archive.promptGuidelines,
+  worklogParameters: tools.project_worklog_append.parameters,
 }));
 """
         result = self.node(expression, {"PROJECT_OBJECT_ID": self.project_id})
@@ -649,6 +650,8 @@ console.log(JSON.stringify({
         output = json.loads(result.stdout)
         self.assertIn("use project_stream_create", output["prompt"])
         self.assertIn("Do not use the workstream skill", output["prompt"])
+        self.assertIn("include brief", output["prompt"])
+        self.assertIn("attention is review only", output["prompt"])
         self.assertIn("project picker", output["description"])
         self.assertIn("prepared lazily", output["description"])
         self.assertIn("repository", output["createParameters"]["properties"])
@@ -658,6 +661,9 @@ console.log(JSON.stringify({
         self.assertIn("sibling stream is snapshotted", output["archiveDescription"])
         self.assertTrue(any("sibling archival completes immediately" in text for text in output["archiveGuidelines"]))
         self.assertTrue(any("final tool operation" in text for text in output["archiveGuidelines"]))
+        brief = output["worklogParameters"]["properties"]["brief"]
+        self.assertEqual(brief["required"], ["current", "attention"])
+        self.assertEqual(brief["properties"]["attention"]["enum"], ["none", "review", "decision", "action"])
 
     def test_worklog_tool_appends_private_structured_entry(self):
         expression = """
@@ -671,6 +677,7 @@ m.default(pi);
 const result = await tools.project_worklog_append.execute('call', {
   type: 'decision',
   summary: ' Keep the worklog in project home. ',
+  brief: { current: ' The worklog contract is ready. ', next: ' Add catchup coverage. ', attention: 'review' },
   reason: ' It remains independent of the checkout. ',
   next: 'Add catchup coverage.',
   files: [' integrations/pi/project-object.ts '],
@@ -688,6 +695,11 @@ console.log(JSON.stringify(result));
         self.assertEqual(entry["session"], "session-123")
         self.assertEqual(entry["type"], "decision")
         self.assertEqual(entry["summary"], "Keep the worklog in project home.")
+        self.assertEqual(entry["brief"], {
+            "current": "The worklog contract is ready.",
+            "next": "Add catchup coverage.",
+            "attention": "review",
+        })
         self.assertEqual(entry["reason"], "It remains independent of the checkout.")
         self.assertEqual(entry["files"], ["integrations/pi/project-object.ts"])
         self.assertEqual(worklog.parent.stat().st_mode & 0o777, 0o700)
@@ -801,6 +813,26 @@ try {
         result = self.node(expression, {"PROJECT_OBJECT_ID": self.project_id})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("mistake entries require lesson", result.stdout)
+        self.assertFalse((self.home / self.project_id / "worklogs" / "events.jsonl").exists())
+
+    def test_worklog_tool_rejects_invalid_picker_brief(self):
+        expression = """
+const tools = {};
+const pi = { on: () => {}, registerTool: (tool) => { tools[tool.name] = tool; }, registerCommand: () => {} };
+m.default(pi);
+try {
+  await tools.project_worklog_append.execute('call', {
+    type: 'progress',
+    summary: 'Work continues',
+    brief: { current: 'Readable state', attention: 'urgent' },
+  }, undefined, undefined, { sessionManager: { getSessionId: () => 'session-123' } });
+} catch (error) {
+  console.log(error.message);
+}
+"""
+        result = self.node(expression, {"PROJECT_OBJECT_ID": self.project_id})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("brief attention must be one of", result.stdout)
         self.assertFalse((self.home / self.project_id / "worklogs" / "events.jsonl").exists())
 
     def test_worklog_tool_rejects_symlinked_worklogs_directory(self):

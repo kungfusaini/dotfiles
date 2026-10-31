@@ -33,7 +33,7 @@ APP_ID = "dev.project_object.Picker"
 COMPACT_WIDTH = 760
 INSPECTOR_WIDTH = 1180
 WINDOW_HEIGHT = 570
-FOOTER_HINT = "j/k Move   Space Context   n Next attention   Enter Open/Expand   x Close   a Archive"
+FOOTER_HINT = "j/k Move   Space Context   n Next attention   d Details   Enter Open/Expand   x Close"
 
 CSS = """
 window { background: transparent; }
@@ -75,6 +75,9 @@ window { background: transparent; }
 .context-status { font-size: 10px; font-weight: 750; letter-spacing: 0.7px; margin-top: 8px; }
 .context-status-idle { color: #74d3ae; }
 .context-status-working { color: #e7bd63; }
+.context-status-review { color: #74d3ae; }
+.context-status-decision { color: #7c9cff; }
+.context-status-action { color: #e7bd63; }
 .context-status-none { color: #8990a3; }
 .context-age { color: #8990a3; font-size: 10px; margin-top: 8px; }
 .context-rule { background: rgba(255,255,255,0.10); margin: 14px 0; }
@@ -216,6 +219,7 @@ class PickerApplication(Adw.Application):
         self.agent_activity = {}
         self.context_cache = {}
         self.context_open = False
+        self.context_details_open = False
         self.expanded_project_ids = set()
         self.selected_scope = None
         self.selected_project = None
@@ -367,8 +371,7 @@ class PickerApplication(Adw.Application):
             content.append(copy)
             return copy
 
-        self.context_happening = section("WHAT WAS HAPPENING")
-        self.context_stopped = section("WHERE IT STOPPED")
+        self.context_current = section("CURRENT")
 
         next_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         next_box.add_css_class("context-next")
@@ -380,9 +383,18 @@ class PickerApplication(Adw.Application):
         next_box.append(self.context_next)
         content.append(next_box)
 
+        self.context_details_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.context_details_box.set_visible(self.context_details_open)
+        details_label = Gtk.Label(label="DETAILS", xalign=0)
+        details_label.add_css_class("context-section")
+        self.context_details_box.append(details_label)
+        self.context_details = Gtk.Label(xalign=0, wrap=True)
+        self.context_details.add_css_class("context-copy")
+        self.context_details_box.append(self.context_details)
         self.context_source = Gtk.Label(xalign=0)
         self.context_source.add_css_class("context-source")
-        content.append(self.context_source)
+        self.context_details_box.append(self.context_source)
+        content.append(self.context_details_box)
         content.append(Gtk.Box(vexpand=True))
         preview_rule = Gtk.Label(label="Selection only previews · Enter switches workspace", xalign=1)
         preview_rule.add_css_class("context-rule-copy")
@@ -626,6 +638,12 @@ class PickerApplication(Adw.Application):
         except Exception:
             streams = []
         targets = [(project, None), *((project, stream) for stream in streams)]
+        for target_project, target_stream in targets:
+            key = self.context_key(target_project, target_stream)
+            context = self.context_cache.get(key, {})
+            states = self.agent_activity.get(key, set())
+            if "working" not in states and context.get("briefAttention") in ("review", "decision", "action"):
+                return target_project, target_stream
         for state in ("idle", "working"):
             for target_project, target_stream in targets:
                 key = self.context_key(target_project, target_stream)
@@ -648,6 +666,16 @@ class PickerApplication(Adw.Application):
             return self.project_preview_target(row.project)
         return None
 
+    @staticmethod
+    def picker_preview_text(value, maximum=160):
+        if not value:
+            return None
+        compact = " ".join(value.split())
+        if len(compact) <= maximum:
+            return compact
+        shortened = compact[:maximum - 1].rsplit(" ", 1)[0]
+        return f"{shortened or compact[:maximum - 1]}…"
+
     def paint_context_inspector(self, refresh=False):
         if not hasattr(self, "context_inspector"):
             return
@@ -667,26 +695,40 @@ class PickerApplication(Adw.Application):
         scope_name = stream["name"] if stream else ("Project workspace" if isinstance(row, ProjectWorkspaceRow) else None)
         self.context_title.set_text(f"{project['name']}  ›  {scope_name}" if scope_name else project["name"])
         states = self.agent_activity.get(self.context_key(project, stream), set())
-        for css_class in ("context-status-idle", "context-status-working", "context-status-none"):
+        attention = context.get("briefAttention")
+        for css_class in (
+            "context-status-idle", "context-status-working", "context-status-review",
+            "context-status-decision", "context-status-action", "context-status-none",
+        ):
             self.context_status.remove_css_class(css_class)
-        if "idle" in states:
-            self.context_status.set_text("●  AGENT SETTLED")
-            self.context_status.add_css_class("context-status-idle")
-        elif "working" in states:
+        if "working" in states:
             self.context_status.set_text("●  AGENT WORKING")
             self.context_status.add_css_class("context-status-working")
+        elif attention == "decision":
+            self.context_status.set_text("◆  DECISION NEEDED")
+            self.context_status.add_css_class("context-status-decision")
+        elif attention == "review":
+            self.context_status.set_text("●  READY FOR REVIEW")
+            self.context_status.add_css_class("context-status-review")
+        elif attention == "action":
+            self.context_status.set_text("◆  YOUR ACTION NEEDED")
+            self.context_status.add_css_class("context-status-action")
+        elif "idle" in states:
+            self.context_status.set_text("●  AGENT SETTLED")
+            self.context_status.add_css_class("context-status-idle")
         else:
             self.context_status.set_text("○  NO ATTACHED AGENT")
             self.context_status.add_css_class("context-status-none")
         self.context_age.set_text(self.context_age_text(context.get("updatedAt")))
-        self.context_happening.set_text(context.get("happening") or "No recent worklog activity is recorded for this scope.")
-        self.context_stopped.set_text(context.get("stopped") or "No stopping point has been recorded yet.")
-        self.context_next.set_text(context.get("next") or "No next step is recorded in the worklog or TODO.md.")
-        source = context.get("nextSource")
+        current = context.get("briefCurrent") or self.picker_preview_text(context.get("happening"))
+        next_step = context.get("briefNext") or self.picker_preview_text(context.get("next"))
+        self.context_current.set_text(current or "No current briefing has been recorded for this scope.")
+        self.context_next.set_text(next_step or "No next action has been recorded.")
+        self.context_details.set_text(context.get("detail") or "No additional worklog detail is recorded.")
         self.context_source.set_text(
-            "From recent worklog · TODO fallback available" if source == "worklog"
-            else "From TODO.md" if source == "TODO"
-            else "No recorded next-step source"
+            "Agent-authored picker brief · detailed evidence remains in the worklog" if context.get("briefCurrent")
+            else "Legacy worklog preview · future agent updates will provide a concise brief" if context.get("hasWorklog")
+            else "No recorded worklog source"
         )
 
     def poll_context(self):
@@ -717,8 +759,17 @@ class PickerApplication(Adw.Application):
             backend.notify_error(f"The context inspector changed, but the picker could not resize: {error}")
         return GLib.SOURCE_REMOVE
 
+    def toggle_context_details(self):
+        if not self.context_open:
+            return
+        self.context_details_open = not self.context_details_open
+        self.context_details_box.set_visible(self.context_details_open)
+
     def toggle_context_inspector(self):
         self.context_open = not self.context_open
+        if not self.context_open:
+            self.context_details_open = False
+            self.context_details_box.set_visible(False)
         self.context_separator.set_visible(self.context_open)
         self.context_inspector.set_visible(self.context_open)
         width = INSPECTOR_WIDTH if self.context_open else COMPACT_WIDTH
@@ -730,26 +781,41 @@ class PickerApplication(Adw.Application):
         except Exception as error:
             backend.notify_error(str(error))
 
+    def scope_requires_attention(self, project, stream=None):
+        key = self.context_key(project, stream)
+        states = self.agent_activity.get(key, set())
+        try:
+            context = backend.load_scope_context(project, stream)
+            self.context_cache[key] = context
+        except Exception:
+            context = self.context_cache.get(key, {})
+        if "working" in states:
+            return False
+        attention = context.get("briefAttention")
+        if attention is not None:
+            return attention in ("review", "decision", "action")
+        return "idle" in states
+
     def attention_scopes(self):
         scopes = []
         for project in self.registry["projects"]:
             if project.get("archivedAt"):
                 continue
-            if "idle" in self.agent_activity.get((project["id"], None), set()):
+            if self.scope_requires_attention(project):
                 scopes.append({"kind": "project", "projectId": project["id"]})
             try:
                 streams = backend.load_stream_registry(project)["streams"]
             except Exception:
                 continue
             for stream in streams:
-                if not stream.get("archivedAt") and "idle" in self.agent_activity.get((project["id"], stream["id"]), set()):
+                if not stream.get("archivedAt") and self.scope_requires_attention(project, stream):
                     scopes.append({"kind": "stream", "projectId": project["id"], "streamId": stream["id"]})
         return scopes
 
     def select_next_attention(self):
         scopes = self.attention_scopes()
         if not scopes:
-            self.footer_hint.set_text("No settled agent currently needs review")
+            self.footer_hint.set_text("No project currently requests your attention")
             GLib.timeout_add_seconds(2, self.restore_footer_hint)
             return
         try:
@@ -1507,6 +1573,7 @@ class PickerApplication(Adw.Application):
             "open": (self.open_selected, ["Return", "KP_Enter"]),
             "toggle-context": (self.toggle_context_inspector, ["space"]),
             "next-attention": (self.select_next_attention, ["n"]),
+            "toggle-details": (self.toggle_context_details, ["d"]),
             "last": (lambda: self.select_edge(last=True), ["<Shift>g"]),
             "g-prefix": (self.handle_g, ["g"]),
         }

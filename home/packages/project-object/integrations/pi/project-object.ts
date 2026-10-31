@@ -18,6 +18,8 @@ const MAX_WORKLOG_TAIL_BYTES = 12 * MAX_WORKLOG_ENTRY_BYTES;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const WORKLOG_TYPES = ["start", "progress", "decision", "mistake", "stuck", "finish", "next", "note"] as const;
 const WORKLOG_TYPE_SET = new Set<string>(WORKLOG_TYPES);
+const WORKLOG_BRIEF_ATTENTIONS = ["none", "review", "decision", "action"] as const;
+const WORKLOG_BRIEF_ATTENTION_SET = new Set<string>(WORKLOG_BRIEF_ATTENTIONS);
 
 const StreamArchiveParameters = {
   type: "object",
@@ -57,6 +59,17 @@ const WorklogParameters = {
   properties: {
     type: { type: "string", enum: WORKLOG_TYPES },
     summary: { type: "string", minLength: 1, maxLength: 2000 },
+    brief: {
+      type: "object",
+      additionalProperties: false,
+      required: ["current", "attention"],
+      description: "Optional picker briefing prepared while the agent is already working. Keep it plain-language and immediately scannable.",
+      properties: {
+        current: { type: "string", minLength: 1, maxLength: 160, description: "One plain-language sentence describing the current state." },
+        next: { type: "string", minLength: 1, maxLength: 160, description: "One concrete next action, preferably beginning with a verb." },
+        attention: { type: "string", enum: WORKLOG_BRIEF_ATTENTIONS, description: "Whether the user owes a review, decision, or action; use none while work is simply progressing or settled." },
+      },
+    },
     task: { type: "string", minLength: 1, maxLength: 2000 },
     next: { type: "string", minLength: 1, maxLength: 4000 },
     reason: { type: "string", minLength: 1, maxLength: 4000 },
@@ -68,9 +81,16 @@ const WorklogParameters = {
   },
 } as const;
 
+type WorklogBriefValue = {
+  current: string;
+  next?: string;
+  attention: string;
+};
+
 type WorklogParametersValue = {
   type: string;
   summary: string;
+  brief?: WorklogBriefValue;
   task?: string;
   next?: string;
   reason?: string;
@@ -432,6 +452,16 @@ function validateWorklogParameters(parameters: WorklogParametersValue): WorklogP
     result: trimmedField(parameters.result, "result", 4000),
     projectAttention: parameters.projectAttention,
   };
+  if (parameters.brief !== undefined) {
+    if (!parameters.brief || typeof parameters.brief !== "object" || Array.isArray(parameters.brief)) throw new Error("brief must be an object");
+    const attention = parameters.brief.attention;
+    if (typeof attention !== "string" || !WORKLOG_BRIEF_ATTENTION_SET.has(attention)) throw new Error(`brief attention must be one of: ${WORKLOG_BRIEF_ATTENTIONS.join(", ")}`);
+    validated.brief = {
+      current: trimmedField(parameters.brief.current, "brief current", 160)!,
+      next: trimmedField(parameters.brief.next, "brief next", 160),
+      attention,
+    };
+  }
   if (parameters.files !== undefined) {
     if (!Array.isArray(parameters.files) || parameters.files.length > 32) throw new Error("files must contain at most 32 paths");
     validated.files = parameters.files.map((file, index) => trimmedField(file, `files[${index}]`, 4096)!);
@@ -599,7 +629,19 @@ export function readRecentWorklog(project: ProjectContext, stream?: StreamContex
           if (typeof raw.type !== "string" || !WORKLOG_TYPE_SET.has(raw.type)) throw new Error("worklog entry has an invalid type");
           const time = compactWorklogText(raw.time, "time", 40, true)!;
           const summary = compactWorklogText(raw.summary, "summary", 1000, true)!;
+          const briefDetails: [string, string][] = [];
+          if (raw.brief !== undefined) {
+            if (!raw.brief || typeof raw.brief !== "object" || Array.isArray(raw.brief)) throw new Error("worklog brief must be an object");
+            const brief = raw.brief as Record<string, unknown>;
+            const attention = compactWorklogText(brief.attention, "brief attention", 20, true)!;
+            if (!WORKLOG_BRIEF_ATTENTION_SET.has(attention)) throw new Error("worklog brief has invalid attention");
+            briefDetails.push(["Brief", compactWorklogText(brief.current, "brief current", 160, true)!]);
+            const briefNext = compactWorklogText(brief.next, "brief next", 160);
+            if (briefNext) briefDetails.push(["Brief next", briefNext]);
+            briefDetails.push(["Brief attention", attention]);
+          }
           const details = [
+            ...briefDetails,
             ["Result", compactWorklogText(raw.result, "result", 800)],
             ["Reason", compactWorklogText(raw.reason, "reason", 500)],
             ["Lesson", compactWorklogText(raw.lesson, "lesson", 500)],
@@ -988,7 +1030,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
     }
     const stream = resolution.stream;
     const worklogScope = stream ? `the ${stream.name} stream` : "the project";
-    const worklogGuidance = `When a durable conversational fact, requirement, decision, mistake, blocker, completed result, or concrete next step becomes clear, append one concise entry with project_worklog_append then rather than waiting for shutdown. It writes to ${worklogScope}; do not log casual conversation or copy stream details into project artifacts automatically. Never put credentials, tokens, private keys, or other secrets in a worklog.`;
+    const worklogGuidance = `When a durable conversational fact, requirement, decision, mistake, blocker, completed result, or concrete next step becomes clear, append one concise entry with project_worklog_append then rather than waiting for shutdown. It writes to ${worklogScope}; do not log casual conversation or copy stream details into project artifacts automatically. When a start, meaningful progress update, decision, blocker, or finish changes what the picker should show, include brief: current is one plain-language sentence, next is one concrete action, and attention is review only for a deliverable awaiting review, decision only for an explicit choice, action only for a manual user step, or none while work is progressing or merely settled. Detailed evidence belongs in summary/result/reason/blocker, not in brief. Never put credentials, tokens, private keys, or other secrets in a worklog.`;
     const instructions: string[] = [];
     try {
       instructions.push(readAgentInstructions(project));
@@ -1142,7 +1184,7 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   pi.registerTool({
     name: "project_worklog_append",
     label: "Project/stream worklog",
-    description: "Append one concise durable event to the attached scope worklog. Stream-scoped sessions write to the stream; project-scoped sessions write to the project. Set projectAttention only when parent-project review is genuinely needed; it requests review but does not copy or promote the event. Never include credentials or secrets.",
+    description: "Append one concise durable event to the attached scope worklog. Stream-scoped sessions write to the stream; project-scoped sessions write to the project. Add brief when picker-facing current state, next action, or user attention changes; detailed evidence stays in the ordinary fields. Set projectAttention only when parent-project review is genuinely needed; it requests review but does not copy or promote the event. Never include credentials or secrets.",
     parameters: WorklogParameters,
     async execute(_toolCallId, parameters, _signal, _onUpdate, ctx) {
       if (!resolution.project && !resolution.error) resolution = resolveProject();

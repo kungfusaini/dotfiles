@@ -60,6 +60,8 @@ MAX_CONTEXT_WORKLOG_TAIL_BYTES = 12 * 16 * 1024
 MAX_CONTEXT_TODO_BYTES = 256 * 1024
 MAX_CONTEXT_TEXT_LENGTH = 260
 CONTEXT_WORKLOG_TYPES = {"start", "progress", "decision", "mistake", "stuck", "finish", "next", "note"}
+CONTEXT_BRIEF_ATTENTIONS = {"none", "review", "decision", "action"}
+CONTEXT_BRIEF_TEXT_LENGTH = 160
 
 
 def notify_error(message):
@@ -148,6 +150,15 @@ def _context_text(value):
     return f"{shortened or compact[:MAX_CONTEXT_TEXT_LENGTH - 1]}…"
 
 
+def _brief_text(value):
+    if not isinstance(value, str):
+        return None
+    compact = " ".join(value.split())
+    if not compact or len(compact) > CONTEXT_BRIEF_TEXT_LENGTH:
+        return None
+    return compact
+
+
 def _todo_next_step(scope_home):
     loaded = _read_regular_file(scope_home / "TODO.md", MAX_CONTEXT_TODO_BYTES)
     if not loaded:
@@ -210,6 +221,16 @@ def load_scope_context(project, stream=None):
                 "summary": summary,
                 "time": _context_text(raw.get("time")),
             }
+            raw_brief = raw.get("brief")
+            if isinstance(raw_brief, dict):
+                brief_current = _brief_text(raw_brief.get("current"))
+                brief_next = _brief_text(raw_brief.get("next")) if raw_brief.get("next") is not None else None
+                brief_attention = raw_brief.get("attention")
+                if brief_current and brief_attention in CONTEXT_BRIEF_ATTENTIONS:
+                    event["briefCurrent"] = brief_current
+                    event["briefAttention"] = brief_attention
+                    if brief_next:
+                        event["briefNext"] = brief_next
             for field in ("task", "next", "reason", "lesson", "blocker", "result"):
                 text = _context_text(raw.get(field))
                 if text:
@@ -243,6 +264,13 @@ def load_scope_context(project, stream=None):
         else:
             stopped = latest["summary"]
 
+    detail = None
+    if latest:
+        evidence = latest.get("result") or latest.get("reason") or latest.get("lesson") or latest.get("blocker")
+        detail = latest["summary"]
+        if evidence and evidence != detail:
+            detail = f"{detail}\n\n{evidence}"
+
     next_step = next((event["next"] for event in reversed(events) if event.get("next")), None)
     next_source = "worklog" if next_step else None
     if not next_step:
@@ -250,6 +278,11 @@ def load_scope_context(project, stream=None):
         next_source = "TODO" if next_step else None
 
     return {
+        "briefCurrent": latest.get("briefCurrent") if latest else None,
+        "briefNext": latest.get("briefNext") if latest else None,
+        "briefAttention": latest.get("briefAttention") if latest else None,
+        "latestType": latest.get("type") if latest else None,
+        "detail": detail,
         "happening": happening,
         "stopped": stopped,
         "next": next_step,

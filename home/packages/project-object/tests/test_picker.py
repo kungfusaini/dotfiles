@@ -235,6 +235,11 @@ class PickerTests(unittest.TestCase):
                 "time": "2026-10-30T13:00:00Z",
                 "type": "finish",
                 "summary": "Restoration implementation finished",
+                "brief": {
+                    "current": "The restoration implementation is ready.",
+                    "next": "Deploy it and run a live restoration test.",
+                    "attention": "action",
+                },
                 "result": "Implementation committed and validated",
                 "next": "Deploy and run a live restoration test",
                 "project": self.project["id"],
@@ -244,6 +249,11 @@ class PickerTests(unittest.TestCase):
         worklog.write_text("".join(json.dumps(event) + "\n" for event in events))
 
         self.assertEqual(self.picker.load_scope_context(self.project), {
+            "briefCurrent": "The restoration implementation is ready.",
+            "briefNext": "Deploy it and run a live restoration test.",
+            "briefAttention": "action",
+            "latestType": "finish",
+            "detail": "Restoration implementation finished\n\nImplementation committed and validated",
             "happening": "Restore every safely captured Pi session",
             "stopped": "Implementation committed and validated",
             "next": "Deploy and run a live restoration test",
@@ -260,10 +270,13 @@ class PickerTests(unittest.TestCase):
             "time": "2026-10-30T13:00:00Z",
             "type": "progress",
             "summary": "word " * 100,
+            "brief": {"current": "x" * 161, "attention": "urgent"},
             "project": self.project["id"],
             "scope": "project",
         }) + "\n")
         context = self.picker.load_scope_context(self.project)
+        self.assertIsNone(context["briefCurrent"])
+        self.assertIsNone(context["briefAttention"])
         self.assertLessEqual(len(context["happening"]), self.picker.MAX_CONTEXT_TEXT_LENGTH)
         self.assertTrue(context["happening"].endswith("…"))
         self.assertEqual(context["stopped"], "Work remains in progress; no separate stopping point is recorded.")
@@ -294,6 +307,11 @@ class PickerTests(unittest.TestCase):
         todo.symlink_to(external)
 
         self.assertEqual(self.picker.load_scope_context(self.project), {
+            "briefCurrent": None,
+            "briefNext": None,
+            "briefAttention": None,
+            "latestType": None,
+            "detail": None,
             "happening": None,
             "stopped": None,
             "next": None,
