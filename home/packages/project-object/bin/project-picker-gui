@@ -34,6 +34,7 @@ COMPACT_WIDTH = 760
 INSPECTOR_WIDTH = 1180
 WINDOW_HEIGHT = 570
 FOOTER_HINT = "j/k Move   Space Context   n Next attention   d Details   Enter Open/Expand   x Close"
+CREATE_FOOTER_HINT = "Ctrl+N New project   Ctrl+Shift+N New stream"
 
 CSS = """
 window { background: transparent; }
@@ -326,11 +327,14 @@ class PickerApplication(Adw.Application):
         body.append(self.context_inspector)
         page.append(body)
 
-        footer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        footer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         footer.add_css_class("footer")
         self.footer_hint = Gtk.Label(label=FOOTER_HINT, xalign=0, ellipsize=3)
         self.footer_hint.add_css_class("footer-key")
         footer.append(self.footer_hint)
+        create_hint = Gtk.Label(label=CREATE_FOOTER_HINT, xalign=0)
+        create_hint.add_css_class("footer-key")
+        footer.append(create_hint)
         page.append(footer)
         self.refresh_rows()
         return page
