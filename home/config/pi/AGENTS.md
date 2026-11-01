@@ -57,15 +57,17 @@ Manage system and user configuration declaratively through this repository where
 
 Do not directly edit generated files, deployed Nix-store files, or Home Manager symlink targets. Change their canonical source in the Nix repository. Do not introduce mutable out-of-store configuration or runtime dependencies on the repository checkout unless Sumeet explicitly approves that exception.
 
-A completed Nix change must leave the `kirax1` flake evaluable and deployable with the ordinary command. Every new file referenced by the flake must be Git-tracked and included in the atomic commit; do not ask Sumeet to rebuild from an incomplete or uncommitted tree.
+A completed Nix change must leave the `kirax1` flake evaluable and deployable. Every new file referenced by the flake must be Git-tracked and included in the atomic commit; never deploy from an incomplete, dirty, detached, or non-`main` tree.
 
-Run appropriate non-privileged evaluation, syntax, and focused tests. Do not run the privileged NixOS rebuild or improvise a different deployment command. Ask Sumeet to run:
+Run appropriate non-privileged evaluation, syntax, and focused tests first. After an approved NixOS change is validated, reviewed, and committed atomically, deploy it yourself with the fixed no-argument helper:
 
 ```bash
-sudo nixos-rebuild switch --flake /home/sumeet/.config/nixos#kirax1
+deploy-kirax1
 ```
 
-After Sumeet rebuilds, verify where practical that the new generation is active and that affected processes loaded the intended configuration. Do not claim deployment success from source evaluation alone.
+This is an authorized privileged operation only within the approved implementation scope. The helper serializes deployments, requires a clean committed `main`, pins the exact revision, accepts no caller-selected target, and records the result. Never bypass it with `sudo nixos-rebuild`, change its safeguards merely to make a deployment pass, or deploy investigative/proposed-only work. If the helper is unavailable because its bootstrap generation has not yet been activated, ask Sumeet to perform the canonical rebuild rather than improvising another privileged command.
+
+After deployment, verify that the new generation is active and that affected processes loaded the intended configuration. Do not claim deployment success from source evaluation alone.
 
 ## System layout
 

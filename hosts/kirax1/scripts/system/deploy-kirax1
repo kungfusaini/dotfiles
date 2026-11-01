@@ -1,0 +1,66 @@
+repo=/home/sumeet/.config/nixos
+host=kirax1
+command_path=/run/current-system/sw/bin/deploy-kirax1
+
+if (( $# != 0 )); then
+  printf 'Usage: deploy-kirax1\n' >&2
+  exit 64
+fi
+
+if (( EUID != 0 )); then
+  exec /run/wrappers/bin/sudo -- "$command_path"
+fi
+
+exec 9>/run/lock/deploy-kirax1.lock
+if ! flock --exclusive --nonblock 9; then
+  printf 'Another kirax1 deployment is already running. Waiting for it to finish...\n' >&2
+  flock --exclusive 9
+fi
+
+actor=${SUDO_USER:-root}
+if [[ $actor != sumeet && $actor != root ]]; then
+  printf 'deploy-kirax1 may only be run by sumeet.\n' >&2
+  exit 77
+fi
+
+branch_ref=$(runuser -u sumeet -- git -C "$repo" symbolic-ref --quiet HEAD) || {
+  printf 'Refusing to deploy: %s has a detached HEAD.\n' "$repo" >&2
+  exit 65
+}
+if [[ $branch_ref != refs/heads/main ]]; then
+  printf 'Refusing to deploy branch %q; expected main.\n' "${branch_ref#refs/heads/}" >&2
+  exit 65
+fi
+revision=$(runuser -u sumeet -- git -C "$repo" rev-parse --verify 'refs/heads/main^{commit}')
+
+status=$(runuser -u sumeet -- git -C "$repo" status --porcelain=v1 --untracked-files=all)
+if [[ -n $status ]]; then
+  printf 'Refusing to deploy: %s is not clean. Commit the complete change first.\n' "$repo" >&2
+  printf '%s\n' "$status" >&2
+  exit 65
+fi
+
+# Pin the state checked above. If another process checked out or advanced a
+# branch while status was running, abort rather than deploying an unchecked
+# revision or silently deploying something other than current main.
+checked_branch_ref=$(runuser -u sumeet -- git -C "$repo" symbolic-ref --quiet HEAD) || true
+checked_revision=$(runuser -u sumeet -- git -C "$repo" rev-parse --verify 'refs/heads/main^{commit}')
+if [[ $checked_branch_ref != "$branch_ref" || $checked_revision != "$revision" ]]; then
+  printf 'Refusing to deploy: %s changed during validation; retry.\n' "$repo" >&2
+  exit 75
+fi
+
+flake="git+file://$repo?rev=$revision#$host"
+
+result=failed
+finish() {
+  rc=$?
+  logger --tag deploy-kirax1 -- "actor=$actor revision=$revision result=$result exit=$rc"
+}
+trap finish EXIT
+
+printf 'Deploying %s revision %s...\n' "$host" "$revision"
+logger --tag deploy-kirax1 -- "actor=$actor revision=$revision result=started"
+/run/current-system/sw/bin/nixos-rebuild switch --flake "$flake"
+result=succeeded
+printf 'Deployed %s revision %s.\n' "$host" "$revision"

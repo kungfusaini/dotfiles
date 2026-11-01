@@ -7,6 +7,7 @@
     ./hardware/goodhaptic.nix
 
     ./modules/core/boot.nix
+    ./modules/core/deployment.nix
     ./modules/core/locale.nix
     ./modules/core/networking.nix
     ./modules/core/nix.nix
