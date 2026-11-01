@@ -22,6 +22,11 @@ These instructions apply to every Pi session. Project, stream, and repository in
 - From a Project Object terminal, launch graphical applications with `project-workspace-exec COMMAND [ARG ...]` so their windows open on the agent's own Hyprland workspace. Use another workspace only when the task explicitly requires it.
 - Operational autonomy does not expand authorization. Do not bypass approval requirements, safety boundaries, secret-handling rules, or destructive-operation safeguards.
 
+## External research
+
+- When an answer relies on external research, include clickable links to the most relevant primary sources, attached to the claims or recommendations they support.
+- For product recommendations, link each shortlisted product and include a current purchase link when useful. Clearly qualify unverified compatibility, pricing, and availability.
+
 ## Change and commit discipline
 
 - Preserve unrelated work. Never overwrite, revert, reformat, stage, or commit pre-existing changes unless Sumeet explicitly includes them in the approved scope.
