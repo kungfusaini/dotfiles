@@ -16,7 +16,7 @@ HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
 PICKER_CLASSES = {"dev.project_object.Picker", "project-picker"}
 
 
-def focus_existing_picker():
+def dismiss_existing_picker(pid):
     result = subprocess.run([HYPRCTL, "clients", "-j"], text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=False)
     if result.returncode != 0:
         return False
@@ -26,9 +26,14 @@ def focus_existing_picker():
         return False
     for client in clients:
         classes = {str(client.get("class", "")), str(client.get("initialClass", ""))}
-        if classes & PICKER_CLASSES and client.get("address"):
-            subprocess.run([HYPRCTL, "dispatch", "focuswindow", f"address:{client['address']}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            return True
+        if classes & PICKER_CLASSES and client.get("pid") == pid and client.get("address"):
+            dismissed = subprocess.run(
+                [HYPRCTL, "dispatch", "closewindow", f"address:{client['address']}"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            return dismissed.returncode == 0
     return False
 
 
@@ -60,7 +65,7 @@ def main():
     preload = "--preload" in sys.argv[1:]
     pid = running_daemon()
     if pid:
-        if not preload and not focus_existing_picker():
+        if not preload and not dismiss_existing_picker(pid):
             os.kill(pid, signal.SIGUSR1)
         return
     start_daemon(show=not preload)

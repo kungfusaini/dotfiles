@@ -28,23 +28,47 @@ class PickerLauncherTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def test_generation_is_checked_before_existing_window_is_focused(self):
+    def test_generation_is_checked_before_existing_window_is_dismissed(self):
         events = []
         with mock.patch.object(sys, "argv", ["project-picker"]), \
              mock.patch.object(self.launcher, "running_daemon", side_effect=lambda: events.append("generation") or 42), \
-             mock.patch.object(self.launcher, "focus_existing_picker", side_effect=lambda: events.append("focus") or True), \
+             mock.patch.object(self.launcher, "dismiss_existing_picker", side_effect=lambda pid: events.append(("dismiss", pid)) or True), \
              mock.patch.object(self.launcher, "start_daemon") as start:
             self.launcher.main()
-        self.assertEqual(events, ["generation", "focus"])
+        self.assertEqual(events, ["generation", ("dismiss", 42)])
         start.assert_not_called()
 
-    def test_missing_current_daemon_starts_new_generation_without_focusing_stale_window(self):
+    def test_only_current_daemon_picker_is_closed_through_hyprland(self):
+        clients = mock.Mock(
+            returncode=0,
+            stdout=(
+                '[{"class":"dev.project_object.Picker","address":"0xstale","pid":41},'
+                '{"class":"dev.project_object.Picker","address":"0xcurrent","pid":42}]'
+            ),
+        )
+        dismissed = mock.Mock(returncode=0)
+        with mock.patch.object(self.launcher.subprocess, "run", side_effect=[clients, dismissed]) as run:
+            self.assertTrue(self.launcher.dismiss_existing_picker(42))
+        self.assertEqual(
+            run.call_args_list[1].args[0],
+            [self.launcher.HYPRCTL, "dispatch", "closewindow", "address:0xcurrent"],
+        )
+
+    def test_hidden_picker_is_woken_when_no_window_can_be_dismissed(self):
+        with mock.patch.object(sys, "argv", ["project-picker"]), \
+             mock.patch.object(self.launcher, "running_daemon", return_value=42), \
+             mock.patch.object(self.launcher, "dismiss_existing_picker", return_value=False), \
+             mock.patch.object(self.launcher.os, "kill") as kill:
+            self.launcher.main()
+        kill.assert_called_once_with(42, self.launcher.signal.SIGUSR1)
+
+    def test_missing_current_daemon_starts_new_generation_without_dismissing_stale_window(self):
         with mock.patch.object(sys, "argv", ["project-picker"]), \
              mock.patch.object(self.launcher, "running_daemon", return_value=None), \
-             mock.patch.object(self.launcher, "focus_existing_picker") as focus, \
+             mock.patch.object(self.launcher, "dismiss_existing_picker") as dismiss, \
              mock.patch.object(self.launcher, "start_daemon") as start:
             self.launcher.main()
-        focus.assert_not_called()
+        dismiss.assert_not_called()
         start.assert_called_once_with(show=True)
 
 
