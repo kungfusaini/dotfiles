@@ -85,6 +85,7 @@ in
         "sleep 1; pgrep -x waybar >/dev/null || waybar"
         "${tabletOsk} daemon"
         "${pkgs.blueman}/bin/blueman-applet"
+        "${pkgs.hyprsunset}/bin/hyprsunset"
         # graphical-session.target is not active in this Hyprland/UWSM setup,
         # so start the daemon from the compositor environment.
         "systemctl --user start voxtype.service"
@@ -374,6 +375,22 @@ in
   xdg.configFile."hypr/scripts".source = ../config/hypr/scripts;
   xdg.configFile."hypr/dms".source = ../config/hypr/dms;
   xdg.configFile."hypr/zapzap-whatsapp-title".source = ../config/hypr/zapzap-whatsapp-title;
+  xdg.configFile."hypr/hyprsunset.conf".text = ''
+    profile {
+        time = 7:00
+        identity = true
+    }
+
+    profile {
+        time = 20:00
+        temperature = 5000
+    }
+
+    profile {
+        time = 22:00
+        temperature = 4000
+    }
+  '';
 
   # If this machine had the previous Lua setup activated, leave no exact
   # hyprland.lua alongside the generated hyprland.conf. Hyprland config format
