@@ -63,7 +63,7 @@ After an approved NixOS change is validated, reviewed, and committed to a clean 
 deploy-kirax1
 ```
 
-Never bypass this helper or weaken its safeguards. After deployment, verify the active generation and affected services.
+Never bypass this helper or weaken its safeguards. After deployment, verify the active generation and affected services. If Pi guidance, extensions, skills, or settings changed, call `reload_all_sessions` to refresh every running Pi session.
 
 ## System layout
 

@@ -15,6 +15,7 @@ import reloadAllExtension, {
 function fakePi() {
   const commands = new Map();
   const handlers = new Map();
+  const tools = new Map();
   const sent = [];
   return {
     api: {
@@ -24,12 +25,16 @@ function fakePi() {
       registerCommand(name, definition) {
         commands.set(name, definition);
       },
+      registerTool(definition) {
+        tools.set(definition.name, definition);
+      },
       sendUserMessage(message, options) {
         sent.push({ message, options });
       },
     },
     commands,
     handlers,
+    tools,
     sent,
   };
 }
@@ -131,6 +136,58 @@ test("/reload-all reloads its caller and queues reloads in other running session
   }
 });
 
+test("reload_all_sessions broadcasts and reloads each session only after idle", async () => {
+  const oldRuntimeDirectory = process.env.XDG_RUNTIME_DIR;
+  const runtimeDirectory = mkdtempSync(join(tmpdir(), "pi-reload-all-tool-test-"));
+  process.env.XDG_RUNTIME_DIR = runtimeDirectory;
+
+  const caller = fakePi();
+  const receiver = fakePi();
+  const callerContext = fakeContext();
+  const receiverContext = fakeContext();
+
+  try {
+    reloadAllExtension(caller.api);
+    reloadAllExtension(receiver.api);
+    caller.handlers.get("session_start")({ reason: "startup" }, callerContext.context);
+    receiver.handlers.get("session_start")({ reason: "startup" }, receiverContext.context);
+
+    const result = await caller.tools.get("reload_all_sessions").execute();
+    assert.match(result.content[0].text, /Broadcast the resource reload/);
+    assert.deepEqual(caller.sent, [{
+      message: "/reload-all --apply",
+      options: { deliverAs: "followUp", expandPromptTemplates: true },
+    }]);
+
+    const callerApply = caller.commands.get("reload-all").handler("--apply", callerContext.context);
+    await wait(0);
+    assert.equal(callerContext.idleWaits, 1);
+    assert.equal(callerContext.reloads, 0);
+
+    await wait(450);
+    assert.deepEqual(receiver.sent, [{
+      message: "/reload-all --apply",
+      options: { deliverAs: "followUp", expandPromptTemplates: true },
+    }]);
+    const receiverApply = receiver.commands.get("reload-all").handler("--apply", receiverContext.context);
+    await wait(0);
+    assert.equal(receiverContext.idleWaits, 1);
+    assert.equal(receiverContext.reloads, 0);
+
+    callerContext.releaseIdle();
+    receiverContext.releaseIdle();
+    await Promise.all([callerApply, receiverApply]);
+    assert.equal(callerContext.reloads, 1);
+    assert.equal(receiverContext.reloads, 1);
+  } finally {
+    caller.handlers.get("session_shutdown")?.();
+    receiver.handlers.get("session_shutdown")?.();
+    if (oldRuntimeDirectory === undefined) delete process.env.XDG_RUNTIME_DIR;
+    else process.env.XDG_RUNTIME_DIR = oldRuntimeDirectory;
+    rmSync(runtimeDirectory, { recursive: true, force: true });
+  }
+});
+
 test("a generation written during reload triggers one follow-up reload", async () => {
   const oldRuntimeDirectory = process.env.XDG_RUNTIME_DIR;
   const runtimeDirectory = mkdtempSync(join(tmpdir(), "pi-reload-all-race-test-"));
@@ -167,7 +224,7 @@ test("a generation written during reload triggers one follow-up reload", async (
   }
 });
 
-test("Pi loads the extension and exposes only /reload-all", () => {
+test("Pi loads the extension and exposes only the public /reload-all command", () => {
   const repository = dirname(dirname(fileURLToPath(import.meta.url)));
   const extension = join(repository, "home/config/pi/extensions/reload-all.ts");
   const runtimeDirectory = mkdtempSync(join(tmpdir(), "pi-reload-all-rpc-test-"));

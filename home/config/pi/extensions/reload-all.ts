@@ -7,6 +7,11 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 const POLL_INTERVAL_MS = 200;
 const LOCAL_RELOAD_ARGUMENT = "--apply";
 const LOCAL_RELOAD_COMMAND = `/reload-all ${LOCAL_RELOAD_ARGUMENT}`;
+const EMPTY_PARAMETERS = {
+  type: "object",
+  properties: {},
+  additionalProperties: false,
+} as const;
 
 interface ReloadAllProcessState {
   appliedToken?: string;
@@ -160,6 +165,25 @@ export default function reloadAllExtension(pi: ExtensionAPI) {
   });
 
   pi.on("session_shutdown", stopPolling);
+
+  pi.registerTool({
+    name: "reload_all_sessions",
+    label: "Reload All Pi Sessions",
+    description: "Reload Pi resources in every running session after deployed guidance, extensions, skills, or settings change. Does not restart Pi processes.",
+    parameters: EMPTY_PARAMETERS,
+    async execute() {
+      const token = writeReloadAllToken();
+      lastSeenToken = token;
+      queueReload(token);
+      return {
+        content: [{
+          type: "text",
+          text: "Broadcast the resource reload. Every running Pi session will reload after it becomes idle.",
+        }],
+        details: undefined,
+      };
+    },
+  });
 
   pi.registerCommand("reload-all", {
     description: "Reload resources in every running Pi session",
