@@ -316,6 +316,18 @@ in
     };
   };
 
+  # Preserve the running session before the battery reaches hardware cutoff.
+  # Two percent leaves only a narrow reserve, so hibernation must be verified
+  # manually after deployment before this policy is relied upon.
+  services.upower = {
+    enable = true;
+    usePercentageForPolicy = true;
+    percentageLow = 10;
+    percentageCritical = 5;
+    percentageAction = 2;
+    criticalPowerAction = "Hibernate";
+  };
+
   services.udev.extraRules = ''
     SUBSYSTEM=="power_supply", ACTION=="change", TAG+="systemd", ENV{SYSTEMD_WANTS}+="lenovo-ac-platform-profile.service"
   '';
