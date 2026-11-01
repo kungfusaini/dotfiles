@@ -27,6 +27,7 @@ in
     ./modules/mako.nix
     ./modules/mewtion.nix
     ./modules/microphone.nix
+    ./modules/pegasus.nix
     ./modules/pi.nix
     ./packages/project-object/nix/home-manager-module.nix
     ./modules/power-status.nix

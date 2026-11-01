@@ -1,0 +1,4 @@
+# This file is managed by Home Manager. Change it in the Nix repository.
+general.fullscreen: true
+general.input-mouse-support: true
+general.verify-files: true

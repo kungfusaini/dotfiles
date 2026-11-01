@@ -1,0 +1,17 @@
+# Manually registered games live here. When Sumeet asks Pi to add a game,
+# append its Pegasus metadata below and keep game files outside this repository.
+# Pegasus only displays entries whose `file` exists.
+#
+# Example:
+#
+# collection: PC
+# shortname: pc
+#
+# game: Example Game
+# file: /absolute/path/to/example-game
+# launch: "/absolute/path/to/example-game"
+# developer: Example Studio
+# genre: Strategy
+# players: 1
+# release: 2026-01-01
+# summary: A short description.

@@ -1,0 +1,2 @@
+# Pegasus scans this durable data root for additional metadata files.
+/home/sumeet/matrix/data/emulation
