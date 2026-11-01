@@ -1,9 +1,13 @@
 import importlib.util
 from importlib.machinery import SourceFileLoader
+import json
 import os
 from pathlib import Path
+import signal
+import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -54,6 +58,22 @@ class PickerLauncherTests(unittest.TestCase):
             [self.launcher.HYPRCTL, "dispatch", "closewindow", "address:0xcurrent"],
         )
 
+    def test_close_active_workspace_signals_running_daemon_without_toggling_picker(self):
+        with mock.patch.object(sys, "argv", ["project-picker", "--close-active-workspace"]), \
+             mock.patch.object(self.launcher, "running_daemon", return_value=42), \
+             mock.patch.object(self.launcher, "dismiss_existing_picker") as dismiss, \
+             mock.patch.object(self.launcher.os, "kill") as kill:
+            self.launcher.main()
+        dismiss.assert_not_called()
+        kill.assert_called_once_with(42, self.launcher.signal.SIGUSR2)
+
+    def test_close_active_workspace_starts_hidden_daemon_with_action_when_missing(self):
+        with mock.patch.object(sys, "argv", ["project-picker", "--close-active-workspace"]), \
+             mock.patch.object(self.launcher, "running_daemon", return_value=None), \
+             mock.patch.object(self.launcher, "start_daemon") as start:
+            self.launcher.main()
+        start.assert_called_once_with(show=False, close_active_workspace=True)
+
     def test_hidden_picker_is_woken_when_no_window_can_be_dismissed(self):
         with mock.patch.object(sys, "argv", ["project-picker"]), \
              mock.patch.object(self.launcher, "running_daemon", return_value=42), \
@@ -62,6 +82,58 @@ class PickerLauncherTests(unittest.TestCase):
             self.launcher.main()
         kill.assert_called_once_with(42, self.launcher.signal.SIGUSR1)
 
+    def test_concurrent_cold_close_requests_wait_for_one_ready_daemon(self):
+        root = Path(self.temporary.name)
+        launcher = root / "project-picker"
+        gui = root / "project-picker-gui"
+        marker = root / "starts"
+        launcher.write_bytes((ROOT / "bin" / "project-picker").read_bytes())
+        launcher.chmod(0o755)
+        gui.write_text(
+            "#!/usr/bin/env python3\n"
+            "import json, os, pathlib, signal, sys, time\n"
+            "with open(os.environ['PICKER_START_MARKER'], 'a') as stream:\n"
+            "    stream.write(f'{os.getpid()}\\n')\n"
+            "def stop(*_args):\n"
+            "    raise SystemExit(0)\n"
+            "signal.signal(signal.SIGTERM, stop)\n"
+            "signal.signal(signal.SIGUSR2, lambda *_args: None)\n"
+            "time.sleep(0.15)\n"
+            "runtime = pathlib.Path(os.environ['PROJECT_OBJECT_RUNTIME_DIR'])\n"
+            "runtime.mkdir(parents=True, exist_ok=True)\n"
+            "record = {'pid': os.getpid(), 'command': str(pathlib.Path(sys.argv[0]).resolve())}\n"
+            "(runtime / 'picker-gui.json').write_text(json.dumps(record) + '\\n')\n"
+            "while True:\n"
+            "    time.sleep(1)\n"
+        )
+        gui.chmod(0o755)
+        environment = {
+            **os.environ,
+            "PROJECT_OBJECT_RUNTIME_DIR": str(root / "runtime"),
+            "PICKER_START_MARKER": str(marker),
+        }
+        daemon_pid = None
+        try:
+            processes = [
+                subprocess.Popen([str(launcher), "--close-active-workspace"], env=environment)
+                for _ in range(2)
+            ]
+            for process in processes:
+                self.assertEqual(process.wait(timeout=5), 0)
+            record = json.loads((root / "runtime" / "picker-gui.json").read_text())
+            daemon_pid = record["pid"]
+            deadline = time.monotonic() + 2
+            while not marker.exists() and time.monotonic() < deadline:
+                time.sleep(0.01)
+            starts = marker.read_text().splitlines()
+            self.assertEqual(starts, [str(daemon_pid)])
+        finally:
+            if daemon_pid is not None:
+                try:
+                    os.kill(daemon_pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+
     def test_missing_current_daemon_starts_new_generation_without_dismissing_stale_window(self):
         with mock.patch.object(sys, "argv", ["project-picker"]), \
              mock.patch.object(self.launcher, "running_daemon", return_value=None), \
@@ -69,7 +141,7 @@ class PickerLauncherTests(unittest.TestCase):
              mock.patch.object(self.launcher, "start_daemon") as start:
             self.launcher.main()
         dismiss.assert_not_called()
-        start.assert_called_once_with(show=True)
+        start.assert_called_once_with(show=True, close_active_workspace=False)
 
 
 if __name__ == "__main__":

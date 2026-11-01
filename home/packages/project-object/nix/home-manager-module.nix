@@ -47,7 +47,10 @@ in
 
     wayland.windowManager.hyprland.settings = lib.mkIf cfg.enableHyprlandBinding {
       "$terminal" = lib.mkForce "${package}/bin/project-terminal";
-      bind = lib.mkAfter [ "$mod, P, exec, ${package}/bin/project-picker" ];
+      bind = lib.mkAfter [
+        "$mod, P, exec, ${package}/bin/project-picker"
+        "$mod, X, exec, ${package}/bin/project-picker --close-active-workspace"
+      ];
       exec-once = lib.mkAfter [ "${package}/bin/project-picker --preload" ];
       windowrule = lib.mkAfter [
         "match:class ^(dev.project_object.Picker|project-picker)$, float on"

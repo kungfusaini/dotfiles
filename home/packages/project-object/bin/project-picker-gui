@@ -231,6 +231,7 @@ class PickerApplication(Adw.Application):
         self.directory_candidates_loaded = False
         self.directory_candidates_loading = False
         self.directory_selected_path = None
+        self.destructive_action_pending = False
 
     def do_startup(self):
         Adw.Application.do_startup(self)
@@ -1137,7 +1138,54 @@ class PickerApplication(Adw.Application):
         keys.connect("key-pressed", navigate)
         dialog.add_controller(keys)
 
+    def request_close_active_workspace(self):
+        if self.destructive_action_pending:
+            return True
+        try:
+            registry = backend.load_registry()
+            active_workspace = backend.active_workspace_name()
+            selected_scope = None
+            for project in registry["projects"]:
+                if project.get("archivedAt"):
+                    continue
+                if backend.workspace_name(project) == active_workspace:
+                    selected_scope = {"kind": "project", "projectId": project["id"]}
+                    break
+                streams = backend.load_stream_registry(project)["streams"]
+                stream = next((
+                    item for item in streams
+                    if not item.get("archivedAt")
+                    and backend.stream_workspace_name(project, item) == active_workspace
+                ), None)
+                if stream:
+                    selected_scope = {
+                        "kind": "stream",
+                        "projectId": project["id"],
+                        "streamId": stream["id"],
+                    }
+                    break
+        except Exception as error:
+            backend.notify_error(str(error))
+            return True
+        if selected_scope is None:
+            backend.notify_error("Super+X only closes an active project or stream workspace")
+            return True
+
+        self.expanded_project_ids.add(selected_scope["projectId"])
+        self.selected_scope = selected_scope
+        self.show_window()
+        self.refresh_rows()
+        row = next((item for item in self.rows if self.row_scope(item) == selected_scope), None)
+        if row is None:
+            backend.notify_error("The active workspace is no longer available to close")
+            return True
+        self.select_visible_row(row)
+        self.request_close_workspace()
+        return True
+
     def request_close_workspace(self):
+        if self.destructive_action_pending:
+            return
         row = self.listbox.get_selected_row()
         if not row:
             return
@@ -1167,15 +1215,18 @@ class PickerApplication(Adw.Application):
         dialog.set_default_response("cancel")
         dialog.set_close_response("cancel")
         self.add_vim_dialog_navigation(dialog, "close")
+        self.destructive_action_pending = True
 
         def responded(_dialog, response):
             _dialog.close()
             if response != "close":
+                self.destructive_action_pending = False
                 return
 
             self.window.set_sensitive(False)
 
             def finish(error):
+                self.destructive_action_pending = False
                 self.window.set_sensitive(True)
                 if error:
                     backend.notify_error(str(error))
@@ -1207,6 +1258,8 @@ class PickerApplication(Adw.Application):
         dialog.present()
 
     def request_archive_project(self):
+        if self.destructive_action_pending:
+            return
         row = self.listbox.get_selected_row()
         if not isinstance(row, ProjectRow):
             backend.notify_error("Select a project row before archiving")
@@ -1232,14 +1285,17 @@ class PickerApplication(Adw.Application):
         dialog.set_default_response("cancel")
         dialog.set_close_response("cancel")
         self.add_vim_dialog_navigation(dialog, "archive")
+        self.destructive_action_pending = True
 
         def responded(_dialog, response):
             _dialog.close()
             if response != "archive":
+                self.destructive_action_pending = False
                 return
             self.window.set_sensitive(False)
 
             def finish(error):
+                self.destructive_action_pending = False
                 self.window.set_sensitive(True)
                 try:
                     self.current_workspace = backend.active_workspace_name()
@@ -1722,7 +1778,7 @@ class PickerApplication(Adw.Application):
         return False
 
 
-def run_daemon(show_initially):
+def run_daemon(show_initially, close_active_workspace=False):
     backend.ensure_directory(backend.RUNTIME_ROOT)
     pid_path = backend.RUNTIME_ROOT / "picker-gui.json"
     application = PickerApplication(persistent=True, start_hidden=not show_initially)
@@ -1735,9 +1791,16 @@ def run_daemon(show_initially):
         return GLib.SOURCE_CONTINUE
 
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, application.show_window)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR2, application.request_close_active_workspace)
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, stop)
     pid_path.write_text(json.dumps({"pid": os.getpid(), "command": str(Path(sys.argv[0]).resolve())}) + "\n")
     pid_path.chmod(0o600)
+    if close_active_workspace:
+        def close_active_once():
+            application.request_close_active_workspace()
+            return GLib.SOURCE_REMOVE
+
+        GLib.idle_add(close_active_once)
     try:
         loop.run()
     finally:
@@ -1746,7 +1809,10 @@ def run_daemon(show_initially):
 
 def main():
     if "--daemon" in sys.argv:
-        run_daemon(show_initially="--show" in sys.argv)
+        run_daemon(
+            show_initially="--show" in sys.argv,
+            close_active_workspace="--close-active-workspace" in sys.argv,
+        )
         return
     application = PickerApplication()
     raise SystemExit(application.run([sys.argv[0]]))
