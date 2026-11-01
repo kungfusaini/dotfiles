@@ -23,7 +23,6 @@ export function terminalArguments(command: string, cwd: string, env = process.en
   return [
     launcher,
     terminal,
-    "--hold",
     "--title",
     "Action needed · Pi",
     "--working-directory",
@@ -60,7 +59,7 @@ export default function commandTerminalExtension(pi: ExtensionAPI) {
     name: "open_command_terminal",
     label: "Open Command Terminal",
     description:
-      "Open an exact command that genuinely requires user interaction, such as a sudo password, in a new terminal beside the invoking Pi window. Use this after approval instead of asking the user to copy a command. Placement fails closed if the invoking workspace cannot be identified.",
+      "Open an exact command that genuinely requires user interaction, such as a sudo password, in a new terminal beside the invoking Pi window. The terminal closes automatically when the command exits. Use this after approval instead of asking the user to copy a command. Placement fails closed if the invoking workspace cannot be identified.",
     parameters: Parameters,
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       if (typeof params.command !== "string" || !params.command.trim()) throw new Error("command must not be empty");
@@ -71,7 +70,7 @@ export default function commandTerminalExtension(pi: ExtensionAPI) {
       return {
         content: [{
           type: "text",
-          text: "Opened the exact command in a terminal beside this Pi window. The user only needs to complete the interactive prompt there.",
+          text: "Opened the exact command in a terminal beside this Pi window. The user only needs to complete the interactive prompt; the terminal will close when the command finishes.",
         }],
         details: undefined,
       };

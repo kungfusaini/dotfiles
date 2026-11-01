@@ -29,11 +29,11 @@ test("builds an argument-safe same-workspace terminal launch", () => {
 
   assert.equal(arguments_[0], "/test/project-workspace-exec");
   assert.equal(arguments_[1], "/test/kitty");
-  assert.equal(arguments_[2], "--hold");
-  assert.equal(arguments_[6], "/tmp/path with spaces");
+  assert.ok(!arguments_.includes("--hold"));
+  assert.equal(arguments_[5], "/tmp/path with spaces");
   assert.equal(arguments_.at(-1), command);
-  assert.match(arguments_[9], /Command requiring your attention/);
-  assert.match(arguments_[9], /exec bash -lc "\$1"/);
+  assert.match(arguments_[8], /Command requiring your attention/);
+  assert.match(arguments_[8], /exec bash -lc "\$1"/);
 });
 
 test("tool delegates placement to project-workspace-exec without shell interpolation", async () => {
