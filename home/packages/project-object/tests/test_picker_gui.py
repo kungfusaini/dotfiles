@@ -26,6 +26,26 @@ class PickerGuiSourceTests(unittest.TestCase):
         )
         self.assertIn("Gtk.Label(label=CREATE_FOOTER_HINT", source)
 
+    def test_keyboard_selection_scrolls_selected_row_into_view(self):
+        source = GUI_SOURCE.read_text()
+        tree = ast.parse(source)
+        picker = next(
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "PickerApplication"
+        )
+        methods = {
+            node.name: ast.unparse(node)
+            for node in picker.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+
+        self.assertIn("self.list_scroll = Gtk.ScrolledWindow", source)
+        self.assertIn("self.select_visible_row", methods["refresh_rows"])
+        self.assertIn("self.select_visible_row", methods["move_selection"])
+        self.assertIn("self.select_visible_row", methods["select_edge"])
+        self.assertIn("GLib.idle_add(self.reveal_row, row)", methods["select_visible_row"])
+        self.assertIn("adjustment.clamp_page", methods["reveal_row"])
+
 
 if __name__ == "__main__":
     unittest.main()

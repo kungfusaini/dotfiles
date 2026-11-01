@@ -310,13 +310,13 @@ class PickerApplication(Adw.Application):
         page.append(self.search)
 
         body = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, vexpand=True)
-        scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        self.list_scroll = Gtk.ScrolledWindow(vexpand=True, hexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
         self.listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE, activate_on_single_click=False)
         self.listbox.add_css_class("project-list")
         self.listbox.connect("row-selected", self.on_row_selected)
         self.listbox.connect("row-activated", lambda _box, _row: self.open_selected())
-        scroll.set_child(self.listbox)
-        body.append(scroll)
+        self.list_scroll.set_child(self.listbox)
+        body.append(self.list_scroll)
 
         self.context_separator = Gtk.Separator(orientation=Gtk.Orientation.VERTICAL)
         self.context_separator.add_css_class("context-separator")
@@ -995,7 +995,20 @@ class PickerApplication(Adw.Application):
             if desired and self.row_scope(row) == desired:
                 selected = row
         if self.rows:
-            self.listbox.select_row(selected or self.rows[0])
+            self.select_visible_row(selected or self.rows[0])
+
+    def select_visible_row(self, row):
+        self.listbox.select_row(row)
+        GLib.idle_add(self.reveal_row, row)
+
+    def reveal_row(self, row):
+        if row not in self.rows or row.get_parent() is not self.listbox:
+            return GLib.SOURCE_REMOVE
+        computed, bounds = row.compute_bounds(self.listbox)
+        if computed:
+            adjustment = self.list_scroll.get_vadjustment()
+            adjustment.clamp_page(bounds.get_y(), bounds.get_y() + bounds.get_height())
+        return GLib.SOURCE_REMOVE
 
     def move_selection(self, delta):
         if not self.rows:
@@ -1003,11 +1016,11 @@ class PickerApplication(Adw.Application):
         selected = self.listbox.get_selected_row()
         index = self.rows.index(selected) if selected in self.rows else 0
         index = max(0, min(len(self.rows) - 1, index + delta))
-        self.listbox.select_row(self.rows[index])
+        self.select_visible_row(self.rows[index])
 
     def select_edge(self, last=False):
         if self.rows:
-            self.listbox.select_row(self.rows[-1 if last else 0])
+            self.select_visible_row(self.rows[-1 if last else 0])
 
     def focus_normal_mode(self):
         self.search_mode = False
