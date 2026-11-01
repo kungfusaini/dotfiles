@@ -44,6 +44,11 @@ in
     wshowkeys = wshowkeysCommand;
   };
 
+  # Bitwarden's default memfd_secret backend vetoes hibernation kernel-wide.
+  # mlock keeps its keys out of normal swap, but a hibernation image can still
+  # contain sensitive memory; the current resume partition is not encrypted.
+  environment.sessionVariables.SECURE_KEY_CONTAINER_BACKEND = "mlock";
+
   fonts.packages = with pkgs; [
     font-awesome
     nerd-fonts.symbols-only

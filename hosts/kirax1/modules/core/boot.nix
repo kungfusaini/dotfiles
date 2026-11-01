@@ -4,6 +4,9 @@
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
 
+  # Resume hibernation images from the dedicated swap partition.
+  boot.resumeDevice = "/dev/disk/by-uuid/63b514e6-91bc-4c48-9b2c-fef7666d94bb";
+
   # Use latest kernel.
   boot.kernelPackages = pkgs.linuxPackages_latest;
 

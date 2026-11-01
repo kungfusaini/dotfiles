@@ -40,8 +40,8 @@ if [ "$ac_online" = "1" ]; then
     tooltip="Running on AC power (${status}, ${capacity}%)"
   fi
 else
-  if [ "$capacity" -lt 15 ]; then icon=""; class="critical";
-  elif [ "$capacity" -lt 35 ]; then icon=""; class="warning";
+  if [ "$capacity" -le 5 ]; then icon=""; class="critical";
+  elif [ "$capacity" -le 10 ]; then icon=""; class="warning";
   elif [ "$capacity" -lt 60 ]; then icon=""; class="battery";
   elif [ "$capacity" -lt 85 ]; then icon=""; class="battery";
   else icon=""; class="battery"; fi
