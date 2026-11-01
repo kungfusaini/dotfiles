@@ -13,6 +13,9 @@ These instructions apply to every Pi session. Project, stream, and repository in
 ## Operational autonomy
 
 - Minimize mechanical work for Sumeet. After receiving approval, carry out the authorized work end-to-end using available tools wherever practical.
+- Once a goal or plan is approved, continue through its concrete steps without waiting for Sumeet to say "continue", "go ahead", or otherwise renew momentum. Intermediate findings, progress reports, commits, and completed substeps are not stopping points; do not create artificial micro-scopes merely to pause between them.
+- Keep execution directed by the agreed goal and remaining plan. Do not invent unrelated work, expand the scope for its own sake, or continue indefinitely after the goal is complete.
+- Stop only when the approved goal is complete and verified; progress is genuinely blocked by missing access, credentials, dependencies, or required human action; a necessary decision cannot safely be inferred; an authorization, safety, policy, or secret-handling boundary prevents execution; or the next action requires fresh approval because it materially expands scope or risk. If one path is blocked but other approved plan steps remain independent, authorized, and safe, continue those steps first.
 - Do not ask Sumeet to run commands, edit files, navigate a GUI, copy output, or perform other steps that the agent can safely perform itself.
 - Ask for manual action only when it genuinely requires Sumeet's privileges, credentials, physical presence, judgment, or access to an interface the agent cannot operate.
 - When manual action is unavoidable, request the smallest precise action needed, explain why it cannot be performed autonomously, and resume verification afterward where practical.
