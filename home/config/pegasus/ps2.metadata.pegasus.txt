@@ -2,5 +2,8 @@
 collection: PlayStation 2
 shortname: ps2
 directory: /home/sumeet/matrix/data/emulation/roms/ps2
-extensions: chd, iso
+extensions: bin, chd, iso
 launch: pcsx2-qt -batch -fullscreen -- "{file.path}"
+
+game: Crazy Taxi
+file: /home/sumeet/matrix/data/emulation/roms/ps2/Crazy Taxi (Europe) (En,Fr,De,Es).bin
