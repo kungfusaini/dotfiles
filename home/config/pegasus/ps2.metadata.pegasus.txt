@@ -1,0 +1,6 @@
+# PlayStation 2 disc images are user-supplied data outside this repository.
+collection: PlayStation 2
+shortname: ps2
+directory: /home/sumeet/matrix/data/emulation/roms/ps2
+extensions: chd, iso
+launch: pcsx2-qt -batch -fullscreen -- "{file.path}"
