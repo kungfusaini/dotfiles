@@ -15,6 +15,7 @@
 
     ./modules/desktop/apps.nix
     ./modules/desktop/audio.nix
+    ./modules/desktop/gaming.nix
     ./modules/desktop/hyprland.nix
     ./modules/desktop/spicetify.nix
     ./modules/desktop/vivaldi.nix
