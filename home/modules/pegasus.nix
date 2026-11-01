@@ -20,7 +20,6 @@
   '';
 
   wayland.windowManager.hyprland.settings = {
-    bind = [ "$mod, P, exec, pegasus-fe" ];
     windowrule = [
       "match:class ^(pegasus-fe|org\\.pegasus-frontend\\.)$, fullscreen on"
     ];
