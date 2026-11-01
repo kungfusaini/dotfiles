@@ -107,7 +107,7 @@ test("/reload-all reloads its caller and queues reloads in other running session
     await wait(450);
     assert.deepEqual(first.sent, []);
     assert.deepEqual(second.sent, [{
-      message: "/reload-all-apply",
+      message: "/reload-all --apply",
       options: { deliverAs: "followUp", expandPromptTemplates: true },
     }]);
 
@@ -115,7 +115,7 @@ test("/reload-all reloads its caller and queues reloads in other running session
     await wait(450);
     assert.equal(second.sent.length, 1, "busy sessions coalesce repeated broadcasts into one reload");
 
-    const apply = second.commands.get("reload-all-apply").handler("", secondContext.context);
+    const apply = second.commands.get("reload-all").handler("--apply", secondContext.context);
     await wait(0);
     assert.equal(secondContext.idleWaits, 1);
     assert.equal(secondContext.reloads, 0);
@@ -155,7 +155,7 @@ test("a generation written during reload triggers one follow-up reload", async (
     await wait(250);
 
     assert.deepEqual(replacement.sent, [{
-      message: "/reload-all-apply",
+      message: "/reload-all --apply",
       options: { deliverAs: "followUp", expandPromptTemplates: true },
     }]);
   } finally {
@@ -167,12 +167,12 @@ test("a generation written during reload triggers one follow-up reload", async (
   }
 });
 
-test("Pi loads the extension and exposes both commands", () => {
+test("Pi loads the extension and exposes only /reload-all", () => {
   const repository = dirname(dirname(fileURLToPath(import.meta.url)));
   const extension = join(repository, "home/config/pi/extensions/reload-all.ts");
   const runtimeDirectory = mkdtempSync(join(tmpdir(), "pi-reload-all-rpc-test-"));
   try {
-    const result = spawnSync("pi", ["--mode", "rpc", "--no-session", "--extension", extension], {
+    const result = spawnSync("pi", ["--mode", "rpc", "--no-session", "--no-extensions", "--extension", extension], {
       cwd: repository,
       env: { ...process.env, XDG_RUNTIME_DIR: runtimeDirectory },
       input: '{"id":"commands","type":"get_commands"}\n',
@@ -188,7 +188,7 @@ test("Pi loads the extension and exposes both commands", () => {
     assert.equal(response.success, true);
     const commands = response.data.commands.map(({ name }) => name);
     assert.ok(commands.includes("reload-all"));
-    assert.ok(commands.includes("reload-all-apply"));
+    assert.ok(!commands.includes("reload-all-apply"));
   } finally {
     rmSync(runtimeDirectory, { recursive: true, force: true });
   }

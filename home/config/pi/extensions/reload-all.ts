@@ -5,7 +5,8 @@ import { dirname, join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 const POLL_INTERVAL_MS = 200;
-const LOCAL_RELOAD_COMMAND = "/reload-all-apply";
+const LOCAL_RELOAD_ARGUMENT = "--apply";
+const LOCAL_RELOAD_COMMAND = `/reload-all ${LOCAL_RELOAD_ARGUMENT}`;
 
 interface ReloadAllProcessState {
   appliedToken?: string;
@@ -162,7 +163,15 @@ export default function reloadAllExtension(pi: ExtensionAPI) {
 
   pi.registerCommand("reload-all", {
     description: "Reload resources in every running Pi session",
-    handler: async (_args, ctx) => {
+    handler: async (args, ctx) => {
+      if (args.trim() === LOCAL_RELOAD_ARGUMENT) {
+        await reloadWhenIdle(ctx);
+        return;
+      }
+      if (args.trim()) {
+        ctx.ui.notify("Usage: /reload-all", "error");
+        return;
+      }
       try {
         lastSeenToken = writeReloadAllToken();
       } catch (error) {
@@ -174,13 +183,6 @@ export default function reloadAllExtension(pi: ExtensionAPI) {
       pendingToken = lastSeenToken;
       if (reloadPending) return;
       reloadPending = true;
-      await reloadWhenIdle(ctx);
-    },
-  });
-
-  pi.registerCommand("reload-all-apply", {
-    description: "Apply a reload requested by another Pi session",
-    handler: async (_args, ctx) => {
       await reloadWhenIdle(ctx);
     },
   });
