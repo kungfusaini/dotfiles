@@ -388,7 +388,7 @@ in
 
     profile {
         time = 22:00
-        temperature = 4000
+        temperature = 3500
     }
   '';
 
