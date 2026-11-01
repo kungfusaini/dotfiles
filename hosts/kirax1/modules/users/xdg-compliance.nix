@@ -21,9 +21,6 @@
 
     # Pi defaults to ~/.pi/agent; keep its config/runtime state under XDG config.
     PI_CODING_AGENT_DIR = "/home/sumeet/.config/pi/agent";
-
-    # Vim does not fully follow XDG by default; bootstrap it from XDG config.
-    VIMINIT = "source /home/sumeet/.config/vim/vimrc";
   };
 
   programs.bash.interactiveShellInit = ''
@@ -37,8 +34,8 @@
       "''${XDG_CONFIG_HOME:-$HOME/.config}/docker" \
       "''${XDG_CACHE_HOME:-$HOME/.cache}/texlive/texmf-var" \
       "''${XDG_CONFIG_HOME:-$HOME/.config}/pi/agent" \
-      "''${XDG_STATE_HOME:-$HOME/.local/state}/vim/undo" \
-      "''${XDG_STATE_HOME:-$HOME/.local/state}/vim/backup" \
-      "''${XDG_CACHE_HOME:-$HOME/.cache}/vim/swap"
+      "''${XDG_STATE_HOME:-$HOME/.local/state}/nvim/undo" \
+      "''${XDG_STATE_HOME:-$HOME/.local/state}/nvim/backup" \
+      "''${XDG_CACHE_HOME:-$HOME/.cache}/nvim/swap"
   '';
 }
