@@ -27,6 +27,7 @@ in
   xdg.configFile."pi/agent/bin/codex-imagegen".source = "${codex-imagegen}/bin/codex-imagegen";
   xdg.configFile."pi/agent/AGENTS.md".source = ../config/pi/AGENTS.md;
   xdg.configFile."pi/agent/extensions/chatid.ts".source = ../config/pi/extensions/chatid.ts;
+  xdg.configFile."pi/agent/extensions/command-terminal.ts".source = ../config/pi/extensions/command-terminal.ts;
   xdg.configFile."pi/agent/extensions/codex-imagegen.ts".source = ../config/pi/extensions/codex-imagegen.ts;
   xdg.configFile."pi/agent/extensions/nanogpt.ts".source = ../config/pi/extensions/nanogpt.ts;
   xdg.configFile."pi/agent/extensions/reload-all.ts".source = ../config/pi/extensions/reload-all.ts;
