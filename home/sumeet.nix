@@ -62,6 +62,13 @@ in
     nodejs
   ];
 
+  # Prune stale user and Home Manager generations alongside the system policy.
+  nix.gc = {
+    automatic = true;
+    dates = "weekly";
+    options = "--delete-older-than 14d";
+  };
+
   programs.home-manager.enable = true;
   programs.project-object.enable = true;
 }
