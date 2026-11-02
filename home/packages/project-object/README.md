@@ -39,10 +39,10 @@ Global shortcuts:
 
 Picker controls:
 
-- `j` / `k` or `↑` / `↓` — navigate in normal mode
+- `j` / `k` or `↑` / `↓` — navigate in normal mode, wrapping between the first and last visible entries
 - `gg` / `G` — jump to the first or last visible entry
 - `/` — enter search mode and filter projects and streams
-- `Ctrl+J` / `Ctrl+K` — navigate while searching
+- `Ctrl+J` / `Ctrl+K` — navigate while searching, wrapping between the first and last visible entries
 - `Tab` — expand or collapse the selected project
 - `Space` — show or hide the selected scope's context inspector without switching workspace
 - `n` — jump to the next project or stream explicitly requesting review, a decision, or an action; legacy idle agents remain a fallback

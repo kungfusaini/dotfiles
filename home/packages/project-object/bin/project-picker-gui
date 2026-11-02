@@ -1059,7 +1059,7 @@ class PickerApplication(Adw.Application):
             return
         selected = self.listbox.get_selected_row()
         index = self.rows.index(selected) if selected in self.rows else 0
-        index = max(0, min(len(self.rows) - 1, index + delta))
+        index = (index + delta) % len(self.rows)
         self.select_visible_row(self.rows[index])
 
     def select_edge(self, last=False):

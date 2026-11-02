@@ -59,7 +59,7 @@ class PickerGuiSourceTests(unittest.TestCase):
             HOME_MANAGER_MODULE.read_text(),
         )
 
-    def test_keyboard_selection_scrolls_selected_row_into_view(self):
+    def test_keyboard_selection_wraps_and_scrolls_selected_row_into_view(self):
         source = GUI_SOURCE.read_text()
         tree = ast.parse(source)
         picker = next(
@@ -74,6 +74,8 @@ class PickerGuiSourceTests(unittest.TestCase):
 
         self.assertIn("self.list_scroll = Gtk.ScrolledWindow", source)
         self.assertIn("self.select_visible_row", methods["refresh_rows"])
+        self.assertIn("(index + delta) % len(self.rows)", methods["move_selection"])
+        self.assertNotIn("max(0", methods["move_selection"])
         self.assertIn("self.select_visible_row", methods["move_selection"])
         self.assertIn("self.select_visible_row", methods["select_edge"])
         self.assertIn("GLib.idle_add(self.reveal_row, row)", methods["select_visible_row"])
