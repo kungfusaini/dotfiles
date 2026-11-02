@@ -1,0 +1,61 @@
+--- a/packages/tui/src/tui.ts
++++ b/packages/tui/src/tui.ts
+@@ -474,7 +474,9 @@
+ 	private immediateRenderScheduled = false;
+ 	private renderTimer: NodeJS.Timeout | undefined;
+ 	private lastRenderAt = 0;
+-	private static readonly MIN_RENDER_INTERVAL_MS = 16;
++	// Bound background transcript work; keyboard input still bypasses this
++	// interval through requestImmediateRender().
++	private static readonly MIN_RENDER_INTERVAL_MS = 100;
+ 	private showHardwareCursor = false;
+ 	private clearOnShrink = false;
+ 	protected fullRedrawCount = 0;
+--- a/packages/coding-agent/src/modes/interactive/components/assistant-message.ts
++++ b/packages/coding-agent/src/modes/interactive/components/assistant-message.ts
+@@ -21,6 +21,7 @@
+ 	private lastMessage?: AssistantMessage;
+ 	private hasToolCalls = false;
+ 	private isStreaming = false;
++	private contentPending = false;
+ 	private thinkingVisibilityOverrides = new Map<number, boolean>();
+ 
+ 	constructor(
+@@ -78,6 +79,9 @@
+ 	}
+ 
+ 	override render(width: number): string[] {
++		if (this.contentPending && this.lastMessage) {
++			this.rebuildContent(this.lastMessage);
++		}
+ 		const lines = super.render(width);
+ 		if (this.hasToolCalls || lines.length === 0) {
+ 			return lines;
+@@ -91,6 +95,14 @@
+ 	updateContent(message: AssistantMessage, isStreaming = this.isStreaming): void {
+ 		this.lastMessage = message;
+ 		this.isStreaming = isStreaming;
++		// Deltas still flow immediately to the agent and tool handlers. Only
++		// Markdown construction is coalesced until a frame is displayed.
++		this.contentPending = true;
++		if (!isStreaming) this.rebuildContent(message);
++	}
++
++	private rebuildContent(message: AssistantMessage): void {
++		this.contentPending = false;
+ 
+ 		// Clear content container
+ 		this.contentContainer.clear();
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -3472,7 +3472,9 @@
+ 					this.streamingMessage = undefined;
+ 					this.footer.invalidate();
+ 				}
+-				this.ui.requestRender();
++				// Final output (including abort/error text) must not wait for
++				// the background frame throttle.
++				this.ui.renderNow();
+ 				break;
+ 
+ 			case "bash_execution_update":
