@@ -79,6 +79,27 @@ class PickerGuiSourceTests(unittest.TestCase):
         self.assertIn("GLib.idle_add(self.reveal_row, row)", methods["select_visible_row"])
         self.assertIn("adjustment.clamp_page", methods["reveal_row"])
 
+    def test_project_header_working_state_outranks_idle_state(self):
+        source = GUI_SOURCE.read_text()
+        tree = ast.parse(source)
+        picker = next(
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "PickerApplication"
+        )
+        list_rows = ast.unparse(next(
+            node for node in picker.body
+            if isinstance(node, ast.FunctionDef) and node.name == "list_rows"
+        ))
+
+        self.assertIn(
+            "project_agent_state = 'working' if 'working' in project_agent_states else 'idle' if 'idle' in project_agent_states else None",
+            list_rows,
+        )
+        self.assertNotIn(
+            "project_agent_state = 'idle' if 'idle' in project_agent_states else 'working'",
+            list_rows,
+        )
+
     def test_visible_picker_refreshes_every_scope_context(self):
         source = GUI_SOURCE.read_text()
         tree = ast.parse(source)

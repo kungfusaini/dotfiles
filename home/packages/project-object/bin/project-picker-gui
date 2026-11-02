@@ -1008,7 +1008,7 @@ class PickerApplication(Adw.Application):
                 if project_id == project["id"]
                 for agent_state in states
             }
-            project_agent_state = "idle" if "idle" in project_agent_states else "working" if "working" in project_agent_states else None
+            project_agent_state = "working" if "working" in project_agent_states else "idle" if "idle" in project_agent_states else None
             values.append(ProjectRow(
                 project,
                 expanded=expanded,
