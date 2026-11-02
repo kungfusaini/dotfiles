@@ -1,0 +1,6 @@
+# Nintendo Switch game dumps are user-supplied data outside this repository.
+collection: Nintendo Switch
+shortname: switch
+directory: /home/sumeet/matrix/data/emulation/roms/switch
+extensions: nsp, xci
+launch: Ryujinx --fullscreen "{file.path}"

@@ -4,6 +4,7 @@
   home.packages = with pkgs; [
     pcsx2
     pegasus-frontend
+    ryubing
   ];
 
   # Pegasus reads these as its native configuration. Keep the UI behavior and
@@ -16,10 +17,12 @@
       ../config/pegasus/custom.metadata.pegasus.txt;
     "pegasus-frontend/metafiles/ps2.metadata.pegasus.txt".source =
       ../config/pegasus/ps2.metadata.pegasus.txt;
+    "pegasus-frontend/metafiles/switch.metadata.pegasus.txt".source =
+      ../config/pegasus/switch.metadata.pegasus.txt;
   };
 
-  # PCSX2 owns its writable settings, while firmware and save data live in the
-  # durable emulation data tree rather than under ~/.config.
+  # Emulator settings stay writable, while firmware, keys, and save data live
+  # in the durable emulation data tree rather than only under ~/.config.
   home.file = {
     ".config/PCSX2/bios".source =
       config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/matrix/data/emulation/bios/ps2";
@@ -27,6 +30,12 @@
       config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/matrix/data/emulation/saves/ps2/memory-cards";
     ".config/PCSX2/sstates".source =
       config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/matrix/data/emulation/saves/ps2/states";
+    ".config/Ryujinx/system".source =
+      config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/matrix/data/emulation/bios/switch/system";
+    ".config/Ryujinx/bis/system/Contents".source =
+      config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/matrix/data/emulation/bios/switch/firmware";
+    ".config/Ryujinx/bis/user/save".source =
+      config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/matrix/data/emulation/saves/switch";
   };
 
   # Reserve the durable data roots without putting ROMs, saves, BIOS files, or
@@ -34,10 +43,15 @@
   home.activation.createPegasusDataRoot = ''
     mkdir -p \
       "$HOME/matrix/data/emulation/bios/ps2" \
+      "$HOME/matrix/data/emulation/bios/switch/firmware/registered" \
+      "$HOME/matrix/data/emulation/bios/switch/system" \
       "$HOME/matrix/data/emulation/media/ps2" \
+      "$HOME/matrix/data/emulation/media/switch" \
       "$HOME/matrix/data/emulation/roms/ps2" \
+      "$HOME/matrix/data/emulation/roms/switch" \
       "$HOME/matrix/data/emulation/saves/ps2/memory-cards" \
-      "$HOME/matrix/data/emulation/saves/ps2/states"
+      "$HOME/matrix/data/emulation/saves/ps2/states" \
+      "$HOME/matrix/data/emulation/saves/switch"
   '';
 
   wayland.windowManager.hyprland.settings = {
