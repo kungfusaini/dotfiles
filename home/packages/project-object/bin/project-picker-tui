@@ -1048,6 +1048,8 @@ def close_workspace(project, session, stream=None):
     snapshot_command = [PROJECT_SNAPSHOT, "--project-id", project["id"]]
     if stream:
         snapshot_command.extend(["--stream-id", stream["id"]])
+    else:
+        snapshot_command.append("--project-scope")
     snapshot = run(snapshot_command)
     if snapshot.returncode != 0:
         detail = snapshot.stderr.strip() or "snapshot capture failed"

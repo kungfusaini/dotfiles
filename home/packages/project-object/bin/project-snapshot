@@ -376,10 +376,12 @@ def save_snapshot(project, snapshot, stream=None):
 def main():
     parser = argparse.ArgumentParser(description="Capture a read-only snapshot of a Project Object workspace")
     parser.add_argument("--project-id", help="canonical project UUID; defaults to PROJECT_OBJECT_ID or the active workspace")
-    parser.add_argument("--stream-id", help="canonical stream UUID; requires a resolved project")
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--project-scope", action="store_true", help="capture the project workspace and ignore inherited stream context")
+    scope.add_argument("--stream-id", help="canonical stream UUID; requires a resolved project")
     arguments = parser.parse_args()
     project_id = arguments.project_id or os.environ.get("PROJECT_OBJECT_ID")
-    stream_id = arguments.stream_id or os.environ.get("PROJECT_OBJECT_STREAM_ID")
+    stream_id = None if arguments.project_scope else arguments.stream_id or os.environ.get("PROJECT_OBJECT_STREAM_ID")
     try:
         project = resolve_active_project(project_id)
         stream = None

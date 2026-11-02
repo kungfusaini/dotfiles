@@ -135,13 +135,22 @@ print(fixture.read_text())
             "kittyWindowId": 17,
         }))
 
-    def run_snapshot(self):
+    def run_snapshot(self, *arguments, environment=None):
         return subprocess.run(
-            [str(SNAPSHOT), "--project-id", self.project_id],
-            env=self.environment(),
+            [str(SNAPSHOT), "--project-id", self.project_id, *arguments],
+            env=environment or self.environment(),
             text=True,
             capture_output=True,
         )
+
+    def test_project_scope_ignores_inherited_stream_context(self):
+        environment = self.environment()
+        environment["PROJECT_OBJECT_STREAM_ID"] = str(uuid.uuid4())
+        result = self.run_snapshot("--project-scope", environment=environment)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        snapshot = json.loads((self.project_home / "snapshots" / "workspace.json").read_text())
+        self.assertEqual(snapshot["scope"], "project")
+        self.assertNotIn("streamId", snapshot)
 
     def test_captures_only_project_workspace_without_dispatch(self):
         result = self.run_snapshot()

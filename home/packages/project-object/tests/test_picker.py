@@ -530,7 +530,10 @@ class PickerTests(unittest.TestCase):
              mock.patch.object(self.picker, "write_json_atomic"):
             self.picker.close_project(self.project, session)
         self.assertEqual(session["openWorkspaces"], [stream_scope])
-        self.assertIn([self.picker.PROJECT_SNAPSHOT, "--project-id", self.project["id"]], commands)
+        self.assertIn(
+            [self.picker.PROJECT_SNAPSHOT, "--project-id", self.project["id"], "--project-scope"],
+            commands,
+        )
         self.assertFalse(any("--stream-id" in command for command in commands))
 
     def test_close_stream_snapshots_closes_windows_and_updates_state(self):
