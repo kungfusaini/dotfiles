@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ config, pkgs, ... }:
 
 let
   cli-microsoft365 = pkgs.buildNpmPackage {
@@ -47,6 +47,11 @@ in
 
   xdg = {
     enable = true;
+    userDirs = {
+      enable = true;
+      createDirectories = true;
+      projects = "${config.home.homeDirectory}/matrix/projects";
+    };
     mimeApps = {
       enable = true;
       defaultApplications = {
