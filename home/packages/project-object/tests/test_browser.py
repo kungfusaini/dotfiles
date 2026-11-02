@@ -76,7 +76,10 @@ class BrowserTests(unittest.TestCase):
             mock.patch.object(self.browser, "ensure_project_browser"),
         )
         with patches[0], patches[1], patches[2], patches[3], patches[4] as companion, patches[5] as primary, \
-                mock.patch.dict(os.environ, {"PROJECT_OBJECT_ID": self.project_id}):
+                mock.patch.dict(os.environ, {
+                    "PROJECT_OBJECT_ID": self.project_id,
+                    "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME": "Alpha",
+                }):
             self.browser.open_urls("adjacent", ["https://example.com/quick"])
             companion.assert_called_once()
             primary.assert_not_called()
@@ -125,13 +128,47 @@ class BrowserTests(unittest.TestCase):
             self.browser.mark_project_click()
             self.assertEqual(self.browser.consume_click_mode("adjacent"), "project")
 
-    def test_non_project_open_uses_global_browser(self):
-        with mock.patch.object(self.browser, "active_workspace_name", return_value="comms"), \
+    def test_agent_open_uses_recorded_workspace_instead_of_focused_workspace(self):
+        state = self.browser.empty_state()
+        home = self.data / "projects" / self.project_id
+        home.mkdir(parents=True)
+        (home / "streams.json").write_text(json.dumps({
+            "version": 1,
+            "streams": [{
+                "id": str(uuid.uuid4()),
+                "name": "Focused",
+                "mainDirectory": None,
+                "archivedAt": None,
+            }],
+        }))
+        with mock.patch.object(self.browser, "active_workspace_name", return_value="Other") as active, \
                 mock.patch.object(self.browser, "load_registry", return_value=self.registry), \
-                mock.patch.object(self.browser, "ensure_global_browser") as global_browser, \
+                mock.patch.object(self.browser, "browser_lock", return_value=nullcontext()), \
+                mock.patch.object(self.browser, "load_state", return_value=state), \
+                mock.patch.object(self.browser, "ensure_companion_browser") as companion, \
                 mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("PROJECT_OBJECT_ID", None)
+            os.environ["PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME"] = "Alpha · Focused"
+            self.browser.open_urls("adjacent", ["https://example.com/agent"])
+        active.assert_not_called()
+        companion.assert_called_once_with(
+            self.project,
+            "Alpha · Focused",
+            ["https://example.com/agent"],
+            state,
+        )
+
+    def test_ambient_terminal_workspace_does_not_override_active_workspace(self):
+        with mock.patch.object(self.browser, "active_workspace_name", return_value="comms") as active, \
+                mock.patch.object(self.browser, "load_registry", return_value=self.registry), \
+                mock.patch.object(self.browser, "ensure_global_browser") as global_browser, \
+                mock.patch.dict(os.environ, {
+                    "PROJECT_OBJECT_ID": "",
+                    "PROJECT_OBJECT_WORKSPACE_NAME": "Alpha",
+                    "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME": "",
+                }):
             self.browser.open_urls("adjacent", ["https://example.com"])
+        active.assert_called_once_with()
         global_browser.assert_called_once_with(["https://example.com"])
 
     def test_rejects_non_web_urls(self):

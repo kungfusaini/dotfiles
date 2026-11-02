@@ -9,6 +9,7 @@ import sys
 
 HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
 WORKSPACE_ENV = "PROJECT_OBJECT_WORKSPACE_NAME"
+LAUNCH_WORKSPACE_ENV = "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME"
 
 
 def hypr_clients():
@@ -95,7 +96,8 @@ def main():
         if not workspace:
             raise RuntimeError("could not identify the Hyprland workspace containing the invoking terminal")
         validate_workspace_rule(workspace)
-        payload = f"[workspace name:{workspace} silent] {shlex.join(command)}"
+        contextual_command = ["env", f"{LAUNCH_WORKSPACE_ENV}={workspace}", *command]
+        payload = f"[workspace name:{workspace} silent] {shlex.join(contextual_command)}"
         result = subprocess.run([HYPRCTL, "dispatch", "exec", payload], check=False)
         if result.returncode != 0:
             raise RuntimeError(f"Hyprland refused to launch the command (exit status {result.returncode})")

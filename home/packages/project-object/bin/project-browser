@@ -40,6 +40,7 @@ GLOBAL_WORKSPACE = "browser"
 BROWSER_CLASSES = ("vivaldi", "vivaldi-stable")
 ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
 CLICK_MODE_TTL = 1.0
+LAUNCH_WORKSPACE_ENV = "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME"
 
 
 def notify_error(message: str) -> None:
@@ -71,6 +72,11 @@ def active_workspace_name() -> str:
     if not isinstance(workspace, dict):
         raise RuntimeError("hyprctl activeworkspace did not return an object")
     return str(workspace.get("name", ""))
+
+
+def invoking_workspace_name() -> str:
+    explicit = os.environ.get(LAUNCH_WORKSPACE_ENV, "")
+    return explicit if explicit else active_workspace_name()
 
 
 def active_window_address() -> str | None:
@@ -393,7 +399,7 @@ def return_from_project_browser(registry: dict, project: dict, state: dict) -> b
 
 def open_urls(mode: str, urls: list[str]) -> None:
     urls = validate_urls(urls)
-    workspace = active_workspace_name()
+    workspace = invoking_workspace_name()
     registry = load_registry()
     project = resolve_project(registry, workspace)
     if not project:

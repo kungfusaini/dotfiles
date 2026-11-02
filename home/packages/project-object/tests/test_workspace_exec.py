@@ -72,7 +72,8 @@ raise SystemExit(2)
             [
                 "dispatch",
                 "exec",
-                f"[workspace name:Command Center · Agents silent] {shlex.join(command)}",
+                "[workspace name:Command Center · Agents silent] "
+                + shlex.join(["env", "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME=Command Center · Agents", *command]),
             ],
         ])
 
@@ -82,7 +83,9 @@ raise SystemExit(2)
             extra_environment={"PROJECT_OBJECT_WORKSPACE_NAME": "Command Center · Agents"},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("[workspace name:Command Center · Agents silent]", self.calls_value()[1][2])
+        payload = self.calls_value()[1][2]
+        self.assertIn("[workspace name:Command Center · Agents silent]", payload)
+        self.assertIn("'PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME=Command Center · Agents'", payload)
 
     def test_refuses_to_guess_from_the_active_workspace(self):
         result = self.run_helper("sample-app")
