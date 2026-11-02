@@ -21,6 +21,7 @@ let
 in
 {
   imports = [
+    ./modules/codex-usage.nix
     ./modules/display.nix
     ./modules/hypr.nix
     ./modules/kitty.nix
