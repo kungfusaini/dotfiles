@@ -101,6 +101,7 @@ in
 {
   # Hyprland desktop launched through UWSM.
   services.displayManager.gdm.enable = false;
+  services.desktopManager.gnome.enable = false;
 
   programs.hyprland = {
     enable = true;

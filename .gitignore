@@ -3,6 +3,10 @@
 result
 result-*
 
+# Python test/runtime caches
+__pycache__/
+*.pyc
+
 # Editor/OS noise
 *.swp
 *.swo

@@ -1,4 +1,4 @@
-{ displayKeyHandler, displayLayoutOpen, headlessMonitorWatch, lib, micMuteButton, pkgs, ... }:
+{ displayKeyHandler, displayLayoutOpen, headlessMonitorWatch, lib, micMuteButton, pkgs, tabletOsk, ... }:
 
 let
   # Keep this pinned to the same Hyprland-compatible hyprgrass build used by
@@ -12,8 +12,6 @@ let
       hash = "sha256-tCt7FNc1RBHou/ym7B0XzoOqqNq8Df+dizEDkAgJ4U0=";
     };
   });
-
-  tabletOsk = "/home/sumeet/.config/nixos/hosts/kirax1/scripts/desktop/tablet-osk";
 
   screenshotFull = pkgs.writeShellScript "hypr-screenshot-full" ''
     set -eu

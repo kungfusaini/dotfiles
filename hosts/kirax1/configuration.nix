@@ -15,7 +15,6 @@
 
     ./modules/desktop/apps.nix
     ./modules/desktop/audio.nix
-    ./modules/desktop/gnome-tablet-test.nix
     ./modules/desktop/gaming.nix
     ./modules/desktop/hyprland.nix
     ./modules/desktop/spicetify.nix

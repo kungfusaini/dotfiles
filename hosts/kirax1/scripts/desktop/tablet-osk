@@ -76,6 +76,21 @@ toggle_osk() {
   start_osk
 }
 
+trial_foreground() {
+  [[ -r "$RUNTIME_DIR/tablet-workspace.json" ]] || return 1
+  python3 - "$RUNTIME_DIR/tablet-workspace.json" <<'PY'
+import json, os, subprocess, sys
+try:
+    state = json.load(open(sys.argv[1]))
+    if not state.get("enabled") or state.get("instance") != os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        raise ValueError("stale trial")
+    current = json.loads(subprocess.check_output(["hyprctl", "activeworkspace", "-j"]))
+    sys.exit(0 if current["name"] == "tablet-trial" else 1)
+except (OSError, ValueError, KeyError, subprocess.SubprocessError):
+    sys.exit(1)
+PY
+}
+
 daemon() {
   exec 9>"$LOCK_FILE"
   if ! flock -n 9; then
@@ -105,6 +120,10 @@ daemon() {
        [[ $(</run/headless-mode/state) == primed || $(</run/headless-mode/state) == active ]]; then
       stop_osk
       last="headless"
+    elif trial_foreground; then
+      # Manual workspace trial: preserve the user's explicit keyboard toggle;
+      # do not summon it merely because the trial was entered.
+      last="trial"
     elif [[ "$tablet" == "1" ]]; then
       if [[ -e "$DISABLED_FILE" ]]; then
         [[ "$last" == "disabled" ]] || echo "tablet-osk: tablet mode on; OSK manually hidden"
@@ -130,9 +149,10 @@ case "${1:-daemon}" in
   daemon|--daemon|watch|--watch) daemon ;;
   toggle|--toggle) toggle_osk ;;
   hide|--hide) hide_osk ;;
+  dismiss) touch "$DISABLED_FILE"; stop_osk ;;
   show|--show) rm -f "$DISABLED_FILE"; start_osk ;;
   *)
-    printf 'Usage: %s [daemon|toggle|hide|show]\n' "${0##*/}" >&2
+    printf 'Usage: %s [daemon|toggle|hide|show|dismiss]\n' "${0##*/}" >&2
     exit 2
     ;;
 esac
