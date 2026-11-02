@@ -279,6 +279,11 @@ let
   };
 in
 {
+  environment.systemPackages = [
+    pkgs.powertop
+    pkgs.linuxPackages.turbostat
+  ];
+
   # The thinkpad-acpi profile is the source of truth because the ThinkPad
   # power-mode button changes that provider. Keep the separate Intel SoC Power
   # Slider provider aligned so the kernel's aggregate profile never becomes
