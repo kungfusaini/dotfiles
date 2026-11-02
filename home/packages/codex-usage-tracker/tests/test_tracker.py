@@ -250,6 +250,47 @@ class TrackerTests(unittest.TestCase):
             self.assertIn("2026-11-02 00:00 UTC (end exclusive)", text)
             self.assertNotIn("unused", text)
 
+    def test_refresh_collects_once_and_reports_new_data(self):
+        self.write([header(), change(), effort(), response()])
+        output = io.StringIO()
+        with mock.patch.object(t.sys, "argv", ["codex-usage", "refresh"]), \
+                mock.patch.object(t, "fetch_quota", return_value=(t.parse_quota(quota(), "account"), "ok")) as fetch, \
+                mock.patch.object(t, "roots", return_value=[self.log]), \
+                contextlib.redirect_stdout(output):
+            self.assertEqual(t.main(), 0)
+        fetch.assert_called_once_with()
+        self.assertIn("17% used", output.getvalue())
+        self.assertIn("gpt-test / medium", output.getvalue())
+        with t.database(t.state_dir(), readonly=True) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0], 1)
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM requests").fetchone()[0], 1)
+
+    def test_refresh_failure_returns_failure_and_labels_saved_report(self):
+        output = io.StringIO()
+        with mock.patch.object(t.sys, "argv", ["codex-usage", "refresh"]), \
+                mock.patch.object(t, "fetch_quota", return_value=(None, "network_error")), \
+                mock.patch.object(t, "roots", return_value=[]), contextlib.redirect_stdout(output):
+            self.assertEqual(t.main(), 1)
+        self.assertIn("refresh incomplete", output.getvalue())
+        self.assertIn("No successful quota snapshots", output.getvalue())
+
+    def test_refresh_does_not_claim_success_when_collection_is_locked(self):
+        with mock.patch.object(t.sys, "argv", ["codex-usage", "refresh"]), \
+                mock.patch.object(t, "collect", return_value=None) as collect, \
+                mock.patch.object(t, "report") as report:
+            self.assertEqual(t.main(), 1)
+        collect.assert_called_once_with(t.state_dir())
+        report.assert_not_called()
+
+    def test_plain_report_remains_offline(self):
+        with t.database(t.state_dir()):
+            pass
+        with mock.patch.object(t.sys, "argv", ["codex-usage"]), \
+                mock.patch.object(t, "collect") as collect, \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.assertEqual(t.main(), 0)
+        collect.assert_not_called()
+
     def test_expired_auth_never_refreshes_or_writes(self):
         path = self.root / "auth.json"
         content = json.dumps({"openai-codex": {"access": "PRIVATE TOKEN", "accountId": "account", "expires": 1}})

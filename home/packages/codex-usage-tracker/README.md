@@ -7,6 +7,7 @@ server, Pi extension, model requests, or new authentication setup.
 
 ```sh
 codex-usage                         # current quota window + per-model/effort tokens
+codex-usage refresh                 # fetch latest quota + new logs, then show report
 codex-usage week                    # same report
 codex-usage week --start 2026-10-26  # seven days from this date, UTC
 codex-usage history                 # observed quota windows and peak percentages
@@ -16,8 +17,15 @@ systemctl --user status codex-usage.timer
 journalctl --user -u codex-usage.service
 ```
 
-Reports read the database only; they don't call OpenAI or rescan logs. The hourly
-systemd user timer makes one GET to `https://chatgpt.com/backend-api/wham/usage`
+Normal reports read the database only; they don't call OpenAI or rescan logs.
+`refresh` runs one collection on demand and then displays the updated report; it
+leaves the hourly schedule unchanged. It uses the same bounded incremental import
+and shared lock as the timer. If another collector is running, it skips and exits
+nonzero; retry after that collection finishes. On a network/auth/import error, it
+exits nonzero and explicitly labels the report as saved, potentially stale data.
+It refreshes measurements, not OAuth credentials.
+
+The hourly systemd user timer makes one GET to `https://chatgpt.com/backend-api/wham/usage`
 (timeout 15 seconds, no retries) and imports newly appended local records. Missed
 timer events coalesce into one collection after login/resume; the laptop is not
 woken from suspend. There is no automatic weekly notification: run `codex-usage`

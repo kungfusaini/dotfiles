@@ -397,6 +397,7 @@ def main():
     sub = parser.add_subparsers(dest="command")
     p = sub.add_parser("collect", help="Take one quota snapshot and incrementally import local logs")
     p.add_argument("--local-only", action="store_true", help="Backfill logs without an API call")
+    sub.add_parser("refresh", help="Fetch the latest quota, import new logs, and show the report")
     for name in ("status", "week"):
         p = sub.add_parser(name, help="Show quota and per-model weekly token usage")
         p.add_argument("--start", help="Start a seven-day report on YYYY-MM-DD (UTC)")
@@ -406,6 +407,15 @@ def main():
     try:
         if args.command == "collect":
             return collect(directory, args.local_only)
+        if args.command == "refresh":
+            result = collect(directory)
+            if result is None:  # Another collector holds the lock; no new measurement was made.
+                return 1
+            if result:
+                print("WARNING: refresh incomplete; showing the latest saved data, which may not be fresh.")
+            with database(directory, readonly=True) as db:
+                report(db)
+            return result
         with database(directory, readonly=True) as db:
             if args.command == "history":
                 history(db)
