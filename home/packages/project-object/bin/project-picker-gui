@@ -219,8 +219,10 @@ class PickerApplication(Adw.Application):
         self.rows = []
         self.agent_activity = {}
         self.context_cache = {}
+        self.context_scope_targets = []
         self.context_open = False
         self.context_details_open = False
+        self.context_refresh_pending = False
         self.expanded_project_ids = set()
         self.selected_scope = None
         self.selected_project = None
@@ -595,6 +597,27 @@ class PickerApplication(Adw.Application):
     def context_key(project, stream=None):
         return project["id"], stream["id"] if stream else None
 
+    @staticmethod
+    def is_next_attention_key(keyval, state):
+        blocked = (
+            Gdk.ModifierType.SHIFT_MASK
+            | Gdk.ModifierType.CONTROL_MASK
+            | Gdk.ModifierType.ALT_MASK
+            | Gdk.ModifierType.SUPER_MASK
+            | Gdk.ModifierType.HYPER_MASK
+            | Gdk.ModifierType.META_MASK
+            | Gdk.ModifierType.BUTTON1_MASK
+            | Gdk.ModifierType.BUTTON2_MASK
+            | Gdk.ModifierType.BUTTON3_MASK
+            | Gdk.ModifierType.BUTTON4_MASK
+            | Gdk.ModifierType.BUTTON5_MASK
+        )
+        return (
+            not state & blocked
+            and keyval in (Gdk.KEY_n, Gdk.KEY_N)
+            and (keyval != Gdk.KEY_N or bool(state & Gdk.ModifierType.LOCK_MASK))
+        )
+
     def context_targets(self):
         targets = []
         for project in self.registry["projects"]:
@@ -609,7 +632,8 @@ class PickerApplication(Adw.Application):
         return targets
 
     def preload_context_cache(self):
-        for project, stream in self.context_targets():
+        self.context_scope_targets = self.context_targets()
+        for project, stream in self.context_scope_targets:
             try:
                 self.context_cache[self.context_key(project, stream)] = backend.load_scope_context(project, stream)
             except Exception:
@@ -635,14 +659,11 @@ class PickerApplication(Adw.Application):
         return f"{seconds // 86400} d ago"
 
     def project_preview_target(self, project):
-        try:
-            streams = [
-                stream for stream in backend.load_stream_registry(project)["streams"]
-                if not stream.get("archivedAt")
-            ]
-        except Exception:
-            streams = []
-        targets = [(project, None), *((project, stream) for stream in streams)]
+        targets = [
+            (target_project, target_stream)
+            for target_project, target_stream in self.context_scope_targets
+            if target_project["id"] == project["id"]
+        ] or [(project, None)]
         for target_project, target_stream in targets:
             key = self.context_key(target_project, target_stream)
             context = self.context_cache.get(key, {})
@@ -737,9 +758,40 @@ class PickerApplication(Adw.Application):
         )
 
     def poll_context(self):
-        if self.window and self.window.get_visible() and self.context_open and self.stack.get_visible_child_name() == "list":
-            self.paint_context_inspector(refresh=True)
+        if (
+            not self.window
+            or not self.window.get_visible()
+            or self.stack.get_visible_child_name() != "list"
+            or self.context_refresh_pending
+        ):
+            return GLib.SOURCE_CONTINUE
+        self.context_refresh_pending = True
+
+        def refresh():
+            contexts = {}
+            targets = self.context_targets()
+            for project, stream in targets:
+                try:
+                    contexts[self.context_key(project, stream)] = backend.load_scope_context(project, stream)
+                except Exception:
+                    continue
+            GLib.idle_add(self.finish_context_refresh, contexts, targets)
+
+        threading.Thread(target=refresh, name="picker-context-refresh", daemon=True).start()
         return GLib.SOURCE_CONTINUE
+
+    def finish_context_refresh(self, contexts, targets):
+        self.context_cache.update(contexts)
+        self.context_scope_targets = targets
+        self.context_refresh_pending = False
+        if (
+            self.window
+            and self.window.get_visible()
+            and self.context_open
+            and self.stack.get_visible_child_name() == "list"
+        ):
+            self.paint_context_inspector()
+        return GLib.SOURCE_REMOVE
 
     def apply_window_size(self, width):
         self.window.set_size_request(width, WINDOW_HEIGHT)
@@ -789,11 +841,7 @@ class PickerApplication(Adw.Application):
     def scope_requires_attention(self, project, stream=None):
         key = self.context_key(project, stream)
         states = self.agent_activity.get(key, set())
-        try:
-            context = backend.load_scope_context(project, stream)
-            self.context_cache[key] = context
-        except Exception:
-            context = self.context_cache.get(key, {})
+        context = self.context_cache.get(key, {})
         if "working" in states:
             return False
         attention = context.get("briefAttention")
@@ -803,18 +851,13 @@ class PickerApplication(Adw.Application):
 
     def attention_scopes(self):
         scopes = []
-        for project in self.registry["projects"]:
-            if project.get("archivedAt"):
+        for project, stream in self.context_scope_targets:
+            if not self.scope_requires_attention(project, stream):
                 continue
-            if self.scope_requires_attention(project):
+            if stream:
+                scopes.append({"kind": "stream", "projectId": project["id"], "streamId": stream["id"]})
+            else:
                 scopes.append({"kind": "project", "projectId": project["id"]})
-            try:
-                streams = backend.load_stream_registry(project)["streams"]
-            except Exception:
-                continue
-            for stream in streams:
-                if not stream.get("archivedAt") and self.scope_requires_attention(project, stream):
-                    scopes.append({"kind": "stream", "projectId": project["id"], "streamId": stream["id"]})
         return scopes
 
     def select_next_attention(self):
@@ -1767,6 +1810,9 @@ class PickerApplication(Adw.Application):
                 return True
             return False
 
+        if self.is_next_attention_key(keyval, state):
+            self.activate_action("next-attention", None)
+            return True
         if keyval in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab):
             self.toggle_selected_project()
             return True

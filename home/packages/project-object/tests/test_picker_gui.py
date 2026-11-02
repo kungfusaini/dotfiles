@@ -1,4 +1,5 @@
 import ast
+import copy
 from pathlib import Path
 import unittest
 
@@ -77,6 +78,107 @@ class PickerGuiSourceTests(unittest.TestCase):
         self.assertIn("self.select_visible_row", methods["select_edge"])
         self.assertIn("GLib.idle_add(self.reveal_row, row)", methods["select_visible_row"])
         self.assertIn("adjustment.clamp_page", methods["reveal_row"])
+
+    def test_visible_picker_refreshes_every_scope_context(self):
+        source = GUI_SOURCE.read_text()
+        tree = ast.parse(source)
+        picker = next(
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "PickerApplication"
+        )
+        methods = {
+            node.name: ast.unparse(node)
+            for node in picker.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        poll_context = methods["poll_context"]
+        finish_refresh = methods["finish_context_refresh"]
+
+        self.assertIn("self.context_refresh_pending", poll_context)
+        self.assertIn("targets = self.context_targets()", poll_context)
+        self.assertIn("for project, stream in targets", poll_context)
+        self.assertIn("backend.load_scope_context(project, stream)", poll_context)
+        self.assertIn("threading.Thread", poll_context)
+        self.assertIn("GLib.idle_add(self.finish_context_refresh, contexts, targets)", poll_context)
+        self.assertIn("self.context_cache.update(contexts)", finish_refresh)
+        self.assertIn("self.context_scope_targets = targets", finish_refresh)
+        self.assertIn("self.context_refresh_pending = False", finish_refresh)
+        self.assertIn("self.paint_context_inspector()", finish_refresh)
+        self.assertNotIn("self.paint_context_inspector(refresh=True)", finish_refresh)
+        self.assertNotIn("backend.load_stream_registry", methods["project_preview_target"])
+        self.assertNotIn("backend.load_stream_registry", methods["attention_scopes"])
+        self.assertNotIn("backend.load_scope_context", methods["scope_requires_attention"])
+
+    def test_next_attention_key_uses_explicit_window_handler(self):
+        source = GUI_SOURCE.read_text()
+        tree = ast.parse(source)
+        picker = next(
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "PickerApplication"
+        )
+        methods = {
+            node.name: ast.unparse(node)
+            for node in picker.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        }
+        key_handler = methods["on_key_pressed"]
+        key_matcher = methods["is_next_attention_key"]
+
+        self.assertIn("if self.is_next_attention_key(keyval, state)", key_handler)
+        self.assertIn("not state & blocked", key_matcher)
+        self.assertIn("keyval in (Gdk.KEY_n, Gdk.KEY_N)", key_matcher)
+        self.assertIn("keyval != Gdk.KEY_N or bool(state & Gdk.ModifierType.LOCK_MASK)", key_matcher)
+        for modifier in ("SHIFT", "CONTROL", "ALT", "SUPER", "HYPER", "META", "BUTTON1", "BUTTON2", "BUTTON3", "BUTTON4", "BUTTON5"):
+            self.assertIn(f"Gdk.ModifierType.{modifier}_MASK", key_matcher)
+        self.assertNotIn("MOD2_MASK", key_matcher)
+        self.assertIn("self.activate_action('next-attention', None)", key_handler)
+        self.assertNotIn("self.select_next_attention()", key_handler)
+        self.assertIn('"next-attention": (self.select_next_attention, ["n"])', source)
+
+        matcher_node = copy.deepcopy(next(
+            node for node in picker.body
+            if isinstance(node, ast.FunctionDef) and node.name == "is_next_attention_key"
+        ))
+        matcher_node.decorator_list = []
+
+        class ModifierType:
+            SHIFT_MASK = 1
+            LOCK_MASK = 2
+            CONTROL_MASK = 4
+            ALT_MASK = 8
+            BUTTON1_MASK = 256
+            BUTTON2_MASK = 512
+            BUTTON3_MASK = 1024
+            BUTTON4_MASK = 2048
+            BUTTON5_MASK = 4096
+            SUPER_MASK = 1 << 26
+            HYPER_MASK = 1 << 27
+            META_MASK = 1 << 28
+
+        class FakeGdk:
+            KEY_n = 110
+            KEY_N = 78
+
+        FakeGdk.ModifierType = ModifierType
+        namespace = {"Gdk": FakeGdk}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[matcher_node], type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        matches = namespace["is_next_attention_key"]
+
+        unknown_num_lock = 1 << 20
+        for state in (0, ModifierType.LOCK_MASK, unknown_num_lock, ModifierType.LOCK_MASK | unknown_num_lock):
+            self.assertTrue(matches(FakeGdk.KEY_n, state))
+        self.assertTrue(matches(FakeGdk.KEY_N, ModifierType.LOCK_MASK))
+        self.assertTrue(matches(FakeGdk.KEY_N, ModifierType.LOCK_MASK | unknown_num_lock))
+        self.assertFalse(matches(FakeGdk.KEY_N, 0))
+        self.assertFalse(matches(FakeGdk.KEY_N, unknown_num_lock))
+        for modifier in (
+            ModifierType.SHIFT_MASK, ModifierType.CONTROL_MASK, ModifierType.ALT_MASK,
+            ModifierType.SUPER_MASK, ModifierType.HYPER_MASK, ModifierType.META_MASK,
+            ModifierType.BUTTON1_MASK, ModifierType.BUTTON2_MASK, ModifierType.BUTTON3_MASK,
+            ModifierType.BUTTON4_MASK, ModifierType.BUTTON5_MASK,
+        ):
+            self.assertFalse(matches(FakeGdk.KEY_n, modifier))
+            self.assertFalse(matches(FakeGdk.KEY_n, unknown_num_lock | modifier))
 
 
 if __name__ == "__main__":
