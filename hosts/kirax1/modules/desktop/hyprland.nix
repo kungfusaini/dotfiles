@@ -38,6 +38,13 @@ let
     text = ''
       set -eu
 
+      # Only repair Hyprland sessions. GNOME imports its own environment;
+      # never redirect its portals to a leftover or concurrent Hyprland.
+      case ":''${XDG_CURRENT_DESKTOP:-}:" in
+        *:Hyprland:*|*:hyprland:*) ;;
+        *) exec ${execPath} "$@" ;;
+      esac
+
       runtime="''${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
       chosen_sig=""
       chosen_wl=""
@@ -94,7 +101,6 @@ in
 {
   # Hyprland desktop launched through UWSM.
   services.displayManager.gdm.enable = false;
-  services.desktopManager.gnome.enable = false;
 
   programs.hyprland = {
     enable = true;

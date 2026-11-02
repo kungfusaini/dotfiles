@@ -451,6 +451,14 @@ def parse_args(arguments: list[str]) -> argparse.Namespace:
 def main() -> int:
     args = parse_args(sys.argv[1:])
     try:
+        desktops = os.environ.get("XDG_CURRENT_DESKTOP", "").lower().split(":")
+        if "hyprland" not in desktops:
+            # Shared MIME handler also runs in the optional GNOME session.
+            # There are no Hyprland workspaces to resolve or place windows in.
+            if args.command != "mark-project-click":
+                urls = validate_urls(args.urls) if args.command == "open" else []
+                subprocess.Popen([VIVALDI, *urls], start_new_session=True)
+            return 0
         if args.command == "mark-project-click":
             mark_project_click()
         elif args.command == "focus":

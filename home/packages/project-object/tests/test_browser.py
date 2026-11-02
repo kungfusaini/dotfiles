@@ -50,6 +50,48 @@ class BrowserTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
+    def test_gnome_opens_links_without_querying_hyprland(self):
+        with mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "GNOME"}), \
+                mock.patch("sys.argv", ["project-browser", "open", "https://example.com"]), \
+                mock.patch.object(self.browser.subprocess, "Popen") as launch, \
+                mock.patch.object(self.browser, "invoking_workspace_name") as workspace:
+            self.assertEqual(self.browser.main(), 0)
+        launch.assert_called_once_with(
+            [self.browser.VIVALDI, "https://example.com"], start_new_session=True,
+        )
+        workspace.assert_not_called()
+
+    def test_missing_desktop_metadata_does_not_query_hyprland(self):
+        for desktop in (None, ""):
+            with self.subTest(desktop=desktop), \
+                    mock.patch.dict(os.environ, {}, clear=False), \
+                    mock.patch("sys.argv", ["project-browser", "open", "https://example.com"]), \
+                    mock.patch.object(self.browser.subprocess, "Popen") as launch, \
+                    mock.patch.object(self.browser, "invoking_workspace_name") as workspace:
+                if desktop is None:
+                    os.environ.pop("XDG_CURRENT_DESKTOP", None)
+                else:
+                    os.environ["XDG_CURRENT_DESKTOP"] = desktop
+                self.assertEqual(self.browser.main(), 0)
+                launch.assert_called_once()
+                workspace.assert_not_called()
+
+    def test_gnome_rejects_unsafe_urls(self):
+        with mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "GNOME"}), \
+                mock.patch("sys.argv", ["project-browser", "open", "file:///etc/passwd"]), \
+                mock.patch.object(self.browser.subprocess, "Popen") as launch, \
+                mock.patch.object(self.browser, "notify_error"):
+            self.assertEqual(self.browser.main(), 1)
+        launch.assert_not_called()
+
+    def test_hyprland_retains_project_aware_handler(self):
+        with mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland"}), \
+                mock.patch("sys.argv", ["project-browser", "open", "https://example.com"]), \
+                mock.patch.object(self.browser, "consume_click_mode", return_value="adjacent"), \
+                mock.patch.object(self.browser, "open_urls") as opener:
+            self.assertEqual(self.browser.main(), 0)
+        opener.assert_called_once_with("adjacent", ["https://example.com"])
+
     def test_workspace_resolution_includes_stream_and_browser_role(self):
         stream_id = str(uuid.uuid4())
         home = self.data / "projects" / self.project_id
