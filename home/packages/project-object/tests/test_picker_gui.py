@@ -45,9 +45,13 @@ class PickerGuiSourceTests(unittest.TestCase):
         self.assertIn("backend.workspace_name(project) == active_workspace", close_active)
         self.assertIn("backend.stream_workspace_name(project, item) == active_workspace", close_active)
         self.assertIn("if self.destructive_action_pending", close_active)
+        self.assertIn("self.show_window(after_place=present_confirmation)", close_active)
         self.assertIn("self.request_close_workspace()", close_active)
+        self.assertNotIn("self.show_window()", close_active)
         self.assertIn("self.destructive_action_pending = True", methods["request_close_workspace"])
         self.assertIn("self.destructive_action_pending = False", methods["request_close_workspace"])
+        self.assertIn("self.move_picker_to_workspace(target_workspace)", methods["show_window"])
+        self.assertIn("after_place()", methods["show_window"])
         self.assertIn("signal.SIGUSR2", source)
         self.assertIn(
             '"$mod, X, exec, ${package}/bin/project-picker --close-active-workspace"',
