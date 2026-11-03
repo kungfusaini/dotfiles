@@ -20,6 +20,7 @@ type ModelModePolicy = {
   default: string;
   reviewedAt: string;
   reviewedModels?: Record<string, string[]>;
+  reviewedCatalogOmissions?: Record<string, string[]>;
   modes: ModelMode[];
 };
 
@@ -39,6 +40,15 @@ export function readModelModePolicy(path = join(getAgentDir(), POLICY_FILE)): Mo
   const policy = JSON.parse(readFileSync(path, "utf8")) as Partial<ModelModePolicy>;
   if (policy.version !== 1 || !Array.isArray(policy.modes) || typeof policy.default !== "string") {
     throw new Error("model-modes.json must contain version 1, a default, and a modes array");
+  }
+
+  for (const field of ["reviewedModels", "reviewedCatalogOmissions"] as const) {
+    const records = policy[field];
+    if (records !== undefined && (!records || typeof records !== "object" || Array.isArray(records) ||
+        !Object.values(records).every((ids) => Array.isArray(ids) && ids.every((id) =>
+          typeof id === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,159}$/.test(id))))) {
+      throw new Error(`${field} must map providers to arrays of model IDs`);
+    }
   }
 
   const ids = new Set<string>();
@@ -83,6 +93,10 @@ export function catalogReview(policy: ModelModePolicy, data: any, now = Date.now
   const reviewed = new Set([...(policy.reviewedModels?.["openai-codex"] ?? []), ...pinned.map((m) => m.model)]);
   const candidates = models.filter((m) => m.listed && m.supportedInApi && !reviewed.has(m.id));
   const notListed = [...new Set(pinned.filter((m) => !models.some((c) => c.id === m.model && c.listed && c.supportedInApi)).map((m) => m.model))];
+  const acknowledged = new Set(policy.reviewedCatalogOmissions?.["openai-codex"] ?? []);
+  // Acknowledgements cover absence only, never explicit hidden/unsupported entries.
+  const pendingNotListed = notListed.filter((id) => !acknowledged.has(id) || models.some((m) => m.id === id));
+  const reviewedOmissions = notListed.filter((id) => !pendingNotListed.includes(id));
   const effortMismatch = pinned.filter((m) => models.some((c) => c.id === m.model && !c.thinkingLevels.includes(m.thinkingLevel)));
   const unsupported = [...new Set(policy.modes.filter((m) => m.provider !== "openai-codex").map((m) => m.provider))];
   const lines = ["Read-only Codex catalog discovery; candidates are not necessarily newer or better."];
@@ -91,7 +105,8 @@ export function catalogReview(policy: ModelModePolicy, data: any, now = Date.now
   if (success) {
     lines.push(`Last successful catalog: ${new Date(data.lastSuccessAt).toISOString()}`);
     if (candidates.length) lines.push(`Unreviewed catalog entries: ${candidates.map((m) => m.id).join(", ")}`);
-    if (notListed.length) lines.push(`Pinned models not listed (not proof of unavailability): ${notListed.join(", ")}`);
+    if (pendingNotListed.length) lines.push(`Pinned models not listed (not proof of unavailability): ${pendingNotListed.join(", ")}`);
+    if (reviewedOmissions.length) lines.push(`Reviewed catalog omissions (availability unverified by discovery): ${reviewedOmissions.join(", ")}`);
     if (effortMismatch.length) lines.push(`Reasoning levels not advertised: ${effortMismatch.map((m) => `${m.id}/${m.thinkingLevel}`).join(", ")}`);
   }
   if (unsupported.length) lines.push(`Discovery not supported for: ${unsupported.join(", ")}`);
@@ -99,8 +114,9 @@ export function catalogReview(policy: ModelModePolicy, data: any, now = Date.now
   const stale = !success || now - data.lastSuccessAt > 48 * 60 * 60 * 1000;
   if (failed) lines.push("Latest check failed; any entries above are from the last successful catalog. Inspect pi-model-discovery status. Shared auth is never refreshed by the checker.");
   if (stale) lines.push("Catalog is missing or older than 48 hours.");
-  const needsReview = success && (candidates.length > 0 || notListed.length > 0 || effortMismatch.length > 0);
-  lines.push("Mappings remain unchanged. Review candidates and update the Nix policy explicitly; reviewedModels can record catalog entries deliberately retained or rejected.");
+  const needsReview = success && (candidates.length > 0 || pendingNotListed.length > 0 || effortMismatch.length > 0);
+  if (success && !failed && !stale && !needsReview && !unsupported.length) lines.push("Review resolved: no pending findings in this catalog; mode mappings retained.");
+  lines.push("Mappings remain unchanged. Review candidates and update the Nix policy explicitly; reviewedModels records reviewed candidates and reviewedCatalogOmissions acknowledges specific catalog gaps, not model availability.");
   return {
     status: failed ? "models:check failed /mode-review" : stale ? "models:stale /mode-review" :
       needsReview ? "models:review /mode-review" : unsupported.length ? "models:partial /mode-review" : undefined,

@@ -46,8 +46,18 @@ also request review. The first run can therefore flag older models or aliases.
 After deliberate review, edit `home/config/pi/model-modes.json` in canonical Nix
 sources. Change mappings only after validation; record retained/rejected IDs in,
 for example, `"reviewedModels": {"openai-codex": ["intentionally-not-selected"]}`
-and update `reviewedAt`. That allowlist suppresses candidate notices only, not
-missing pinned models, reasoning discrepancies, stale data, or check failures.
+and update `reviewedAt`. That allowlist suppresses candidate notices only.
+
+To resolve an investigated catalog gap while retaining a pinned model, record its
+ID in `reviewedCatalogOmissions[provider]`. This acknowledges an omission, not
+verified availability: `/mode-review` keeps the limitation visible but clears that
+specific pending finding. It does not suppress new missing model IDs, explicit
+hidden/API-unsupported entries, reasoning discrepancies, stale data, malformed
+state, or check failures. Remove an acknowledgement when its rationale no longer
+applies. Both review fields are versioned in the policy, not ephemeral dismissals.
+The November 3 review retained all four mappings, reviewed the three GPT-5.6
+entries without selecting them, and acknowledged the known GPT-6 Luna/GPT-6.1 Sol
+catalog gaps. No inference trial was performed.
 
 ## Operations
 

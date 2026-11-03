@@ -126,6 +126,43 @@ test("catalog checks fail visibly, retain stale evidence, and reject unsafe disp
   assert.equal(catalogReview({ modes: [{ provider: "other" }] }, data, now).status, "models:partial /mode-review");
 });
 
+test("review resolution acknowledges exact catalog gaps without hiding new or adverse evidence", () => {
+  const now = Date.now();
+  const policy = {
+    modes: [{ id: "normal", provider: "openai-codex", model: "pinned", thinkingLevel: "medium" }],
+    reviewedModels: { "openai-codex": ["older"] },
+    reviewedCatalogOmissions: { "openai-codex": ["pinned"] },
+  };
+  const model = { id: "older", listed: true, supportedInApi: true, thinkingLevels: ["medium"] };
+  const data = { version: 1, provider: "openai-codex", status: "ok", checkedAt: now, lastSuccessAt: now, models: [model] };
+  const resolved = catalogReview(policy, data, now);
+  assert.equal(resolved.status, undefined);
+  assert.match(resolved.details, /Review resolved/);
+  assert.match(resolved.details, /Reviewed catalog omissions \(availability unverified by discovery\): pinned/);
+  for (const adverse of [
+    { ...data, models: [model, { ...model, id: "new-candidate" }] },
+    { ...data, models: [model, { ...model, id: "pinned", listed: false }] },
+    { ...data, models: [model, { ...model, id: "pinned", supportedInApi: false }] },
+    { ...data, models: [model, { ...model, id: "pinned", thinkingLevels: ["low"] }] },
+  ]) assert.equal(catalogReview(policy, adverse, now).status, "models:review /mode-review");
+  const changedPolicy = { ...policy, modes: [{ ...policy.modes[0], model: "other-pinned" }] };
+  assert.equal(catalogReview(changedPolicy, data, now).status, "models:review /mode-review");
+  assert.equal(catalogReview(policy, { ...data, status: "network_error" }, now).status, "models:check failed /mode-review");
+  assert.equal(catalogReview(policy, { ...data, lastSuccessAt: now - 49 * 3600000 }, now).status, "models:stale /mode-review");
+});
+
+test("approved policy resolves the actual reviewed catalog without altering mode mappings", () => {
+  const policy = JSON.parse(readFileSync(new URL("../home/config/pi/model-modes.json", import.meta.url), "utf8"));
+  assert.deepEqual(policy.modes.map(({ id, model, thinkingLevel }) => [id, model, thinkingLevel]), [
+    ["fast", "gpt-6-luna", "medium"], ["normal", "gpt-6.1-sol", "medium"],
+    ["deep", "gpt-6.1-sol", "high"], ["extreme", "gpt-6.1-sol", "xhigh"],
+  ]);
+  const now = Date.now();
+  const data = { version: 1, provider: "openai-codex", status: "ok", checkedAt: now, lastSuccessAt: now,
+    models: ["gpt-5.6-luna", "gpt-5.6-sol", "gpt-5.6-terra"].map((id) => ({ id, listed: true, supportedInApi: true, thinkingLevels: ["medium", "ultra"] })) };
+  assert.equal(catalogReview(policy, data, now).status, undefined);
+});
+
 test("source never binds Ctrl+M with registerShortcut", () => {
   const source = readFileSync(new URL("../home/config/pi/extensions/model-modes.ts", import.meta.url), "utf8");
   assert.ok(!source.includes("registerShortcut("));
