@@ -15,7 +15,8 @@ assert config.services.displayManager.dms-greeter.enable;
 assert !config.services.desktopManager.gnome.enable;
 assert !builtins.elem "gnome" sessions;
 assert builtins.elem "hyprland-uwsm" sessions;
-assert config.home-manager.users.sumeet.wayland.windowManager.hyprland.settings.monitor == [ ", preferred, auto, 1.25" ];
+assert builtins.elem ", preferred, auto, 1.25" config.home-manager.users.sumeet.wayland.windowManager.hyprland.settings.monitor;
+assert builtins.elem "eDP-1, preferred, auto, 1.25" config.home-manager.users.sumeet.wayland.windowManager.hyprland.settings.monitor;
 assert builtins.elem "intel_hid.enable_sw_tablet_mode=0" config.boot.kernelParams;
 {
   sensorPackage = sensor.name;

@@ -49,6 +49,8 @@ def foreground():
 def enter():
     state = load_state()
     previous_state = dict(state) if state else None
+    if state and state.get("exit_pending"):
+        raise RuntimeError("Pending orientation restore; retry Back to laptop or tablet-workspace leave first")
     current = hypr("activeworkspace", "-j", json_output=True)
     if current["name"] == WORKSPACE:
         if not state:
@@ -70,6 +72,12 @@ def enter():
             raise
     state["enabled"] = True
     save_state(state)
+    # Start only on explicit entry, never from login or a fold event. The
+    # singleton daemon does not claim the sensor outside the foreground trial.
+    log_path = state_path().with_name("tablet-orientation.log")
+    with log_path.open("a") as output:
+        subprocess.Popen(["tablet-orientation", "daemon"], stdout=output,
+                         stderr=subprocess.STDOUT, start_new_session=True)
     # No user-manager environment imports, no compositor restarts. The panel
     # stays hidden while disabled; --no-duplicate handles rapid repeated entry.
     subprocess.Popen([
@@ -80,17 +88,25 @@ def enter():
 
 def leave():
     state = load_state()
-    if not state or not state.get("enabled"):
+    if not state or not (state.get("enabled") or state.get("exit_pending")):
         raise RuntimeError("No active trial with a saved return workspace")
     names = {w["name"] for w in hypr("workspaces", "-j", json_output=True)}
     if state["return"] not in names:
         raise RuntimeError("Return workspace no longer exists; choose a workspace manually")
+    # Disable rotation before the synchronous restore while holding the same
+    # workspace lock as the daemon. It cannot apply a new sensor reading in
+    # between restoration and the return-workspace dispatch.
+    state["enabled"] = False
+    state["exit_pending"] = True
+    save_state(state)
+    subprocess.run(["tablet-orientation", "restore"], check=True)
     dispatch("workspace", "name:" + state["return"])
     # Hide only the trial keyboard, never close a tablet application. A folded
     # laptop remains manually hidden until the existing OSK policy resets it.
     subprocess.run(["tablet-osk", "dismiss"], check=True)
     # Keep compositor-scoped ownership while applications remain parked here.
     state["enabled"] = False
+    state["exit_pending"] = False
     save_state(state)
 
 
@@ -99,7 +115,7 @@ def status():
     current = hypr("activeworkspace", "-j", json_output=True)
     print(json.dumps({
         "enabled": bool(state and state.get("enabled")),
-        "visible": bool(state and state.get("enabled")) and current["name"] == WORKSPACE,
+        "visible": bool(state and (state.get("enabled") or state.get("exit_pending"))) and current["name"] == WORKSPACE,
         "monitor": current.get("monitor", ""),
     }))
 
@@ -135,7 +151,7 @@ def main():
                 leave()
             elif args.command == "toggle":
                 state = load_state()
-                leave() if state and state.get("enabled") and foreground() else enter()
+                leave() if state and (state.get("exit_pending") or (state.get("enabled") and foreground())) else enter()
             else:
                 action(args.command)
         return 0

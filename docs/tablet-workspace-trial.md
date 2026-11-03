@@ -29,8 +29,10 @@ now packaged through Home Manager instead of launched from the checkout.
 
 ## Deliberate limits
 
-No automatic folding transition, rotation, touchscreen gestures, changed
-monitor scale, desktop-wide layout changes, or automatic app maximization.
+No automatic folding transition, touchscreen gestures, changed monitor scale,
+desktop-wide layout changes, or automatic app maximization. Tablet-only rotation
+is prepared separately in [tablet-orientation.md](tablet-orientation.md); its
+simulated tests are not a substitute for an explicitly requested physical test.
 This tests whether a separate workspace and touch controls feel useful before
 investing in deeper tablet integration. It is not a claim of native tablet UX.
 No browser or app is automatically started when entering the trial.

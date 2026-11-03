@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 SOURCE = Path(__file__).resolve().parents[1] / "home/scripts/desktop/tablet-workspace.py"
 spec = importlib.util.spec_from_file_location("tablet_workspace", SOURCE)
@@ -107,7 +107,10 @@ class TabletWorkspaceTests(unittest.TestCase):
                 patch.object(trial.subprocess, "run") as run:
             trial.leave()
         dispatch.assert_called_once_with("workspace", "name:work")
-        run.assert_called_once_with(["tablet-osk", "dismiss"], check=True)
+        self.assertEqual(run.call_args_list, [
+            call(["tablet-orientation", "restore"], check=True),
+            call(["tablet-osk", "dismiss"], check=True),
+        ])
         self.assertFalse(trial.load_state()["enabled"])
 
     def test_reentry_after_leave_with_parked_apps(self):
@@ -132,6 +135,59 @@ class TabletWorkspaceTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 trial.action("browser")
         dispatch.assert_not_called()
+
+    def test_failed_orientation_restore_blocks_return_and_disables_rotation(self):
+        self.state()
+        with patch.object(trial, "hypr", return_value=[{"name": "work"}]), \
+                patch.object(trial, "dispatch") as dispatch, \
+                patch.object(trial.subprocess, "run", side_effect=subprocess.CalledProcessError(1, "restore")):
+            with self.assertRaises(subprocess.CalledProcessError):
+                trial.leave()
+        dispatch.assert_not_called()
+        self.assertFalse(trial.load_state()["enabled"])
+
+    def test_failed_restore_can_retry_leave_without_reentering(self):
+        self.state()
+        with patch.object(trial, "hypr", return_value=[{"name": "work"}]), \
+                patch.object(trial, "dispatch") as dispatch, \
+                patch.object(trial.subprocess, "run") as run:
+            run.side_effect = subprocess.CalledProcessError(1, "restore")
+            with self.assertRaises(subprocess.CalledProcessError):
+                trial.leave()
+            self.assertTrue(trial.load_state()["exit_pending"])
+            self.assertFalse(trial.load_state()["enabled"])
+            run.side_effect = None
+            trial.leave()
+        dispatch.assert_called_once_with("workspace", "name:work")
+        self.assertFalse(trial.load_state()["exit_pending"])
+        self.assertFalse(trial.load_state()["enabled"])
+
+    def test_pending_exit_does_not_start_a_new_controller(self):
+        self.state()
+        state = trial.load_state()
+        state.update(enabled=False, exit_pending=True)
+        trial.save_state(state)
+        with patch.object(trial, "dispatch") as dispatch, patch.object(trial.subprocess, "Popen") as launch:
+            with self.assertRaises(RuntimeError):
+                trial.enter()
+        dispatch.assert_not_called()
+        launch.assert_not_called()
+
+    def test_pending_exit_keeps_back_button_visible(self):
+        self.state()
+        state = trial.load_state()
+        state.update(enabled=False, exit_pending=True)
+        trial.save_state(state)
+        with patch.object(trial, "hypr", return_value={"name": "tablet-trial", "monitor": "eDP-1"}), \
+                patch("builtins.print") as output:
+            trial.status()
+        self.assertTrue(json.loads(output.call_args.args[0])["visible"])
+
+    def test_explicit_entry_starts_rotation_daemon_without_rotation_commands(self):
+        with patch.object(trial, "hypr", side_effect=[{"name": "work"}, []]), \
+                patch.object(trial, "dispatch"), patch.object(trial.subprocess, "Popen") as launch:
+            trial.enter()
+        self.assertEqual(launch.call_args_list[0].args[0], ["tablet-orientation", "daemon"])
 
     def test_missing_return_does_not_switch_or_remove_state(self):
         self.state()
