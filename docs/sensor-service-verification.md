@@ -2,7 +2,7 @@
 
 `hosts/kirax1/modules/hardware/sensors.nix` enables NixOS's
 `hardware.sensor.iio` integration. This installs iio-sensor-proxy, its D-Bus
-policy/activation file, udev classification rules and systemd unit. It does not
+policy, udev classification/activation rules and systemd unit. It does not
 add an orientation client, change display/touch/pen transforms, start the
 keyboard preview, or enter the tablet workspace.
 
@@ -29,9 +29,12 @@ nix build .#nixosConfigurations.kirax1.config.system.build.toplevel --no-link
 3. Ensure Mewtion is not using the accelerometer. Its buffered reader and
    iio-sensor-proxy may compete for the same scan buffer. Do not disable or
    restart a running Mewtion session just to proceed; report the conflict.
-4. Query `net.hadess.SensorProxy.HasAccelerometer` over system D-Bus. This may
-   activate the sensor service. A real `true` result is required; merely seeing
-   files in sysfs is not proof of a usable service.
+4. Confirm the sensor service started after classification. This package is
+   activated through udev/systemd, not a D-Bus activation file; a D-Bus query
+   alone cannot start an inactive service. Query
+   `net.hadess.SensorProxy.HasAccelerometer` over system D-Bus once it is running.
+   A real `true` result is required; merely seeing files in sysfs is not proof
+   of a usable service.
 5. Run the deployed `monitor-sensor --accel` with a bounded timeout (for example
    10 seconds). It claims the sensor, prints orientation readings and releases
    the claim when it exits. No rotation command is involved. Do not ask Sumeet
