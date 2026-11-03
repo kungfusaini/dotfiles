@@ -67,6 +67,7 @@ in
     brightnessctl
     cli-microsoft365
     nodejs
+    poppler-utils
   ];
 
   # Prune stale user and Home Manager generations alongside the system policy.
