@@ -43,6 +43,7 @@ test("input hook preserves Enter, opens one picker, and unregisters on session r
     getThinkingLevel: () => "medium",
   };
   const ctx = {
+    model: { provider: "openai-codex", id: "gpt-6.1-sol" },
     mode: "tui",
     isIdle: () => true,
     ui: {
@@ -53,8 +54,9 @@ test("input hook preserves Enter, opens one picker, and unregisters on session r
         listener = handler;
         return () => { removals++; listener = undefined; };
       },
-      select(_title, choices) {
+      select(_title, choices, options) {
         assert.equal(choices.length, 4);
+        assert.equal(options.initialIndex, 1, "Normal must be initially highlighted");
         dialogs++;
         return new Promise((resolve) => { closePicker = resolve; });
       },

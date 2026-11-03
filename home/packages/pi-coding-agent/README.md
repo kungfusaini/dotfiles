@@ -1,4 +1,4 @@
-# Pi rendering power mitigation
+# Pi local UI patches
 
 Local override of the locked `unstable.pi-coding-agent` (0.87.1), selected by
 `hosts/kirax1/modules/users/sumeet.nix`. This does not change model inference,
@@ -24,6 +24,30 @@ Animations use the background frame limit too. This is a mitigation, not a full
 incremental-rendering/cache implementation: a long transcript is still traversed
 for each displayed frame. Recheck the patch and tests whenever Pi is updated.
 Nix's source patching/build should fail rather than silently patch unrelated code.
+
+## Model-mode UI
+
+`model-mode-ui.patch` keeps the native selector and footer rather than replacing
+usage accounting or model display in an extension:
+
+- `ctx.ui.select(..., { initialIndex })` starts on the current mode. Other
+  selectors still start at row zero; invalid indices default or clamp safely.
+- The local `model-mode` extension status is right-aligned on the row beneath
+  the native model/thinking display. Other extension statuses stay on the left;
+  narrow layouts reserve room for the mode without exceeding terminal width.
+- The model-mode extension determines the current mode from the actual model and
+  thinking level, not a remembered label. Non-matching combinations have no mode.
+
+This patch changes Pi core code. Existing Pi processes need restarting/resuming
+once to load it; resource reload alone cannot replace their loaded UI components.
+The extension itself and future policy updates remain reloadable.
+
+Test both actual package builds without provider requests:
+
+```sh
+node home/packages/pi-coding-agent/test-model-mode-ui.mjs STOCK_STORE_PATH PATCHED_STORE_PATH
+node --test tests/pi-model-modes.test.mjs
+```
 
 ## Verification
 

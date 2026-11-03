@@ -149,7 +149,8 @@ export default function modelModesExtension(pi: ExtensionAPI) {
         const marker = mode.id === current?.id ? " ✓" : "";
         return `${mode.label}${marker} — ${mode.description} · ${mode.model} / ${mode.thinkingLevel}`;
       });
-      const selected = await ctx.ui.select("Choose model mode", choices);
+      const initialIndex = Math.max(0, policy.modes.findIndex((mode) => mode.id === current?.id));
+      const selected = await ctx.ui.select("Choose model mode", choices, { initialIndex });
       if (!selected) return;
       selectedId = policy.modes[choices.indexOf(selected)]?.id ?? "";
     }

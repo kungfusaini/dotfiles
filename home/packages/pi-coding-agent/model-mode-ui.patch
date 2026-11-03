@@ -1,0 +1,71 @@
+--- a/packages/coding-agent/src/core/extensions/types.ts
++++ b/packages/coding-agent/src/core/extensions/types.ts
+@@ -100,6 +100,8 @@
+ 
+ /** Options for extension UI dialogs. */
+ export interface ExtensionUIDialogOptions {
++	/** Initial highlighted row for select dialogs (zero-based). */
++	initialIndex?: number;
+ 	/** AbortSignal to programmatically dismiss the dialog. */
+ 	signal?: AbortSignal;
+ 	/** Timeout in milliseconds. Dialog auto-dismisses with live countdown display. */
+--- a/packages/coding-agent/src/modes/interactive/components/extension-selector.ts
++++ b/packages/coding-agent/src/modes/interactive/components/extension-selector.ts
+@@ -12,6 +12,7 @@
+ export interface ExtensionSelectorOptions {
+ 	tui?: TUI;
+ 	timeout?: number;
++	initialIndex?: number;
+ 	onToggleToolsExpanded?: () => void;
+ 	description?: string;
+ }
+@@ -37,6 +38,10 @@
+ 		super();
+ 
+ 		this.options = options;
++		const initialIndex = opts?.initialIndex;
++		if (initialIndex !== undefined && Number.isInteger(initialIndex)) {
++			this.selectedIndex = Math.max(0, Math.min(options.length - 1, initialIndex));
++		}
+ 		this.onSelectCallback = onSelect;
+ 		this.onCancelCallback = onCancel;
+ 		this.onToggleToolsExpanded = opts?.onToggleToolsExpanded;
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -2620,7 +2620,7 @@
+ 					this.hideExtensionSelector();
+ 					resolve(undefined);
+ 				},
+-				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
++				{ tui: this.ui, timeout: opts?.timeout, initialIndex: opts?.initialIndex, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
+ 			);
+ 
+ 			this.disposeActiveSelector();
+--- a/packages/coding-agent/src/modes/interactive/components/footer.ts
++++ b/packages/coding-agent/src/modes/interactive/components/footer.ts
+@@ -234,12 +234,24 @@
+ 		// Add extension statuses on a single line, sorted by key alphabetically
+ 		const extensionStatuses = this.footerData.getExtensionStatuses();
+ 		if (extensionStatuses.size > 0) {
++			const modeStatus = extensionStatuses.get("model-mode");
+ 			const sortedStatuses = Array.from(extensionStatuses.entries())
++				.filter(([key]) => key !== "model-mode")
+ 				.sort(([a], [b]) => a.localeCompare(b))
+ 				.map(([, text]) => sanitizeStatusText(text));
+ 			const statusLine = sortedStatuses.join(" ");
+ 			// Truncate to terminal width with dim ellipsis for consistency with footer style
+-			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
++			if (modeStatus) {
++				// Keep the mode directly beneath the model/thinking column, while
++				// preserving other extensions on the left of the same status row.
++				const right = truncateToWidth(sanitizeStatusText(modeStatus), width, "");
++				const leftWidth = Math.max(0, width - visibleWidth(right) - 1);
++				const left = truncateToWidth(statusLine, leftWidth, "");
++				const padding = " ".repeat(Math.max(0, width - visibleWidth(left) - visibleWidth(right)));
++				lines.push(left + padding + right);
++			} else {
++				lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
++			}
+ 		}
+ 
+ 		return lines;
