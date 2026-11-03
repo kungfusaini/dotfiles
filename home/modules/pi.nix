@@ -1,6 +1,7 @@
-{ pkgs, ... }:
+{ config, pkgs, ... }:
 
 let
+  modelDiscovery = pkgs.callPackage ../packages/pi-model-discovery { };
   modelModePolicy = builtins.fromJSON (builtins.readFile ../config/pi/model-modes.json);
   defaultModelMode = builtins.head (builtins.filter (mode: mode.id == modelModePolicy.default) modelModePolicy.modes);
 
@@ -26,6 +27,47 @@ let
   };
 in
 {
+  home.packages = [ modelDiscovery ];
+
+  systemd.user.services.pi-model-discovery = {
+    Unit.Description = "Check the authenticated Codex model catalog without invoking models";
+    Service = {
+      Type = "oneshot";
+      ExecStart = "${modelDiscovery}/bin/pi-model-discovery check";
+      Environment = [
+        "XDG_CONFIG_HOME=${config.xdg.configHome}"
+        "XDG_STATE_HOME=${config.xdg.stateHome}"
+        "PI_CODING_AGENT_DIR=${config.xdg.configHome}/pi/agent"
+      ];
+      UMask = "0077";
+      Nice = 19;
+      MemoryMax = "128M";
+      TasksMax = 8;
+      TimeoutStartSec = 60;
+      NoNewPrivileges = true;
+      PrivateTmp = true;
+      ProtectSystem = "strict";
+      ProtectHome = "read-only";
+      ReadWritePaths = [ "${config.xdg.stateHome}/pi-model-discovery" ];
+      RestrictSUIDSGID = true;
+      LockPersonality = true;
+      RestrictAddressFamilies = [ "AF_UNIX" "AF_INET" "AF_INET6" ];
+    };
+  };
+  systemd.user.timers.pi-model-discovery = {
+    Unit.Description = "Check for Codex model catalog changes daily";
+    Timer = {
+      OnCalendar = "daily";
+      Persistent = true;
+      RandomizedDelaySec = 300;
+      WakeSystem = false;
+    };
+    Install.WantedBy = [ "timers.target" ];
+  };
+  systemd.user.tmpfiles.rules = [
+    "d ${config.xdg.stateHome}/pi-model-discovery 0700 - - -"
+  ];
+
   xdg.configFile."pi/agent/bin/codex".source = "${pkgs.codex}/bin/codex";
   xdg.configFile."pi/agent/bin/codex-imagegen".source = "${codex-imagegen}/bin/codex-imagegen";
   xdg.configFile."pi/agent/AGENTS.md".source = ../config/pi/AGENTS.md;
