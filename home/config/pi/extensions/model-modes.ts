@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { Key } from "@earendil-works/pi-tui";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -113,6 +114,37 @@ async function applyMode(pi: ExtensionAPI, ctx: ExtensionContext, mode: ModelMod
 }
 
 export default function modelModesExtension(pi: ExtensionAPI) {
+  async function chooseMode(args: string, ctx: ExtensionContext): Promise<void> {
+    let policy: ModelModePolicy;
+    try {
+      policy = readModelModePolicy();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      ctx.ui.notify(`Cannot load model modes: ${message}`, "error");
+      return;
+    }
+
+    let selectedId = args.trim().toLowerCase();
+    if (!selectedId) {
+      const current = activeMode(policy, ctx, pi.getThinkingLevel());
+      const choices = policy.modes.map((mode) => {
+        const marker = mode.id === current?.id ? " ✓" : "";
+        return `${mode.label}${marker} — ${mode.description} · ${mode.model} / ${mode.thinkingLevel}`;
+      });
+      const selected = await ctx.ui.select("Choose model mode", choices);
+      if (!selected) return;
+      selectedId = policy.modes[choices.indexOf(selected)]?.id ?? "";
+    }
+
+    const mode = policy.modes.find((candidate) => candidate.id === selectedId);
+    if (!mode) {
+      ctx.ui.notify(`Unknown mode "${selectedId}". Choose: ${policy.modes.map(({ id }) => id).join(", ")}`, "error");
+      return;
+    }
+
+    await applyMode(pi, ctx, mode);
+  }
+
   pi.registerCommand("mode", {
     description: "Choose Fast, Normal, Deep, or Extreme model mode",
     getArgumentCompletions: (prefix) => {
@@ -124,36 +156,12 @@ export default function modelModesExtension(pi: ExtensionAPI) {
         return null;
       }
     },
-    handler: async (args, ctx) => {
-      let policy: ModelModePolicy;
-      try {
-        policy = readModelModePolicy();
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        ctx.ui.notify(`Cannot load model modes: ${message}`, "error");
-        return;
-      }
+    handler: chooseMode,
+  });
 
-      let selectedId = args.trim().toLowerCase();
-      if (!selectedId) {
-        const current = activeMode(policy, ctx, pi.getThinkingLevel());
-        const choices = policy.modes.map((mode) => {
-          const marker = mode.id === current?.id ? " ✓" : "";
-          return `${mode.label}${marker} — ${mode.description} · ${mode.model} / ${mode.thinkingLevel}`;
-        });
-        const selected = await ctx.ui.select("Choose model mode", choices);
-        if (!selected) return;
-        selectedId = policy.modes[choices.indexOf(selected)]?.id ?? "";
-      }
-
-      const mode = policy.modes.find((candidate) => candidate.id === selectedId);
-      if (!mode) {
-        ctx.ui.notify(`Unknown mode "${selectedId}". Choose: ${policy.modes.map(({ id }) => id).join(", ")}`, "error");
-        return;
-      }
-
-      await applyMode(pi, ctx, mode);
-    },
+  pi.registerShortcut(Key.ctrl("m"), {
+    description: "Choose model mode",
+    handler: async (ctx) => chooseMode("", ctx),
   });
 
   pi.on("session_start", async (_event, ctx) => updateStatus(pi, ctx));
