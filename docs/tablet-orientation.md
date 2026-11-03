@@ -28,11 +28,26 @@ or changes workspaces. External displays and other input devices are not IPC
 targets. Their positions, modes, scale and transforms are not rewritten.
 
 The daemon stays idle, with no sensor claim, after leaving. Unknown/flat sensor
-readings hold the last orientation. Changes must settle for 0.8 seconds. Sensor
+readings hold the last orientation. Changes must settle for 150 ms. Sensor
 failure releases the claim, restores the baseline and retries with backoff.
 A long scheduling/suspend gap invalidates cached readings and reclaims the
 sensor. A vanished/asleep/headless internal panel defers restoration until it
 returns; the recovery record is retained.
+
+## Controller responsiveness
+
+The controller adds a 150 ms stability check after the sensor service reports
+an orientation, not the original 800 ms wait. It waits on `monitor-sensor`'s
+readable pipe or the pending stability deadline, so new events/deadlines do not
+have to wait for another fixed polling interval. Stable operation and inactive
+mode keep the existing 200 ms safety-gate cadence; this is not continuous 50 ms
+desktop polling. Every wake still rechecks the full tablet/headless/device
+conditions before any change, and normal exit/recovery deadlines are unchanged.
+
+This does not alter iio-sensor-proxy's own buffered-reading cadence (700 ms in
+the pinned version), hardware sampling or the fade/resize settle hold. The
+reduction in controller waiting is tested with simulated timing; end-to-end
+physical response still needs user feedback rather than an assumed speed claim.
 
 ## Transform ownership and recovery
 

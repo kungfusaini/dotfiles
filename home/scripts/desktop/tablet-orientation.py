@@ -17,6 +17,8 @@ WORKSPACE = "tablet-trial"
 ORIENTATIONS = {"normal": 0, "left-up": 1, "bottom-up": 2, "right-up": 3}
 SAFE_NAME = re.compile(r"[a-zA-Z0-9_.:-]+\Z")
 FLAT = {"undefined", "face-up", "face-down"}
+STABILITY_SECONDS = .15
+GATE_INTERVAL = .2
 
 
 def atomic_json(path, value):
@@ -66,6 +68,10 @@ class Sensor:
         match = re.search(r"(?:tilt: |Tilt changed: )([a-z-]+)", line)
         if match:
             self.tilt = match[1]
+
+    def wait(self, timeout):
+        # Wake on upstream orientation output, not another desktop polling tick.
+        select.select([self.process.stdout], [], [], timeout)
 
     def close(self):
         if self.process.poll() is None:
@@ -370,6 +376,18 @@ class Controller:
         self.snapshot = None
         return True
 
+    def next_wait(self, now):
+        if self.candidate is not None and self.candidate != self.applied:
+            return min(GATE_INTERVAL, max(0., self.since + STABILITY_SECONDS - now))
+        return GATE_INTERVAL
+
+    def wait_for_work(self, now):
+        delay = self.next_wait(now)
+        if self.sensor:
+            self.sensor.wait(delay)
+        else:
+            time.sleep(delay)
+
     def tick(self, now):
         if self.initial_config != self.backend.config_token():
             self.stop_sensor()
@@ -407,7 +425,7 @@ class Controller:
         if orientation != self.candidate:
             self.candidate = orientation
             self.since = now
-        if now - self.since < .8:
+        if now - self.since < STABILITY_SECONDS:
             return
         if orientation == self.applied:
             target = (self.snapshot["transform"] + ORIENTATIONS[orientation]) % 4
@@ -489,7 +507,7 @@ def main():
                 finally:
                     if workspace_lock:
                         workspace_lock.close()
-                time.sleep(.2)
+                controller.wait_for_work(time.clock_gettime(time.CLOCK_BOOTTIME))
         finally:
             try:
                 controller.stop_sensor()

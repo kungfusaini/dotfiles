@@ -24,11 +24,15 @@ class FakeSensor:
         self.value = 'left-up'
         self.closed = False
         self.failure = False
+        self.waits = []
 
     def read(self):
         if self.failure:
             raise RuntimeError('sensor lost')
         return self.value
+
+    def wait(self, timeout):
+        self.waits.append(timeout)
 
     def close(self):
         self.closed = True
@@ -96,20 +100,64 @@ class OrientationTests(unittest.TestCase):
     def test_debounce_and_journal_before_apply(self):
         self.backend.visible = True
         self.controller.tick(0)
-        self.controller.tick(.7)
+        self.controller.tick(.14)
         self.assertEqual(self.backend.calls, [])
-        self.controller.tick(.9)
+        self.controller.tick(.16)
         self.assertEqual(self.backend.calls, [('save',), ('apply', 1)])
 
     def test_unstable_orientation_restarts_debounce(self):
         self.backend.visible = True
         self.controller.tick(0)
         self.sensor.value = 'right-up'
-        self.controller.tick(.6)
-        self.controller.tick(1)
+        self.controller.tick(.08)
+        self.controller.tick(.20)
         self.assertEqual(self.backend.calls, [])
-        self.controller.tick(1.5)
+        self.controller.tick(.24)
         self.assertEqual(self.backend.transform, 3)
+
+    def test_first_stable_reading_does_not_wait_old_800ms(self):
+        self.backend.visible = True
+        self.controller.tick(10)
+        self.controller.tick(10.151)
+        self.assertEqual(self.backend.transform, 1)
+
+    def test_pending_stability_deadline_wakes_before_poll_interval(self):
+        self.backend.visible = True
+        self.controller.tick(10)
+        self.assertAlmostEqual(self.controller.next_wait(10.05), .1)
+        self.assertEqual(self.controller.next_wait(10.16), 0)
+        self.controller.wait_for_work(10.05)
+        self.assertAlmostEqual(self.sensor.waits[-1], .1)
+
+    def test_stable_and_inactive_modes_keep_original_gate_cadence(self):
+        self.assertEqual(self.controller.next_wait(0), .2)
+        with patch.object(rotation.time, 'sleep') as sleep:
+            self.controller.wait_for_work(0)
+        sleep.assert_called_once_with(.2)
+        self.activate()
+        self.assertEqual(self.controller.next_wait(2), .2)
+        self.controller.wait_for_work(2)
+        self.assertEqual(self.sensor.waits[-1], .2)
+
+    def test_new_orientation_restarts_short_stability_deadline(self):
+        self.backend.visible = True
+        self.controller.tick(10)
+        self.sensor.value = 'right-up'
+        self.controller.tick(10.10)
+        self.assertAlmostEqual(self.controller.next_wait(10.20), .05)
+        self.controller.tick(10.24)
+        self.assertEqual(self.backend.calls, [])
+        self.controller.tick(10.251)
+        self.assertEqual(self.backend.transform, 3)
+
+    def test_sensor_wait_uses_readable_fd_instead_of_sleep(self):
+        sensor = rotation.Sensor.__new__(rotation.Sensor)
+        sensor.process = MagicMock()
+        with patch.object(rotation.select, 'select', return_value=([sensor.process.stdout], [], [])) as select_call, \
+                patch.object(rotation.time, 'sleep') as sleep:
+            sensor.wait(.15)
+        select_call.assert_called_once_with([sensor.process.stdout], [], [], .15)
+        sleep.assert_not_called()
 
     def test_unknown_or_flat_reading_holds_last_rotation(self):
         self.activate()
@@ -519,6 +567,27 @@ class BackendGateTests(unittest.TestCase):
                                                     'inputs': [{'name': 'external; dispatch exit', 'transform': 0, 'output': ''}]}))
         with self.assertRaises(RuntimeError):
             self.backend.load()
+
+
+class DaemonSchedulingTests(unittest.TestCase):
+    def test_main_waits_for_sensor_or_deadline_without_fixed_sleep(self):
+        with tempfile.TemporaryDirectory() as directory:
+            backend = FakeBackend()
+            backend.runtime = Path(directory)
+            controller = MagicMock()
+            def stop_after_wait(now):
+                rotation.STOP = True
+            controller.wait_for_work.side_effect = stop_after_wait
+            with patch.object(rotation, 'Backend', return_value=backend), \
+                    patch.object(rotation, 'Controller', return_value=controller), \
+                    patch.object(rotation, 'STOP', False), \
+                    patch.object(rotation.signal, 'signal'), \
+                    patch.object(rotation.time, 'sleep') as sleep, \
+                    patch.object(sys, 'argv', ['tablet-orientation', 'daemon']):
+                self.assertEqual(rotation.main(), 0)
+            controller.tick.assert_called_once()
+            controller.wait_for_work.assert_called_once()
+            sleep.assert_not_called()
 
 
 class DaemonOwnershipTests(unittest.TestCase):
