@@ -1,6 +1,27 @@
 { pkgs, unstable, ... }:
 
 let
+  wifiDnsPolicy = pkgs.writeShellApplication {
+    name = "kirax1-wifi-dns-policy";
+    runtimeInputs = with pkgs; [ networkmanager systemd iproute2 ];
+    text = ''
+      exec ${pkgs.python3}/bin/python3 ${../../scripts/system/wifi-dns-policy.py} "$@"
+    '';
+  };
+
+  wifiDnsDispatcher = pkgs.writeShellApplication {
+    name = "kirax1-wifi-dns-dispatcher";
+    runtimeInputs = [ pkgs.systemd ];
+    text = ''
+      case "''${2:-}" in
+        up|down|dhcp4-change|dhcp6-change|dns-change|connectivity-change|vpn-up|vpn-down)
+          # Serialize event/timer/startup reconciliation through one service.
+          systemctl start --no-block kirax1-wifi-dns-policy.service
+          ;;
+      esac
+    '';
+  };
+
   captivePortalWatcher = pkgs.writeShellApplication {
     name = "captive-portal-watcher";
     runtimeInputs = with pkgs; [ coreutils gawk networkmanager systemd ];
@@ -62,6 +83,10 @@ in
   networking.networkmanager = {
     enable = true;
     dns = "systemd-resolved";
+    # Only the diagnosed DHCP resolver pair is replaced, after portal login.
+    # Keep NM's original DHCP values for captive-browser and preserve resolved's
+    # per-link routing domains (including Tailscale's more-specific routes).
+    dispatcherScripts = [ { source = "${wifiDnsDispatcher}/bin/kirax1-wifi-dns-dispatcher"; } ];
     settings.connectivity = {
       enabled = true;
       uri = "http://nmcheck.gnome.org/check_network_status.txt";
@@ -71,6 +96,31 @@ in
   };
 
   services.resolved.enable = true;
+
+  # Reconcile an already-connected link after switching generations as well as
+  # on subsequent NM events. Does not reconnect/rewrite any Wi-Fi profile.
+  systemd.services.kirax1-wifi-dns-policy = {
+    description = "Scoped workaround for unreliable Wi-Fi DHCP DNS";
+    wantedBy = [ "multi-user.target" ];
+    after = [ "NetworkManager.service" "systemd-resolved.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      TimeoutStartSec = 20;
+      ExecStart = "${wifiDnsPolicy}/bin/kirax1-wifi-dns-policy";
+    };
+  };
+
+  # Tailscale exit-node/externally managed VPN routes can change without an NM
+  # event. Recheck fresh state at a bounded cadence; never keep an active oneshot
+  # that would prevent timer/event-triggered re-execution.
+  systemd.timers.kirax1-wifi-dns-policy = {
+    wantedBy = [ "timers.target" ];
+    timerConfig = {
+      OnBootSec = "20s";
+      OnUnitInactiveSec = "15s";
+      AccuracySec = "1s";
+    };
+  };
 
   services.nordvpn = {
     enable = true;
