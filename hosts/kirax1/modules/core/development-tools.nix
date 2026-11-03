@@ -7,6 +7,7 @@
 
   environment.systemPackages = [
     pkgs.python3
+    pkgs.htop
     pkgs.docker-compose
     (pkgs.azure-cli.withExtensions [
       pkgs.azure-cli-extensions.azure-devops
