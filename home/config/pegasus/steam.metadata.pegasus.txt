@@ -1,0 +1,38 @@
+# Steam is registered explicitly so support runtimes never appear as games and
+# every visible title has stable English metadata and locally pinned artwork.
+collection: Steam
+shortname: steam
+
+game: Rayman Legends
+file: steam:242550
+launch: steam steam://rungameid/242550
+developer: Ubisoft Montpellier
+publisher: Ubisoft
+genre: Platformer
+players: 1-4
+release: 2013-08-29
+rating: 89%
+summary: Run, jump, and fight through the hand-painted Glade of Dreams, with inventive musical stages, tightly designed challenges, and seamless local co-op for up to four players.
+assets.box_front: /home/sumeet/.config/pegasus-frontend/media/steam/rayman-legends/boxFront.jpg
+assets.background: /home/sumeet/.config/pegasus-frontend/media/steam/rayman-legends/background.jpg
+assets.logo: /home/sumeet/.config/pegasus-frontend/media/steam/rayman-legends/logo.png
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/rayman-legends/screenshot-1.jpg
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/rayman-legends/screenshot-2.jpg
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/rayman-legends/screenshot-3.jpg
+
+game: Sid Meier's Civilization VI
+file: steam:289070
+launch: steam steam://rungameid/289070
+developer: Firaxis Games
+publisher: 2K
+genre: Strategy
+players: 1-12
+release: 2016-10-20
+rating: 88%
+summary: Build a civilization from its first settlement into a world power through exploration, diplomacy, scientific progress, cultural influence, and turn-based warfare.
+assets.box_front: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/boxFront.jpg
+assets.background: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/background.jpg
+assets.logo: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/logo.png
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/screenshot-1.jpg
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/screenshot-2.jpg
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/screenshot-3.jpg

@@ -10,6 +10,11 @@ publisher: Acclaim Entertainment
 genre: Racing
 players: 1
 release: 2001-06-01
-summary: Tear through traffic, collect fares, and deliver passengers against the clock in Sega's fast arcade driving game.
+rating: 78%
+summary: Race through a traffic-packed city, pick up impatient passengers, and earn bigger tips by reaching each destination as recklessly and quickly as possible.
 assets.box_front: /home/sumeet/.config/pegasus-frontend/media/ps2/crazy-taxi/boxFront.jpg
 assets.background: /home/sumeet/.config/pegasus-frontend/media/ps2/crazy-taxi/background.jpg
+assets.logo: /home/sumeet/.config/pegasus-frontend/media/ps2/crazy-taxi/logo.png
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/ps2/crazy-taxi/screenshot-1.jpg
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/ps2/crazy-taxi/screenshot-2.jpg
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/ps2/crazy-taxi/screenshot-3.jpg

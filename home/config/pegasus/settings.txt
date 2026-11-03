@@ -3,3 +3,4 @@ general.fullscreen: true
 general.input-mouse-support: true
 general.theme: themes/gameOS/
 general.verify-files: true
+providers.steam.enabled: false
