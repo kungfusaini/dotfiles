@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "default": "normal",
+  "reviewedAt": "2026-11-03",
+  "modes": [
+    {
+      "id": "fast",
+      "label": "Fast",
+      "description": "Mechanical, low-risk work with immediately visible results",
+      "provider": "openai-codex",
+      "model": "gpt-6-luna",
+      "thinkingLevel": "medium"
+    },
+    {
+      "id": "normal",
+      "label": "Normal",
+      "description": "Contained, reversible work that can be checked directly",
+      "provider": "openai-codex",
+      "model": "gpt-6.1-sol",
+      "thinkingLevel": "medium"
+    },
+    {
+      "id": "deep",
+      "label": "Deep",
+      "description": "Ambiguous, cross-system, or consequential work",
+      "provider": "openai-codex",
+      "model": "gpt-6.1-sol",
+      "thinkingLevel": "high"
+    },
+    {
+      "id": "extreme",
+      "label": "Extreme",
+      "description": "Exceptional security, concurrency, migration, or diagnostic work",
+      "provider": "openai-codex",
+      "model": "gpt-6.1-sol",
+      "thinkingLevel": "xhigh"
+    }
+  ]
+}
