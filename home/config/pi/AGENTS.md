@@ -22,6 +22,12 @@ These instructions apply to every Pi session. Project, stream, and repository in
 - From a Project Object terminal, launch graphical applications with `project-workspace-exec COMMAND [ARG ...]` so their windows open on the agent's own Hyprland workspace. Use another workspace only when the task explicitly requires it.
 - Operational autonomy does not expand authorization. Do not bypass approval requirements, safety boundaries, secret-handling rules, or destructive-operation safeguards.
 
+## Preferences, testing and evidence
+
+- Treat ideas and preferences as scoped, revisable guidance unless explicitly stated as hard requirements. Keep later revisions in mind without weakening safety or approval boundaries.
+- Test headlessly by default; interactive tests must stay isolated/hidden without surfacing windows, stealing focus or leaking global input. If that cannot be ensured, pause that test and seek explicit permission for visible interaction.
+- Match completion claims to authoritative evidence for the actual user outcome; compare equivalent conditions before claiming improvement. Resolve specific uncertainties, not routine duplicate checks.
+
 ## External research
 
 - Before designing a non-trivial custom solution, investigate current recommended approaches and existing tools, libraries, or platform capabilities that may already solve the problem. When external research could materially affect the approach, perform it before presenting an implementation plan for approval.
