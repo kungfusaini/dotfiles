@@ -12,8 +12,9 @@ Sumeet explicitly requests that live test.
 
 ## Activation and scope
 
-After separately approved deployment, an explicit `tablet-workspace enter`
-starts one `tablet-orientation daemon`. It is not a login or fold autostart.
+After approved deployment, workspace entry (manual or automatic folding entry)
+starts one `tablet-orientation daemon`. The fold watcher, not the orientation
+controller, owns posture transitions; see [tablet-workspace-trial.md](tablet-workspace-trial.md).
 Readings are claimed only when all of these hold:
 
 - The workspace ownership record is enabled for the same compositor instance.
@@ -22,10 +23,10 @@ Readings are claimed only when all of these hold:
 - Headless mode is off and Mewtion is not using the buffered accelerometer.
 - Both configured built-in Wacom touch/pen devices are present.
 
-For this manual trial, **tablet mode means the explicitly entered foreground
-workspace**, not the hinge flag by itself. Folding never starts this controller
-or changes workspaces. External displays and other input devices are not IPC
-targets. Their positions, modes, scale and transforms are not rewritten.
+**Tablet mode means the enabled foreground workspace**, not the hinge flag by
+itself. The fold watcher enters that workspace when safe; folding in headless
+mode does not. External displays and other input devices are not IPC targets.
+Their positions, modes, scale and transforms are not rewritten.
 
 The daemon stays idle, with no sensor claim, after leaving. Unknown/flat sensor
 readings hold the last orientation. Changes must settle for 150 ms. Sensor

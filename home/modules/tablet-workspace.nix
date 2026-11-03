@@ -44,7 +44,6 @@ let
   };
 in
 {
-  _module.args.tabletOsk = "${tabletOskPackage}/bin/tablet-osk";
   home.packages = [ tabletWorkspace tabletOskPackage tabletOrientation ];
   assertions = [{
     assertion = osConfig.hardware.sensor.iio.enable;
@@ -62,7 +61,7 @@ in
   ];
 
   xdg.desktopEntries.tablet-workspace = {
-    name = "Tablet workspace trial";
+    name = "Tablet workspace";
     comment = "Park your desktop without moving or closing any windows";
     exec = "${tabletWorkspace}/bin/tablet-workspace enter";
     icon = "input-tablet";
@@ -74,6 +73,10 @@ in
   # animations that could acknowledge cover before it is visually opaque.
   wayland.windowManager.hyprland.settings.layerrule = lib.mkAfter [
     "match:namespace ^tablet-rotation-fade$, no_anim on"
+  ];
+
+  wayland.windowManager.hyprland.settings.exec-once = lib.mkAfter [
+    "${tabletWorkspace}/bin/tablet-workspace watch >> \"$XDG_RUNTIME_DIR/tablet-fold-watch.log\" 2>&1"
   ];
 
   wayland.windowManager.hyprland.settings.bind = lib.mkAfter [

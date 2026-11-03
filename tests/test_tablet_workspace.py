@@ -235,23 +235,187 @@ class TabletWorkspaceTests(unittest.TestCase):
             "enabled": True, "visible": True, "monitor": "eDP-1",
         })
 
-    def test_keyboard_watcher_trial_detection_and_silent_dismiss(self):
-        # Source only function definitions; never run the real daemon or pkill.
+    def test_keyboard_has_no_legacy_fold_daemon(self):
         script = Path(__file__).resolve().parents[1] / "hosts/kirax1/scripts/desktop/tablet-osk"
-        prefix = script.read_text().split('case "${1:-daemon}"')[0]
-        commands = Path(self.tmp.name) / "bin"
-        commands.mkdir()
-        hyprctl = commands / "hyprctl"
-        hyprctl.write_text('#!/bin/sh\nprintf \'%s\\n\' \'{"name":"tablet-trial"}\'\n')
-        hyprctl.chmod(0o700)
-        self.state()
-        env = dict(os.environ, PATH=str(commands) + ":" + os.environ["PATH"], XDG_STATE_HOME=self.tmp.name)
-        result = subprocess.run(["bash", "-c", prefix + "\ntrial_foreground"], env=env, capture_output=True)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        env["HYPRLAND_INSTANCE_SIGNATURE"] = "another-instance"
-        result = subprocess.run(["bash", "-c", prefix + "\ntrial_foreground"], env=env, capture_output=True)
-        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("daemon()", script.read_text())
+        self.assertNotIn("hotkey_tablet_mode", script.read_text())
         self.assertIn('dismiss) touch "$DISABLED_FILE"; stop_osk ;;', script.read_text())
+
+    def posture(self, watcher, folded="1", headless="off", monitors=None, current=None, workspaces=None):
+        original = Path.read_text
+        def read(path, *args, **kwargs):
+            if str(path).endswith("hotkey_tablet_mode"):
+                if isinstance(folded, Exception):
+                    raise folded
+                return folded
+            if str(path) == "/run/headless-mode/state":
+                return headless
+            return original(path, *args, **kwargs)
+        if monitors is None:
+            monitors = [{"name": "eDP-1", "dpmsStatus": True}]
+        if current is None:
+            current = {"name": "work", "monitor": "eDP-1"}
+        with patch.object(Path, "read_text", read), \
+                patch.object(trial, "hypr", side_effect=[monitors, current, workspaces or []]), \
+                patch.object(trial, "enter") as enter, patch.object(trial, "leave") as leave:
+            watcher.tick()
+        return enter, leave
+
+    def test_fold_enters_once_and_manual_exit_is_respected(self):
+        watcher = trial.FoldWatcher()
+        enter, leave = self.posture(watcher)
+        enter.assert_called_once_with(automatic=True)
+        leave.assert_not_called()
+        enter, _ = self.posture(watcher)
+        enter.assert_not_called()
+        self.posture(watcher, folded="0")
+        enter, _ = self.posture(watcher)
+        enter.assert_called_once_with(automatic=True)
+
+    def test_unfold_leaves_enabled_mode_once(self):
+        watcher = trial.FoldWatcher()
+        self.posture(watcher)
+        self.state()
+        _, leave = self.posture(watcher, folded="0")
+        leave.assert_called_once_with(automatic=True)
+        # A real leave marks this disabled; repeated laptop ticks are inert.
+        state = trial.load_state()
+        state["enabled"] = False
+        trial.save_state(state)
+        _, leave = self.posture(watcher, folded="0")
+        leave.assert_not_called()
+
+    def test_login_unfolded_preserves_explicit_manual_mode(self):
+        self.state()
+        enter, leave = self.posture(trial.FoldWatcher(), folded="0")
+        enter.assert_not_called()
+        leave.assert_not_called()
+
+    def test_restart_unfolded_restores_automatically_owned_mode(self):
+        self.state()
+        state = trial.load_state()
+        state["automatic"] = True
+        trial.save_state(state)
+        _, leave = self.posture(trial.FoldWatcher(), folded="0")
+        leave.assert_called_once_with(automatic=True)
+
+    def test_headless_fold_is_consumed_without_entry_after_headless_exit(self):
+        for mode in ("primed", "active", "unexpected"):
+            watcher = trial.FoldWatcher()
+            with patch.object(trial.subprocess, "run") as run:
+                enter, leave = self.posture(watcher, headless=mode)
+                self.posture(watcher, headless=mode)
+            run.assert_called_once_with(["tablet-osk", "dismiss"], check=True)
+            enter.assert_not_called()
+            leave.assert_not_called()
+            enter, _ = self.posture(watcher)
+            enter.assert_not_called()
+            self.posture(watcher, folded="0")
+            enter, _ = self.posture(watcher)
+            enter.assert_called_once_with(automatic=True)
+
+    def test_headless_dismissal_survives_missing_or_unknown_posture(self):
+        for value in (FileNotFoundError("missing"), "2"):
+            with patch.object(trial.subprocess, "run") as run:
+                with self.assertRaises((OSError, ValueError)):
+                    self.posture(trial.FoldWatcher(), folded=value, headless="active")
+            run.assert_called_once_with(["tablet-osk", "dismiss"], check=True)
+
+    def test_restart_unfolded_retries_pending_exit_of_manual_mode(self):
+        self.state()
+        state = trial.load_state()
+        state.update(enabled=False, automatic=False, exit_pending=True)
+        trial.save_state(state)
+        _, leave = self.posture(trial.FoldWatcher(), folded="0")
+        leave.assert_called_once_with(automatic=True)
+
+    def test_missing_or_unknown_posture_never_infers_unfold(self):
+        watcher = trial.FoldWatcher()
+        watcher.folded = True
+        for value in (FileNotFoundError("missing"), "", "2"):
+            with self.assertRaises((OSError, ValueError)):
+                self.posture(watcher, folded=value)
+            self.assertIs(watcher.folded, True)
+
+    def test_fold_waits_for_internal_display_and_focus(self):
+        for monitors, current in [
+            ([], None),
+            ([{"name": "eDP-1", "dpmsStatus": False}], None),
+            ([{"name": "eDP-1", "disabled": True}], None),
+            ([{"name": "eDP-1", "specialWorkspace": {"id": -99}}], None),
+            (None, {"name": "work", "monitor": "HDMI-A-1"}),
+        ]:
+            watcher = trial.FoldWatcher()
+            enter, _ = self.posture(watcher, monitors=monitors, current=current)
+            enter.assert_not_called()
+            enter, _ = self.posture(watcher)
+            enter.assert_called_once_with(automatic=True)
+
+    def test_fold_does_not_reenter_existing_manual_mode(self):
+        self.state()
+        enter, _ = self.posture(trial.FoldWatcher(), current={"name": "tablet-trial", "monitor": "eDP-1"})
+        enter.assert_not_called()
+
+    def test_fold_reenters_enabled_but_background_manual_mode(self):
+        self.state()
+        enter, _ = self.posture(trial.FoldWatcher())
+        enter.assert_called_once_with(automatic=True)
+
+    def test_fold_never_focuses_retained_external_tablet_workspace(self):
+        watcher = trial.FoldWatcher()
+        enter, _ = self.posture(watcher, workspaces=[{"name": "tablet-trial", "monitor": "HDMI-A-1"}])
+        enter.assert_not_called()
+        self.assertIsNone(watcher.folded)
+        enter, _ = self.posture(watcher, workspaces=[{"name": "tablet-trial", "monitor": "eDP-1"}])
+        enter.assert_called_once_with(automatic=True)
+
+    def test_automatic_leave_does_not_steal_focus(self):
+        self.state()
+        with patch.object(trial, "hypr", return_value=[{"name": "work"}]), \
+                patch.object(trial, "foreground", return_value=False), \
+                patch.object(trial, "dispatch") as dispatch, \
+                patch.object(trial.subprocess, "run") as run:
+            trial.leave(automatic=True)
+        dispatch.assert_not_called()
+        self.assertEqual(run.call_args_list[0], call(["tablet-orientation", "restore"], check=True))
+        self.assertFalse(trial.load_state()["enabled"])
+
+    def test_unfold_with_missing_return_still_restores_and_dismisses_keyboard(self):
+        self.state()
+        with patch.object(trial, "hypr", return_value=[]), \
+                patch.object(trial, "dispatch") as dispatch, \
+                patch.object(trial.subprocess, "run") as run:
+            trial.leave(automatic=True)
+        dispatch.assert_not_called()
+        self.assertEqual(run.call_args_list, [
+            call(["tablet-orientation", "restore"], check=True),
+            call(["tablet-osk", "dismiss"], check=True),
+        ])
+        self.assertFalse(trial.load_state()["enabled"])
+
+    def test_automatic_entry_is_recorded_for_watcher_restart(self):
+        with patch.object(trial, "hypr", side_effect=[{"name": "work"}, []]), \
+                patch.object(trial, "dispatch"), patch.object(trial.subprocess, "Popen"):
+            trial.enter(automatic=True)
+        self.assertTrue(trial.load_state()["automatic"])
+
+    def test_watcher_failure_retries_without_consuming_edge(self):
+        watcher = trial.FoldWatcher()
+        original = Path.read_text
+        def read(path, *args, **kwargs):
+            if str(path).endswith("hotkey_tablet_mode"):
+                return "1"
+            if str(path) == "/run/headless-mode/state":
+                return "off"
+            return original(path, *args, **kwargs)
+        with patch.object(Path, "read_text", read), \
+                patch.object(trial, "hypr", side_effect=[[{"name": "eDP-1"}], {"monitor": "eDP-1"}, []]), \
+                patch.object(trial, "enter", side_effect=RuntimeError("restore pending")):
+            with self.assertRaises(RuntimeError):
+                watcher.tick()
+        self.assertIsNone(watcher.folded)
+        enter, _ = self.posture(watcher)
+        enter.assert_called_once_with(automatic=True)
 
 
 if __name__ == "__main__":

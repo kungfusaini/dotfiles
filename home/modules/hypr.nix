@@ -1,4 +1,4 @@
-{ displayKeyHandler, displayLayoutOpen, headlessMonitorWatch, lib, micMuteButton, pkgs, tabletOsk, ... }:
+{ displayKeyHandler, displayLayoutOpen, headlessMonitorWatch, lib, micMuteButton, pkgs, ... }:
 
 let
   # Keep this pinned to the same Hyprland-compatible hyprgrass build used by
@@ -81,7 +81,6 @@ in
       exec-once = [
         "${pkgs.swaybg}/bin/swaybg -i /home/sumeet/Pictures/Wallpapers/Bliss-HD.png -m fill"
         "sleep 1; pgrep -x waybar >/dev/null || waybar"
-        "${tabletOsk} daemon"
         "${pkgs.blueman}/bin/blueman-applet"
         "${pkgs.hyprsunset}/bin/hyprsunset"
         # graphical-session.target is not active in this Hyprland/UWSM setup,
@@ -364,8 +363,8 @@ in
       # hyprgrass-gesture = swipe, 3, horizontal, scale:1.0, workspace
       # hyprgrass-bind = , tap:3, togglefloating
       # hyprgrass-bindm = , longpress:3, movewindow
-      # hyprgrass-bind = , edge:d:u, exec, ${tabletOsk} toggle
-      # hyprgrass-bind = , swipe:3:d, exec, ${tabletOsk} hide
+      # hyprgrass-bind = , edge:d:u, exec, tablet-osk toggle
+      # hyprgrass-bind = , swipe:3:d, exec, tablet-osk hide
     '';
   };
 

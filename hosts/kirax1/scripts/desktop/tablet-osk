@@ -1,12 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TABLET_FILE=${TABLET_FILE:-/sys/devices/platform/thinkpad_acpi/hotkey_tablet_mode}
-POLL_INTERVAL=${POLL_INTERVAL:-0.5}
 RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp}
 STATE_DIR=${XDG_STATE_HOME:-$HOME/.local/state}
 DISABLED_FILE=${DISABLED_FILE:-$RUNTIME_DIR/tablet-osk-disabled}
-LOCK_FILE=${LOCK_FILE:-$RUNTIME_DIR/tablet-osk.lock}
 LOG_FILE=${LOG_FILE:-$STATE_DIR/tablet-osk.log}
 
 WVKBD_ARGS=(
@@ -76,83 +73,14 @@ toggle_osk() {
   start_osk
 }
 
-trial_foreground() {
-  [[ -r "$RUNTIME_DIR/tablet-workspace.json" ]] || return 1
-  python3 - "$RUNTIME_DIR/tablet-workspace.json" <<'PY'
-import json, os, subprocess, sys
-try:
-    state = json.load(open(sys.argv[1]))
-    if not state.get("enabled") or state.get("instance") != os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
-        raise ValueError("stale trial")
-    current = json.loads(subprocess.check_output(["hyprctl", "activeworkspace", "-j"]))
-    sys.exit(0 if current["name"] == "tablet-trial" else 1)
-except (OSError, ValueError, KeyError, subprocess.SubprocessError):
-    sys.exit(1)
-PY
-}
-
-daemon() {
-  exec 9>"$LOCK_FILE"
-  if ! flock -n 9; then
-    echo "tablet-osk: another watcher is already running"
-    exit 0
-  fi
-
-  if [[ ! -r "$TABLET_FILE" ]]; then
-    echo "tablet-osk: cannot read $TABLET_FILE" >&2
-    exit 1
-  fi
-
-  cleanup() {
-    stop_osk
-    exit 0
-  }
-  trap cleanup INT TERM
-  trap stop_osk EXIT
-
-  local last="" tablet
-  while true; do
-    tablet=$(tr -d '[:space:]' < "$TABLET_FILE" 2>/dev/null || echo 0)
-
-    # Folding for headless use can still set thinkpad_acpi's tablet flag.
-    # Suppress only the OSK; the keyboard and all base pointing devices stay on.
-    if [[ -r /run/headless-mode/state ]] &&
-       [[ $(</run/headless-mode/state) == primed || $(</run/headless-mode/state) == active ]]; then
-      stop_osk
-      last="headless"
-    elif trial_foreground; then
-      # Manual workspace trial: preserve the user's explicit keyboard toggle;
-      # do not summon it merely because the trial was entered.
-      last="trial"
-    elif [[ "$tablet" == "1" ]]; then
-      if [[ -e "$DISABLED_FILE" ]]; then
-        [[ "$last" == "disabled" ]] || echo "tablet-osk: tablet mode on; OSK manually hidden"
-        stop_osk
-        last="disabled"
-      else
-        [[ "$last" == "tablet" ]] || echo "tablet-osk: tablet mode on; starting keyboard"
-        start_osk
-        last="tablet"
-      fi
-    else
-      [[ "$last" == "laptop" ]] || echo "tablet-osk: tablet mode off; stopping keyboard"
-      rm -f "$DISABLED_FILE"
-      stop_osk
-      last="laptop"
-    fi
-
-    sleep "$POLL_INTERVAL"
-  done
-}
-
-case "${1:-daemon}" in
-  daemon|--daemon|watch|--watch) daemon ;;
+# Folding is owned by tablet-workspace watch, not a second keyboard policy.
+case "${1:-toggle}" in
   toggle|--toggle) toggle_osk ;;
   hide|--hide) hide_osk ;;
   dismiss) touch "$DISABLED_FILE"; stop_osk ;;
   show|--show) rm -f "$DISABLED_FILE"; start_osk ;;
   *)
-    printf 'Usage: %s [daemon|toggle|hide|show|dismiss]\n' "${0##*/}" >&2
+    printf 'Usage: %s [toggle|hide|show|dismiss]\n' "${0##*/}" >&2
     exit 2
     ;;
 esac

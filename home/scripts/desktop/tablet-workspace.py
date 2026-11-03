@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Explicit, reversible workspace trial; never move or close existing clients."""
+"""Reversible tablet workspace with automatic ThinkPad fold transitions."""
 import argparse
 import fcntl
 import json
@@ -7,12 +7,13 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import time
 
 WORKSPACE = "tablet-trial"
 
 
 def hypr(*args, json_output=False):
-    result = subprocess.run(["hyprctl", *args], check=True, capture_output=True, text=True)
+    result = subprocess.run(["hyprctl", *args], check=True, capture_output=True, text=True, timeout=3)
     return json.loads(result.stdout) if json_output else result.stdout
 
 
@@ -46,7 +47,7 @@ def foreground():
     return hypr("activeworkspace", "-j", json_output=True)["name"] == WORKSPACE
 
 
-def enter():
+def enter(automatic=False):
     state = load_state()
     previous_state = dict(state) if state else None
     if state and state.get("exit_pending"):
@@ -71,9 +72,9 @@ def enter():
                 state_path().unlink(missing_ok=True)
             raise
     state["enabled"] = True
+    state["automatic"] = automatic
     save_state(state)
-    # Start only on explicit entry, never from login or a fold event. The
-    # singleton daemon does not claim the sensor outside the foreground trial.
+    # The singleton daemon claims the sensor only in the foreground workspace.
     log_path = state_path().with_name("tablet-orientation.log")
     with log_path.open("a") as output:
         subprocess.Popen(["tablet-orientation", "daemon"], stdout=output,
@@ -86,12 +87,12 @@ def enter():
     ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
 
 
-def leave():
+def leave(automatic=False):
     state = load_state()
     if not state or not (state.get("enabled") or state.get("exit_pending")):
         raise RuntimeError("No active trial with a saved return workspace")
     names = {w["name"] for w in hypr("workspaces", "-j", json_output=True)}
-    if state["return"] not in names:
+    if state["return"] not in names and not automatic:
         raise RuntimeError("Return workspace no longer exists; choose a workspace manually")
     # Disable rotation before the synchronous restore while holding the same
     # workspace lock as the daemon. It cannot apply a new sensor reading in
@@ -100,9 +101,10 @@ def leave():
     state["exit_pending"] = True
     save_state(state)
     subprocess.run(["tablet-orientation", "restore"], check=True)
-    dispatch("workspace", "name:" + state["return"])
-    # Hide only the trial keyboard, never close a tablet application. A folded
-    # laptop remains manually hidden until the existing OSK policy resets it.
+    # Automatic unfolding must not steal focus if the user switched away.
+    if not automatic or (state["return"] in names and foreground()):
+        dispatch("workspace", "name:" + state["return"])
+    # Hide only the tablet keyboard, never close a tablet application.
     subprocess.run(["tablet-osk", "dismiss"], check=True)
     # Keep compositor-scoped ownership while applications remain parked here.
     state["enabled"] = False
@@ -134,11 +136,90 @@ def action(command):
         dispatch("cyclenext")
 
 
+class FoldWatcher:
+    """Consume fold edges, not level-triggered entry that fights manual exits."""
+
+    def __init__(self):
+        self.folded = None
+        self.headless = False
+
+    def tick(self):
+        try:
+            headless = Path("/run/headless-mode/state").read_text().strip() != "off"
+        except FileNotFoundError:
+            headless = False
+        if headless:
+            if not self.headless:
+                subprocess.run(["tablet-osk", "dismiss"], check=True)
+                self.headless = True
+        else:
+            self.headless = False
+        # Keyboard safety must not depend on being able to read posture.
+        # Unknown posture is not an unfold. Never guess from a failed read.
+        value = Path("/sys/devices/platform/thinkpad_acpi/hotkey_tablet_mode").read_text().strip()
+        if value not in ("0", "1"):
+            raise ValueError("Unknown ThinkPad tablet posture: " + value)
+        folded = value == "1"
+        if headless:
+            # A headless fold must not later hijack the desktop when it wakes.
+            self.folded = folded
+            return
+        state = load_state()
+        if not folded:
+            if state and (state.get("enabled") or state.get("exit_pending")) and (
+                    self.folded is True or state.get("automatic") or state.get("exit_pending")):
+                leave(automatic=True)
+            self.folded = False
+        elif self.folded is not True:
+            monitors = hypr("monitors", "-j", json_output=True)
+            current = hypr("activeworkspace", "-j", json_output=True)
+            panel = next((m for m in monitors if m["name"] == "eDP-1"
+                          and not m.get("disabled", False) and m.get("dpmsStatus", True)), None)
+            if not panel or current.get("monitor") != "eDP-1" or panel.get("specialWorkspace", {}).get("id", 0):
+                # Wait for the laptop display/focus to become usable.
+                return
+            # A retained workspace may have been moved to an external display.
+            # Do not focus that output (or move its apps) on a physical fold.
+            workspaces = hypr("workspaces", "-j", json_output=True)
+            destination = next((w for w in workspaces if w["name"] == WORKSPACE), None)
+            if destination and destination.get("monitor") != "eDP-1":
+                return
+            if not state or not state.get("enabled") or current.get("name") != WORKSPACE:
+                enter(automatic=True)
+            self.folded = True
+
+
+def watch():
+    # Separate singleton lock; never hold the action/restore lock while idle.
+    with state_path().with_name("tablet-fold-watch.lock").open("w") as singleton:
+        try:
+            fcntl.flock(singleton, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+        watcher = FoldWatcher()
+        last_error = None
+        while True:
+            try:
+                with state_path().with_suffix(".lock").open("w") as handle:
+                    fcntl.flock(handle, fcntl.LOCK_EX)
+                    watcher.tick()
+                last_error = None
+            except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
+                if str(error) != last_error:
+                    print(f"tablet-workspace watch: {error}", file=sys.stderr, flush=True)
+                    last_error = str(error)
+                time.sleep(4.5)
+            time.sleep(0.5)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["enter", "leave", "toggle", "status", "browser", "keyboard", "next"])
+    parser.add_argument("command", choices=["enter", "leave", "toggle", "status", "browser", "keyboard", "next", "watch"])
     args = parser.parse_args()
     try:
+        if args.command == "watch":
+            watch()
+            return 0
         # Serialize return-state updates and double taps from the touch panel.
         lock = state_path().with_suffix(".lock")
         with lock.open("w") as handle:
