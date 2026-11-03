@@ -11,7 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, call, patch
 
 SOURCE = Path(__file__).resolve().parents[1] / 'home/scripts/desktop/tablet-orientation.py'
 spec = importlib.util.spec_from_file_location('tablet_orientation', SOURCE)
@@ -277,7 +277,8 @@ class OrientationTests(unittest.TestCase):
     def test_ipc_text_error_is_not_mistaken_for_success(self):
         backend = rotation.Backend.__new__(rotation.Backend)
         backend.monitor = 'eDP-1'
-        with patch.object(backend, 'hypr', return_value='ok\ninvalid config field'):
+        with patch.object(backend, 'hypr', return_value='ok\ninvalid config field'), \
+                patch.object(backend, 'panel', return_value={'transform': 1}):
             with self.assertRaises(RuntimeError):
                 backend.apply(self.backend.baseline, 1)
 
@@ -289,6 +290,163 @@ class OrientationTests(unittest.TestCase):
             backend.journal.write_text(json.dumps({'instance': 'old'}))
             self.assertIsNone(backend.load())
             self.assertFalse(backend.journal.exists())
+
+
+class RotationFadeTests(unittest.TestCase):
+    def test_handshake_and_cleanup_are_ordered(self):
+        fade = rotation.RotationFade('eDP-1')
+        process = MagicMock(pid=1234)
+        process.poll.return_value = None
+        with patch.dict(os.environ, {'TABLET_ROTATION_FADE_QML': '/immutable/fade.qml'}), \
+                patch.object(rotation.subprocess, 'Popen', return_value=process) as launch, \
+                patch.object(fade, 'wait_for') as wait, patch.object(fade, 'call') as ipc:
+            with fade:
+                pass
+        self.assertEqual(wait.call_args_list, [call('ready', 1.5), call('covered', 1), call('done', .7)])
+        self.assertEqual(ipc.call_args_list, [call('cover'), call('reveal')])
+        self.assertEqual(launch.call_args.kwargs['env']['TABLET_FADE_MONITOR'], 'eDP-1')
+        process.terminate.assert_called_once()
+
+    def test_missing_cover_ack_cancels_without_rotation(self):
+        backend = rotation.Backend.__new__(rotation.Backend)
+        backend.monitor = 'eDP-1'
+        snapshot = FakeBackend().baseline
+        with patch.object(backend, 'panel', return_value={'transform':0}), \
+                patch.object(backend, 'headless', return_value=False), \
+                patch.object(backend, 'active', return_value=True), \
+                patch.object(backend, 'settle_delay', return_value=0), \
+                patch.object(backend, 'hypr') as ipc, \
+                patch.object(rotation, 'RotationFade') as fade:
+            fade.return_value.__enter__.side_effect = RuntimeError('no cover ack')
+            with self.assertRaises(RuntimeError):
+                backend.apply(snapshot, 1)
+        ipc.assert_not_called()
+
+    def test_rotation_is_covered_until_after_layout_settles(self):
+        backend = rotation.Backend.__new__(rotation.Backend)
+        backend.monitor = 'eDP-1'
+        events = []
+        class Cover:
+            def __enter__(self):
+                events.append('covered')
+                return self
+            def __exit__(self, *_): events.append('revealed')
+            def timeout(self, *args, **kwargs): return .2
+            def ensure_covered(self, reserve): events.append('cover-rechecked')
+        def ipc(*args, **kwargs):
+            events.append('rotate')
+            return chr(10).join(['ok'] * 5)
+        with patch.object(backend, 'panel', side_effect=[{'transform':0}, {'transform':0}, {'transform':1}]), \
+                patch.object(backend, 'headless', return_value=False), \
+                patch.object(backend, 'active', return_value=True), \
+                patch.object(backend, 'settle_delay', return_value=.53), \
+                patch.object(backend, 'hypr', side_effect=ipc), \
+                patch.object(rotation, 'RotationFade', return_value=Cover()), \
+                patch.object(rotation.time, 'sleep', side_effect=lambda _:events.append('settled')):
+            backend.apply(FakeBackend().baseline, 1)
+        self.assertEqual(events, ['covered', 'cover-rechecked', 'rotate', 'settled', 'revealed'])
+
+    def test_cover_expiring_during_gate_queries_prevents_mutation(self):
+        backend = rotation.Backend.__new__(rotation.Backend)
+        backend.monitor = 'eDP-1'
+        with patch.object(backend, 'panel', return_value={'transform':0}), \
+                patch.object(backend, 'headless', return_value=False), \
+                patch.object(backend, 'active', return_value=True), \
+                patch.object(backend, 'settle_delay', return_value=0), \
+                patch.object(backend, 'hypr') as ipc, patch.object(rotation, 'RotationFade') as fade:
+            active_mock = backend.active
+            covered = fade.return_value.__enter__.return_value
+            covered.timeout.return_value = .1
+            covered.ensure_covered.side_effect = RuntimeError('watchdog expired during gate check')
+            with self.assertRaises(RuntimeError):
+                backend.apply(FakeBackend().baseline, 1)
+        ipc.assert_not_called()
+        active_mock.assert_any_call(timeout=.025)
+        covered.ensure_covered.assert_called_once()
+
+    def test_cover_deadline_reserves_hold_time_and_rechecks_status(self):
+        fade = rotation.RotationFade('eDP-1')
+        fade.deadline = 10
+        with patch.object(rotation.time, 'monotonic', return_value=9.9):
+            with self.assertRaises(RuntimeError): fade.timeout(reserve=.3)
+        with patch.object(rotation.time, 'monotonic', return_value=9), \
+                patch.object(fade, 'call', return_value='done'):
+            with self.assertRaises(RuntimeError): fade.ensure_covered(.3)
+        with patch.object(rotation.time, 'monotonic', return_value=9), \
+                patch.object(fade, 'call', return_value='covered') as ipc:
+            fade.ensure_covered(.3)
+        ipc.assert_called_once_with('status', timeout=.2)
+
+    def test_gate_closing_during_cover_prevents_rotation(self):
+        backend = rotation.Backend.__new__(rotation.Backend)
+        backend.monitor = 'eDP-1'
+        with patch.object(backend, 'panel', return_value={'transform':0}), \
+                patch.object(backend, 'headless', return_value=False), \
+                patch.object(backend, 'active', side_effect=[True, False]), \
+                patch.object(backend, 'settle_delay', return_value=0), \
+                patch.object(backend, 'hypr') as ipc, patch.object(rotation, 'RotationFade') as fade:
+            fade.return_value.__enter__.return_value.timeout.return_value = .8
+            with self.assertRaises(RuntimeError):
+                backend.apply(FakeBackend().baseline, 1)
+        ipc.assert_not_called()
+
+    def test_unchanged_orientation_does_not_flash(self):
+        backend = rotation.Backend.__new__(rotation.Backend)
+        backend.monitor = 'eDP-1'
+        with patch.object(backend, 'panel', return_value={'transform':1}), \
+                patch.object(backend, 'hypr', return_value=chr(10).join(['ok'] * 5)), \
+                patch.object(rotation, 'RotationFade') as fade:
+            backend.apply(FakeBackend().baseline, 1)
+        fade.assert_not_called()
+
+    def test_reveal_failure_clears_cover_without_undoing_valid_rotation(self):
+        fade = rotation.RotationFade('eDP-1')
+        with patch.object(fade, 'call', side_effect=RuntimeError('lost IPC')), \
+                patch.object(fade, 'close') as close, patch('builtins.print'):
+            fade.__exit__(None, None, None)
+        close.assert_called_once()
+
+    def test_startup_failure_closes_owned_overlay(self):
+        fade = rotation.RotationFade('eDP-1')
+        with patch.dict(os.environ, {'TABLET_ROTATION_FADE_QML': '/immutable/fade.qml'}), \
+                patch.object(rotation.subprocess, 'Popen'), \
+                patch.object(fade, 'wait_for', side_effect=RuntimeError('bad QML')), \
+                patch.object(fade, 'close') as close:
+            with self.assertRaises(RuntimeError): fade.__enter__()
+        close.assert_called_once()
+
+    def test_ipc_targets_only_owned_pid(self):
+        fade = rotation.RotationFade('eDP-1')
+        fade.process = MagicMock(pid=1234)
+        fade.process.poll.return_value = None
+        with patch.object(rotation.subprocess, 'run', return_value=subprocess.CompletedProcess([],0,'covered','')) as run:
+            self.assertEqual(fade.call('status'), 'covered')
+        self.assertEqual(run.call_args.args[0], ['quickshell','ipc','--pid','1234','call','rotationFade','status'])
+
+    def test_hold_uses_inherited_resize_animation_without_changing_settings(self):
+        backend = rotation.Backend.__new__(rotation.Backend)
+        groups = [[{'name':'windowsMove','overridden':False},
+                   {'name':'windows','overridden':True,'enabled':True,'speed':4.79}]]
+        with patch.object(backend, 'hypr', return_value=groups) as ipc:
+            self.assertAlmostEqual(backend.settle_delay(), .529)
+        ipc.assert_called_once_with('animations', '-j', json_output=True)
+        with patch.object(backend, 'hypr', return_value=[]):
+            self.assertEqual(backend.settle_delay(), .55)
+
+    def test_qml_is_monitor_scoped_with_independent_timeout(self):
+        root = SOURCE.parents[2]
+        qml = (root/'config/quickshell/tablet-rotation-fade/shell.qml').read_text()
+        self.assertIn('s.name === Quickshell.env("TABLET_FADE_MONITOR")', qml)
+        state = (root/'config/quickshell/tablet-rotation-fade/FadeState.qml').read_text()
+        self.assertIn('hardTimeout: 3000', state)
+        self.assertNotIn('Behavior on', state)
+        self.assertIn('onFinished: rendered.restart()', state)
+        self.assertIn('exclusionMode: ExclusionMode.Ignore', qml)
+        self.assertIn('keyboardFocus: WlrKeyboardFocus.None', qml)
+        self.assertIn('window.backingWindowVisible', qml)
+        self.assertIn('root.phase = "covered"', state)
+        self.assertIn('onResourcesLost: Qt.quit()', qml)
+        self.assertNotIn('grabToImage', qml)
 
 
 class BackendGateTests(unittest.TestCase):
@@ -410,6 +568,7 @@ p=Path(os.environ['FIXTURE']); value=json.loads(p.read_text());args=sys.argv[1:]
 if args[0]=='activeworkspace':print(json.dumps({'name':value['workspace'],'monitor':'eDP-1'}))
 elif args[0]=='monitors':print(json.dumps([{'name':'eDP-1','transform':value['transform']}]))
 elif args[0]=='devices':print(json.dumps({'touch':[{'name':'built-in-touch'}],'tablets':[{'name':'built-in-pen'}]}))
+elif args[0]=='animations':print(json.dumps([[{'name':'windowsMove','overridden':True,'enabled':False,'speed':0}]]))
 elif args[0]=='getoption':print(json.dumps({'int':0,'str':'[[Auto]]' if 'touchdevice' in args[1] else '[[EMPTY]]'}))
 elif args[0]=='--batch':
  commands=args[1].split('; ')
@@ -429,12 +588,27 @@ try:
  while True:time.sleep(.1)
 finally:marker.unlink(missing_ok=True)
 ''')
+            quickshell = root/'bin/quickshell'
+            quickshell.write_text(f'#!{sys.executable}\n' + '''import os,signal,sys,time
+from pathlib import Path
+phase=Path(os.environ['FIXTURE']).with_suffix('.fade')
+if sys.argv[1]=='ipc':
+ method=sys.argv[-1]
+ if method=='cover':phase.write_text('covered')
+ elif method=='reveal':phase.write_text('done')
+ elif method=='status':print(phase.read_text() if phase.exists() else 'starting')
+else:
+ phase.write_text('ready')
+ signal.signal(signal.SIGTERM,lambda *_:sys.exit(0))
+ while True:time.sleep(.1)
+''')
             pgrep = root/'bin/pgrep'
             pgrep.write_text('#!/bin/sh\nexit 1\n')
-            for file in (hypr, sensor, pgrep): file.chmod(0o700)
+            for file in (hypr, sensor, pgrep, quickshell): file.chmod(0o700)
             env = dict(os.environ, PATH=str(root/'bin')+':'+os.environ['PATH'], XDG_RUNTIME_DIR=str(root),
                        XDG_CONFIG_HOME=str(root), HYPRLAND_INSTANCE_SIGNATURE='test',
-                       TABLET_ORIENTATION_POLICY=str(root/'policy.json'), FIXTURE=str(fixture))
+                       TABLET_ORIENTATION_POLICY=str(root/'policy.json'), FIXTURE=str(fixture),
+                       TABLET_ROTATION_FADE_QML=str(root/'fake-fade.qml'))
             driver = ('import runpy,sys; ns=runpy.run_path(' + repr(str(SOURCE)) + '); '
                       'ns["Backend"].headless=lambda self:False; '
                       'sys.argv=["tablet-orientation","daemon"]; sys.exit(ns["main"]())')

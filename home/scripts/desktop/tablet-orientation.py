@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Rotate only an explicitly entered, foreground tablet workspace."""
 import argparse
+from contextlib import nullcontext
 import fcntl
 import json
 import os
@@ -77,6 +78,87 @@ class Sensor:
         self.process.stdout.close()
 
 
+class RotationFade:
+    """One disposable, screen-bound cover; QML also has its own hard timeout."""
+    def __init__(self, monitor):
+        self.monitor = monitor
+        self.process = None
+        self.deadline = None
+
+    def timeout(self, reserve=0, cap=.2):
+        remaining = self.deadline - time.monotonic() - reserve
+        if remaining < .05:
+            raise RuntimeError("Rotation cover deadline exhausted")
+        return min(cap, remaining)
+
+    def ensure_covered(self, reserve):
+        if self.call("status", timeout=self.timeout(reserve)) != "covered":
+            raise RuntimeError("Rotation cover lost before transform")
+        self.timeout(reserve)  # the status request itself consumed budget
+
+    def call(self, method, timeout=.4):
+        if self.process.poll() is not None:
+            raise RuntimeError("Rotation fade exited")
+        result = subprocess.run(
+            ["quickshell", "ipc", "--pid", str(self.process.pid), "call", "rotationFade", method],
+            check=True, capture_output=True, text=True, timeout=timeout,
+        )
+        return result.stdout.strip()
+
+    def wait_for(self, phase, timeout):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if self.process.poll() is not None:
+                break
+            try:
+                if self.call("status") == phase:
+                    return
+            except (OSError, RuntimeError, subprocess.SubprocessError):
+                pass  # IPC can register a moment after the process starts.
+            time.sleep(.025)
+        raise RuntimeError("Rotation fade did not acknowledge " + phase)
+
+    def close(self):
+        if self.process and self.process.poll() is None:
+            self.process.terminate()
+            try:
+                self.process.wait(timeout=.5)
+            except subprocess.TimeoutExpired:
+                self.process.kill()
+                self.process.wait(timeout=.5)
+
+    def __enter__(self):
+        try:
+            env = dict(os.environ, TABLET_FADE_MONITOR=self.monitor)
+            self.process = subprocess.Popen(
+                ["quickshell", "--path", os.environ["TABLET_ROTATION_FADE_QML"]], env=env,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+            )
+            self.wait_for("ready", 1.5)
+            # Conservative deadline: leave margin before QML's independent
+            # three-second watchdog, measured before dispatching cover.
+            self.deadline = time.monotonic() + 2.6
+            self.call("cover")
+            self.wait_for("covered", 1)
+            return self
+        except BaseException:
+            self.close()
+            raise
+
+    def __exit__(self, error_type, error, traceback):
+        try:
+            if error_type is None:
+                try:
+                    self.call("reveal")
+                    self.wait_for("done", .7)
+                except (OSError, RuntimeError, subprocess.SubprocessError) as failure:
+                    # A cosmetic reveal failure must not undo a correct input
+                    # mapping. Killing this owned surface also clears it.
+                    print(f"tablet-orientation: clearing failed fade: {failure}", file=sys.stderr)
+        finally:
+            self.close()
+
+
 class Backend:
     def __init__(self):
         self.runtime = Path(os.environ["XDG_RUNTIME_DIR"])
@@ -91,8 +173,8 @@ class Backend:
         self.journal = self.runtime / "tablet-orientation.json"
         self.config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home()/".config"))) / "hypr/hyprland.conf"
 
-    def hypr(self, *args, json_output=False):
-        reply = subprocess.run(["hyprctl", *args], check=True, capture_output=True, text=True, timeout=3).stdout
+    def hypr(self, *args, json_output=False, timeout=3):
+        reply = subprocess.run(["hyprctl", *args], check=True, capture_output=True, text=True, timeout=timeout).stdout
         return json.loads(reply) if json_output else reply.strip()
 
     def config_token(self):
@@ -105,11 +187,11 @@ class Backend:
         except FileNotFoundError:
             return False
 
-    def panel(self):
-        return next((m for m in self.hypr("monitors", "all", "-j", json_output=True)
+    def panel(self, timeout=3):
+        return next((m for m in self.hypr("monitors", "all", "-j", json_output=True, timeout=timeout)
                      if m["name"] == self.monitor and not m.get("disabled", False) and m.get("dpmsStatus", True)), None)
 
-    def active(self):
+    def active(self, timeout=3):
         try:
             state = json.loads((self.runtime / "tablet-workspace.json").read_text())
         except (FileNotFoundError, ValueError):
@@ -118,16 +200,16 @@ class Backend:
             return False
         if state.get("enabled") is not True or state.get("instance") != self.instance or self.headless():
             return False
-        workspace = self.hypr("activeworkspace", "-j", json_output=True)
+        workspace = self.hypr("activeworkspace", "-j", json_output=True, timeout=timeout)
         if workspace.get("name") != WORKSPACE or workspace.get("monitor") != self.monitor:
             return False
-        panel = self.panel()
+        panel = self.panel(timeout=timeout)
         if not panel or panel.get("specialWorkspace", {}).get("id", 0):
             return False
         # Mewtion configures the same buffered IIO device. Never stop it or
         # compete with it to obtain tablet rotation readings. Linux comm is
         # limited to 15 characters: .Mewtion-wrapped becomes .Mewtion-wrappe.
-        result = subprocess.run(["pgrep", "-ix", r"mewtion|\.mewtion-wrappe"], capture_output=True, timeout=2)
+        result = subprocess.run(["pgrep", "-ix", r"mewtion|\.mewtion-wrappe"], capture_output=True, timeout=min(2, timeout))
         if result.returncode != 1:
             return False
         return True
@@ -190,6 +272,18 @@ class Backend:
     def clear(self):
         self.journal.unlink(missing_ok=True)
 
+    def settle_delay(self):
+        try:
+            groups = self.hypr("animations", "-j", json_output=True)[0]
+            by_name = {item["name"]: item for item in groups}
+            for name in ("windowsMove", "windows", "global"):
+                item = by_name.get(name, {})
+                if item.get("overridden"):
+                    return min(1., max(.05, float(item["speed"]) / 10 + .05)) if item["enabled"] else .05
+        except (ValueError, TypeError, KeyError, IndexError, OSError, subprocess.SubprocessError):
+            pass
+        return .55
+
     def apply(self, snapshot, delta):
         commands = []
         for device in snapshot["inputs"]:
@@ -201,16 +295,41 @@ class Backend:
         # This short form changes only transform on the named monitor rule.
         # The module supplies that named rule without replacing the generic one.
         commands.append(f"keyword monitor {self.monitor},transform,{target}")
-        reply = self.hypr("--batch", "; ".join(commands))
-        if [line.strip() for line in reply.splitlines() if line.strip()] != ["ok"] * len(commands):
-            raise RuntimeError("Hyprland rejected orientation transaction: " + reply)
-        deadline = time.monotonic() + 2
-        while time.monotonic() < deadline:
-            panel = self.panel()
-            if panel and panel["transform"] == target:
-                return
-            time.sleep(.05)
-        raise RuntimeError("Internal monitor did not apply requested transform")
+        panel = self.panel()
+        if not panel:
+            raise RuntimeError("Internal panel unavailable before rotation")
+        changing = panel["transform"] != target
+        settle = self.settle_delay() if changing else 0
+        if changing and (self.headless() or (delta is not None and not self.active())):
+            raise RuntimeError("Rotation gate closed before fade")
+        with RotationFade(self.monitor) if changing else nullcontext() as cover:
+            reserve = settle + .3
+            if changing:
+                # One panel query plus active()'s two IPC queries and pgrep:
+                # share the budget instead of granting each its full remainder.
+                query_timeout = min(.2, cover.timeout(reserve, cap=.8) / 4)
+                if (not self.panel(timeout=query_timeout) or self.headless()
+                        or (delta is not None and not self.active(timeout=query_timeout))):
+                    raise RuntimeError("Rotation gate closed while fading")
+                # Revalidate the owned cover after potentially slow gate IPC,
+                # immediately before the first mutating request.
+                cover.ensure_covered(reserve)
+            reply = self.hypr("--batch", "; ".join(commands),
+                              timeout=cover.timeout(reserve, cap=3) if changing else 3)
+            if [line.strip() for line in reply.splitlines() if line.strip()] != ["ok"] * len(commands):
+                raise RuntimeError("Hyprland rejected orientation transaction: " + reply)
+            deadline = time.monotonic() + 2
+            while time.monotonic() < deadline:
+                panel = self.panel(timeout=cover.timeout(reserve) if changing else 3)
+                if panel and panel["transform"] == target:
+                    if changing:
+                        cover.timeout(reserve)  # don't sleep beyond cover life
+                    # Keep the opaque cover through the inherited window-resize
+                    # animation instead of exposing its stretched old buffer.
+                    time.sleep(settle)
+                    return
+                time.sleep(.05)
+            raise RuntimeError("Internal monitor did not apply requested transform")
 
 
 class Controller:

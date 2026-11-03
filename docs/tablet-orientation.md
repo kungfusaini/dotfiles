@@ -75,6 +75,45 @@ workspace lock; a healthy current owner is simply reused.
 
 Log: `$XDG_RUNTIME_DIR/tablet-orientation.log`.
 
+## Rotation fade
+
+Only a real display-transform change starts a disposable Quickshell overlay on
+`eDP-1`, including restoring landscape on exit. Repeated sensor readings and
+normal entry without a transform change do not flash the screen. The keyboard,
+dock, global animation settings and external monitors are unchanged.
+
+The overlay fades to black in 120 ms, acknowledges full opacity after it is
+mapped plus a 34 ms render guard, then permits the existing transform transaction.
+It stays opaque through monitor verification and the inherited windowsMove /
+windows animation duration (current configuration: about 529 ms), then fades out
+in 160 ms. The settle hold is bounded to 1 second, with a 550 ms fallback if the
+animation query is unavailable. Unusually long custom animations or slow client
+repaints may need tuning after physical testing.
+
+Only the overlay namespace has Hyprland `no_anim` enabled so compositor layer
+animations cannot double-animate its opacity. It reserves no workspace space,
+does not capture screenshots or keyboard focus, and intercepts taps only while
+covering the internal display. IPC selects the exact owned process PID, not a
+shared/default Quickshell instance.
+
+A missing cover acknowledgment cancels the change before the IPC transaction;
+mode/headless/panel gates are rechecked after fading. A conservative 2.6-second
+cover deadline bounds those IPC queries and reserves layout/reveal time; the
+owned cover is rechecked immediately before any mutating request. A failed reveal clears its
+owned surface without undoing a valid completed rotation. The Python driver
+always terminates the disposable process, while QML independently clears/exits
+after 3 seconds if its driver crashes or IPC is lost. A hidden startup instance
+also expires automatically. No overlay remains resident between rotations.
+
+QML/IPC validation may load an invisible instance and query status, but must not
+call cover, reveal, or rotate the real compositor without an explicit live-test
+request. Simulated tests supply fake Quickshell IPC in addition to the fake
+sensor and Hyprland commands. `FadeState.qml` is a non-visual component so the
+real Qt animation completion, mapped acknowledgment and timeout paths can also
+run under `qmltestrunner` with the offscreen/software platform in a Nix sandbox.
+Its animations must be standalone: Qt does not emit `finished` for animations
+inside a Behavior or Transition, which would break the handshake.
+
 ## Non-live validation
 
 ```sh
@@ -82,6 +121,8 @@ python -B -m unittest discover -s tests -p 'test_tablet_*.py' -v
 nix eval --impure --json .#nixosConfigurations.kirax1.config --apply \
   'config: import ./tests/tablet-orientation.nix { inherit config; }'
 nix build .#nixosConfigurations.kirax1.config.system.build.toplevel --no-link
+nix build --no-link --impure --expr \
+  'let f = builtins.getFlake (toString ./.); in import ./tests/tablet-rotation-fade.nix { pkgs = f.nixosConfigurations.kirax1.pkgs; }'
 ```
 
 The subprocess integration test uses fake `hyprctl`, `monitor-sensor` and

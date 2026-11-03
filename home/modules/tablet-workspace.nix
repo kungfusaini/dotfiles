@@ -27,9 +27,10 @@ let
   });
   tabletOrientation = pkgs.writeShellApplication {
     name = "tablet-orientation";
-    runtimeInputs = with pkgs; [ coreutils procps python3 osConfig.hardware.sensor.iio.package osConfig.programs.hyprland.package ];
+    runtimeInputs = with pkgs; [ coreutils procps python3 quickshell osConfig.hardware.sensor.iio.package osConfig.programs.hyprland.package ];
     text = ''
       export TABLET_ORIENTATION_POLICY=${orientationPolicy}
+      export TABLET_ROTATION_FADE_QML=${../config/quickshell/tablet-rotation-fade}
       exec python3 ${../scripts/desktop/tablet-orientation.py} "$@"
     '';
   };
@@ -68,6 +69,12 @@ in
     terminal = false;
     categories = [ "Utility" ];
   };
+
+  # Let the overlay animate its own opacity, without inheriting layer pop/fade
+  # animations that could acknowledge cover before it is visually opaque.
+  wayland.windowManager.hyprland.settings.layerrule = lib.mkAfter [
+    "match:namespace ^tablet-rotation-fade$, no_anim on"
+  ];
 
   wayland.windowManager.hyprland.settings.bind = lib.mkAfter [
     "$mod CTRL, T, exec, ${tabletWorkspace}/bin/tablet-workspace toggle"
