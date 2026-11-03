@@ -1,9 +1,15 @@
 # PlayStation 2 disc images are user-supplied data outside this repository.
 collection: PlayStation 2
 shortname: ps2
-directory: /home/sumeet/matrix/data/emulation/roms/ps2
-extensions: bin, chd, iso
 launch: pcsx2-qt -batch -fullscreen -- "{file.path}"
 
 game: Crazy Taxi
 file: /home/sumeet/matrix/data/emulation/roms/ps2/Crazy Taxi (Europe) (En,Fr,De,Es).bin
+developer: Hitmaker
+publisher: Acclaim Entertainment
+genre: Racing
+players: 1
+release: 2001-06-01
+summary: Tear through traffic, collect fares, and deliver passengers against the clock in Sega's fast arcade driving game.
+assets.box_front: /home/sumeet/.config/pegasus-frontend/media/ps2/crazy-taxi/boxFront.jpg
+assets.background: /home/sumeet/.config/pegasus-frontend/media/ps2/crazy-taxi/background.jpg

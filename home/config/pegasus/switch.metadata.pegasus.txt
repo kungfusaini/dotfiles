@@ -1,6 +1,40 @@
-# Nintendo Switch game dumps are user-supplied data outside this repository.
+# Nintendo Switch base games are registered explicitly so Pegasus does not
+# mistake update and DLC NSPs for launchable games.
 collection: Nintendo Switch
 shortname: switch
-directory: /home/sumeet/matrix/data/emulation/roms/switch
-extensions: nsp, xci
 launch: Ryujinx --fullscreen "{file.path}"
+
+game: Mario Kart 8 Deluxe
+file: /home/sumeet/matrix/data/emulation/roms/switch/Mario Kart 8 Deluxe.nsp
+developer: Nintendo EPD
+publisher: Nintendo
+genre: Racing
+players: 1-4
+release: 2017-04-28
+summary: Race and battle with the complete Mario Kart 8 roster and tracks, including the expanded Deluxe content.
+assets.box_front: /home/sumeet/.config/pegasus-frontend/media/switch/mario-kart-8-deluxe/boxFront.jpg
+assets.background: /home/sumeet/.config/pegasus-frontend/media/switch/mario-kart-8-deluxe/background.jpg
+assets.logo: /home/sumeet/.config/pegasus-frontend/media/switch/mario-kart-8-deluxe/logo.png
+
+game: Super Mario 3D World + Bowser's Fury
+file: /home/sumeet/matrix/data/emulation/roms/switch/Super Mario 3D World + Bowser's Fury[010028600EBDA000][US][v0].nsp
+developer: Nintendo EPD
+publisher: Nintendo
+genre: Platformer
+players: 1-4
+release: 2021-02-12
+summary: Explore colourful cooperative courses in Super Mario 3D World, then roam freely across Lake Lapcat in Bowser's Fury.
+assets.box_front: /home/sumeet/.config/pegasus-frontend/media/switch/super-mario-3d-world-bowsers-fury/boxFront.jpg
+assets.background: /home/sumeet/.config/pegasus-frontend/media/switch/super-mario-3d-world-bowsers-fury/background.jpg
+assets.logo: /home/sumeet/.config/pegasus-frontend/media/switch/super-mario-3d-world-bowsers-fury/logo.png
+
+game: Super Smash Bros. Ultimate
+file: /home/sumeet/matrix/data/emulation/roms/switch/Super Smash Bros.™ Ultimate [01006A800016E000][v0][Base].nsp
+developer: Bandai Namco Studios
+publisher: Nintendo
+genre: Fighting
+players: 1-8
+release: 2018-12-07
+summary: Nintendo's crossover fighter brings every previous combatant together for its largest roster and stage selection.
+assets.box_front: /home/sumeet/.config/pegasus-frontend/media/switch/super-smash-bros-ultimate/boxFront.jpg
+assets.background: /home/sumeet/.config/pegasus-frontend/media/switch/super-smash-bros-ultimate/background.jpg
