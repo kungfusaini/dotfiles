@@ -28,6 +28,7 @@
     ./modules/hardware/headless-mode.nix
     ./modules/hardware/input.nix
     ./modules/hardware/peripherals.nix
+    ./modules/hardware/sensors.nix
     ./modules/hardware/power
 
     ./modules/users/sumeet.nix
