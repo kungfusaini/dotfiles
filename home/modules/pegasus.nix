@@ -7,6 +7,23 @@ let
     rev = "7a5a5223ff7371d0747a7c5d3a3b8f2f5e36b4f2";
     sha256 = "1mwrk8dk6rbr72nr32bnn524agjq01x1fyih1yxm7m5h8rxlh6hh";
   };
+  # gameOS otherwise puts gameplay screenshots behind title logos in wide tiles
+  # and on game details pages. Keep screenshots only in the details gallery.
+  curatedGameOS = pkgs.runCommand "gameos-cover-art" { } ''
+    cp -r ${gameOSTheme} "$out"
+    chmod -R u+w "$out"
+    substituteInPlace "$out/Global/DynamicGridItem.qml" \
+      --replace-fail 'modelData.assets.screenshots[0] || modelData.assets.background' \
+                     '(root.width < root.height ? modelData.assets.boxFront : modelData.assets.background || modelData.assets.boxFront)'
+    substituteInPlace "$out/VerticalList/SoftwareListMenu.qml" \
+      --replace-fail 'currentGame.assets.screenshots[0] ? currentGame.assets.screenshots[0]' \
+                     'currentGame.assets.background ? currentGame.assets.background'
+    for view in GameDetails/GameView.qml GameDetails/LaunchGame.qml; do
+      substituteInPlace "$out/$view" \
+        --replace-fail '(settings.GameBackground === "Screenshot") ? randoScreenshot : Utils.fanArt(game) || randoFanart' \
+                       'Utils.fanArt(game) || randoFanart'
+    done
+  '';
   pegasusArtwork = import ../packages/pegasus-artwork.nix { inherit pkgs; };
 in
 {
@@ -30,7 +47,7 @@ in
       ../config/pegasus/steam.metadata.pegasus.txt;
     "pegasus-frontend/metafiles/switch.metadata.pegasus.txt".source =
       ../config/pegasus/switch.metadata.pegasus.txt;
-    "pegasus-frontend/themes/gameOS".source = gameOSTheme;
+    "pegasus-frontend/themes/gameOS".source = curatedGameOS;
     "pegasus-frontend/media".source = pegasusArtwork;
   };
 

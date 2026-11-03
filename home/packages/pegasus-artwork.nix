@@ -31,9 +31,6 @@ let
   smashCover = fetch "super-smash-bros-ultimate-cover.png"
     "https://www.ssbwiki.com/images/1/15/Super_Smash_Bros_Ultimate_Box_Art.png"
     "1w4rgc5xqx5p0ifjz3scmzvs4wakfa5jdbij5q5jf762jazcfsg4";
-  smashBackground = fetch "super-smash-bros-ultimate-background.jpg"
-    "https://www.ssbwiki.com/images/0/0e/SSBUBattlefieldWallpaper.jpg"
-    "040c0pgk40jxjbvl9vwhfzqy0p0b474hid9h2d8z79hhd5bd4kqp";
   smashLogo = fetchWithUserAgent "super-smash-bros-ultimate-logo.svg"
     "https://upload.wikimedia.org/wikipedia/commons/9/96/Super_Smash_Bros._Ultimate_logo.svg"
     "14356350vxv65jpv75pdb9dqyyfbj95l5xnfw9pvxh82nrr276aq";
@@ -50,9 +47,6 @@ let
   mario3dWorldCover = fetch "super-mario-3d-world-bowsers-fury-cover.png"
     "https://www.mariowiki.com/images/3/30/SM3DWBF_Box_NA_Final.png"
     "14zdmk9nirvsani3p9nzghdgvbc14rs6j5pd00wls0ffrjlknm02";
-  mario3dWorldBackground = fetch "super-mario-3d-world-bowsers-fury-background.jpg"
-    "https://www.mariowiki.com/images/f/f0/SM3DW_BF_My_Nintendo_wallpaper_A_desktop.jpg"
-    "0pqnf364xiw306rslqxrgly5zwl43f8wsj1n3b5kr3gw3zihs2ri";
   mario3dWorldLogo = fetch "super-mario-3d-world-bowsers-fury-logo.png"
     "https://www.mariowiki.com/images/1/18/SM3DW%2BBF_logo_alt.png"
     "120lk20nf79zn09q8mrcvyd1g9jg4737qfdxr5xqdcx9kvqwvjkp";
@@ -66,9 +60,13 @@ let
     "https://mario.wiki.gallery/images/0/03/SM3DWBF_Screenshot_Snapshot_Mode_1.png"
     "1vdw7nslppk9kzf7w7ip1x4r7fqrahblizsvm03bimw5bpw4rnh4";
 
-  crazyTaxiCover = fetch "crazy-taxi-ps2-cover.jpg"
-    "https://psxdatacenter.com/psx2/images2/covers/SLES-50215/SLES-50215-F-S.jpg"
-    "0zy2r0wxncdqigfs6c7fhc1sq55qnzd2q54ngghl6c715xj3b4rb";
+  # Flat promotional art, not a photograph or scanned packaging spread.
+  crazyTaxiCover = fetch "crazy-taxi-cover.jpg"
+    "https://cdn.cloudflare.steamstatic.com/steam/apps/71230/library_600x900.jpg"
+    "19ylykdgnzd53w5q00bkg7yl8zvgixb8mkk8frfw9v6zv61zajfp";
+  crazyTaxiLogo = fetch "crazy-taxi-logo-source.png"
+    "https://images.seeklogo.com/logo-png/3/1/crazy-taxi-logo-png_seeklogo-36313.png"
+    "06d5d9rdyndi63k10akbzvc27nx2jrbhsgvx80dijxrdj1r2azqw";
   crazyTaxiScreenshot1 = fetch "crazy-taxi-screenshot-1.jpg"
     "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/71230/ss_bb08922b713140e0e075df587ba39f9c73612b3c.1920x1080.jpg"
     "11az8g561j7km41znajr2gid6ma2dbrx924jd9im6dzajfr7lrxx";
@@ -135,6 +133,19 @@ pkgs.runCommand "pegasus-curated-artwork" {
     magick "$1" -resize '1920x1080^' -gravity center -extent 1920x1080 \
       -strip -quality 90 "$2"
   }
+  # Extend a flat cover to widescreen without stretching the cover or inventing
+  # game characters: the original remains sharp over a softly enlarged backdrop.
+  cover_hero() {
+    magick "$1" -resize '1920x1080^' -gravity center -extent 1920x1080 \
+      -blur 0x75 -fill '#101725' -colorize 48% "$out/hero-base.png"
+    magick "$1" -resize '610x950>' -bordercolor '#111827' -border 8 \
+      -background '#00000066' -shadow 75x28+4+18 "$out/hero-shadow.png"
+    magick "$out/hero-base.png" "$out/hero-shadow.png" \
+      -gravity east -geometry +150+15 -compose over -composite \
+      \( "$1" -resize '610x950>' \) -gravity east -geometry +158+0 \
+      -compose over -composite -strip -quality 90 "$2"
+    rm "$out/hero-base.png" "$out/hero-shadow.png"
+  }
   make_logo() {
     magick "$1" -resize '1200x600>' -strip "$2"
   }
@@ -150,27 +161,29 @@ pkgs.runCommand "pegasus-curated-artwork" {
   make_screenshot ${marioKartScreenshot3} "$out/switch/mario-kart-8-deluxe/screenshot-3.jpg"
 
   make_box ${smashCover} "$out/switch/super-smash-bros-ultimate/boxFront.jpg"
-  make_background ${smashBackground} "$out/switch/super-smash-bros-ultimate/background.jpg"
-  make_logo ${smashLogo} "$out/switch/super-smash-bros-ultimate/logo.png"
+  magick -background none ${smashLogo} -resize '1200x600>' \
+    -fuzz 4% -transparent white -channel RGB -negate +channel -strip \
+    "$out/switch/super-smash-bros-ultimate/logo.png"
+  cover_hero ${smashCover} "$out/switch/super-smash-bros-ultimate/background.jpg"
   make_screenshot ${smashScreenshot1} "$out/switch/super-smash-bros-ultimate/screenshot-1.jpg"
   make_screenshot ${smashScreenshot2} "$out/switch/super-smash-bros-ultimate/screenshot-2.jpg"
   make_screenshot ${smashScreenshot3} "$out/switch/super-smash-bros-ultimate/screenshot-3.jpg"
 
   make_box ${mario3dWorldCover} "$out/switch/super-mario-3d-world-bowsers-fury/boxFront.jpg"
-  make_background ${mario3dWorldBackground} "$out/switch/super-mario-3d-world-bowsers-fury/background.jpg"
+  cover_hero ${mario3dWorldCover} "$out/switch/super-mario-3d-world-bowsers-fury/background.jpg"
   make_logo ${mario3dWorldLogo} "$out/switch/super-mario-3d-world-bowsers-fury/logo.png"
   make_screenshot ${mario3dWorldScreenshot1} "$out/switch/super-mario-3d-world-bowsers-fury/screenshot-1.jpg"
   make_screenshot ${mario3dWorldScreenshot2} "$out/switch/super-mario-3d-world-bowsers-fury/screenshot-2.jpg"
   make_screenshot ${mario3dWorldScreenshot3} "$out/switch/super-mario-3d-world-bowsers-fury/screenshot-3.jpg"
 
-  magick ${crazyTaxiCover} -crop '836x1187+930+0' +repage \
-    -resize '900x1275>' -strip -quality 90 "$out/ps2/crazy-taxi/boxFront.jpg"
-  magick ${crazyTaxiCover} -crop '730x440+990+330' +repage \
-    -resize '1200x600>' -strip "$out/ps2/crazy-taxi/logo.png"
+  make_box ${crazyTaxiCover} "$out/ps2/crazy-taxi/boxFront.jpg"
+  magick ${crazyTaxiLogo} -crop '520x170+40+205' +repage \
+    -fuzz 5% -transparent '#fdb827' -trim +repage -resize '1200x600>' \
+    -strip "$out/ps2/crazy-taxi/logo.png"
   make_screenshot ${crazyTaxiScreenshot1} "$out/ps2/crazy-taxi/screenshot-1.jpg"
   make_screenshot ${crazyTaxiScreenshot2} "$out/ps2/crazy-taxi/screenshot-2.jpg"
   make_screenshot ${crazyTaxiScreenshot3} "$out/ps2/crazy-taxi/screenshot-3.jpg"
-  make_background ${crazyTaxiScreenshot1} "$out/ps2/crazy-taxi/background.jpg"
+  cover_hero ${crazyTaxiCover} "$out/ps2/crazy-taxi/background.jpg"
 
   make_box ${raymanCover} "$out/steam/rayman-legends/boxFront.jpg"
   make_background ${raymanBackground} "$out/steam/rayman-legends/background.jpg"
