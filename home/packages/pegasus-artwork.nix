@@ -31,6 +31,9 @@ let
   smashCover = fetch "super-smash-bros-ultimate-cover.png"
     "https://www.ssbwiki.com/images/1/15/Super_Smash_Bros_Ultimate_Box_Art.png"
     "1w4rgc5xqx5p0ifjz3scmzvs4wakfa5jdbij5q5jf762jazcfsg4";
+  smashKeyArt = fetch "super-smash-bros-ultimate-key-art.png"
+    "https://ssb.wiki.gallery/images/7/7e/SSBU_Key_Art.png"
+    "119lna4914x9h5iszs6wy6k3iyfrk8a5k867sg9irgd69zzyxgcp";
   smashLogo = fetchWithUserAgent "super-smash-bros-ultimate-logo.svg"
     "https://upload.wikimedia.org/wikipedia/commons/9/96/Super_Smash_Bros._Ultimate_logo.svg"
     "14356350vxv65jpv75pdb9dqyyfbj95l5xnfw9pvxh82nrr276aq";
@@ -47,6 +50,9 @@ let
   mario3dWorldCover = fetch "super-mario-3d-world-bowsers-fury-cover.png"
     "https://www.mariowiki.com/images/3/30/SM3DWBF_Box_NA_Final.png"
     "14zdmk9nirvsani3p9nzghdgvbc14rs6j5pd00wls0ffrjlknm02";
+  mario3dWorldKeyArt = fetch "super-mario-3d-world-bowsers-fury-key-art.jpg"
+    "https://www.mariowiki.com/images/a/a0/SM3DW_BF_My_Nintendo_wallpaper_B_desktop.jpg"
+    "0zhkqdzinkzyzrziqb2f0zg0hpgk14dkfzhi1jc20s60zsz0qky9";
   mario3dWorldLogo = fetch "super-mario-3d-world-bowsers-fury-logo.png"
     "https://www.mariowiki.com/images/1/18/SM3DW%2BBF_logo_alt.png"
     "120lk20nf79zn09q8mrcvyd1g9jg4737qfdxr5xqdcx9kvqwvjkp";
@@ -60,7 +66,9 @@ let
     "https://mario.wiki.gallery/images/0/03/SM3DWBF_Screenshot_Snapshot_Mode_1.png"
     "1vdw7nslppk9kzf7w7ip1x4r7fqrahblizsvm03bimw5bpw4rnh4";
 
-  # Flat promotional art, not a photograph or scanned packaging spread.
+  crazyTaxiKeyArt = fetch "crazy-taxi-key-art.jpg"
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/71230/library_hero.jpg"
+    "0r5z03mmzp2bw9s4ik2yh75hma6isfkiib8vwlaar30zlc9fwx63";
   crazyTaxiCover = fetch "crazy-taxi-cover.jpg"
     "https://cdn.cloudflare.steamstatic.com/steam/apps/71230/library_600x900.jpg"
     "19ylykdgnzd53w5q00bkg7yl8zvgixb8mkk8frfw9v6zv61zajfp";
@@ -133,19 +141,6 @@ pkgs.runCommand "pegasus-curated-artwork" {
     magick "$1" -resize '1920x1080^' -gravity center -extent 1920x1080 \
       -strip -quality 90 "$2"
   }
-  # Extend a flat cover to widescreen without stretching the cover or inventing
-  # game characters: the original remains sharp over a softly enlarged backdrop.
-  cover_hero() {
-    magick "$1" -resize '1920x1080^' -gravity center -extent 1920x1080 \
-      -blur 0x75 -fill '#101725' -colorize 48% "$out/hero-base.png"
-    magick "$1" -resize '610x950>' -bordercolor '#111827' -border 8 \
-      -background '#00000066' -shadow 75x28+4+18 "$out/hero-shadow.png"
-    magick "$out/hero-base.png" "$out/hero-shadow.png" \
-      -gravity east -geometry +150+15 -compose over -composite \
-      \( "$1" -resize '610x950>' \) -gravity east -geometry +158+0 \
-      -compose over -composite -strip -quality 90 "$2"
-    rm "$out/hero-base.png" "$out/hero-shadow.png"
-  }
   make_logo() {
     magick "$1" -resize '1200x600>' -strip "$2"
   }
@@ -164,13 +159,16 @@ pkgs.runCommand "pegasus-curated-artwork" {
   magick -background none ${smashLogo} -resize '1200x600>' \
     -fuzz 4% -transparent white -channel RGB -negate +channel -strip \
     "$out/switch/super-smash-bros-ultimate/logo.png"
-  cover_hero ${smashCover} "$out/switch/super-smash-bros-ultimate/background.jpg"
+  # Crop the baked-in title at the bottom; gameOS overlays our transparent logo.
+  magick ${smashKeyArt} -gravity north -crop '2740x1010+0+0' +repage \
+    -resize '1920x1080^' -gravity center -extent 1920x1080 \
+    -strip -quality 90 "$out/switch/super-smash-bros-ultimate/background.jpg"
   make_screenshot ${smashScreenshot1} "$out/switch/super-smash-bros-ultimate/screenshot-1.jpg"
   make_screenshot ${smashScreenshot2} "$out/switch/super-smash-bros-ultimate/screenshot-2.jpg"
   make_screenshot ${smashScreenshot3} "$out/switch/super-smash-bros-ultimate/screenshot-3.jpg"
 
   make_box ${mario3dWorldCover} "$out/switch/super-mario-3d-world-bowsers-fury/boxFront.jpg"
-  cover_hero ${mario3dWorldCover} "$out/switch/super-mario-3d-world-bowsers-fury/background.jpg"
+  make_background ${mario3dWorldKeyArt} "$out/switch/super-mario-3d-world-bowsers-fury/background.jpg"
   make_logo ${mario3dWorldLogo} "$out/switch/super-mario-3d-world-bowsers-fury/logo.png"
   make_screenshot ${mario3dWorldScreenshot1} "$out/switch/super-mario-3d-world-bowsers-fury/screenshot-1.jpg"
   make_screenshot ${mario3dWorldScreenshot2} "$out/switch/super-mario-3d-world-bowsers-fury/screenshot-2.jpg"
@@ -183,7 +181,7 @@ pkgs.runCommand "pegasus-curated-artwork" {
   make_screenshot ${crazyTaxiScreenshot1} "$out/ps2/crazy-taxi/screenshot-1.jpg"
   make_screenshot ${crazyTaxiScreenshot2} "$out/ps2/crazy-taxi/screenshot-2.jpg"
   make_screenshot ${crazyTaxiScreenshot3} "$out/ps2/crazy-taxi/screenshot-3.jpg"
-  cover_hero ${crazyTaxiCover} "$out/ps2/crazy-taxi/background.jpg"
+  make_background ${crazyTaxiKeyArt} "$out/ps2/crazy-taxi/background.jpg"
 
   make_box ${raymanCover} "$out/steam/rayman-legends/boxFront.jpg"
   make_background ${raymanBackground} "$out/steam/rayman-legends/background.jpg"
