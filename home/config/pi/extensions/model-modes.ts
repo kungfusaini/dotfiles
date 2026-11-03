@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
-import { Key } from "@earendil-works/pi-tui";
 
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -113,8 +112,27 @@ async function applyMode(pi: ExtensionAPI, ctx: ExtensionContext, mode: ModelMod
   return true;
 }
 
+// Never accept the legacy Ctrl+M byte (\r): it is also ordinary Enter.
+// Accept only explicit Kitty/CSI-u press events or xterm modifyOtherKeys.
+export function isExplicitModeKey(data: string): boolean {
+  return /^\x1b\[109(?::\d*(?::\d*)?)?;5(?::1)?u$/.test(data) || data === "\x1b[27;5;109~";
+}
+
 export default function modelModesExtension(pi: ExtensionAPI) {
+  let removeInputHandler: (() => void) | undefined;
+  let pickerOpen = false;
+
   async function chooseMode(args: string, ctx: ExtensionContext): Promise<void> {
+    if (pickerOpen) return;
+    pickerOpen = true;
+    try {
+      await chooseModeInner(args, ctx);
+    } finally {
+      pickerOpen = false;
+    }
+  }
+
+  async function chooseModeInner(args: string, ctx: ExtensionContext): Promise<void> {
     let policy: ModelModePolicy;
     try {
       policy = readModelModePolicy();
@@ -159,12 +177,23 @@ export default function modelModesExtension(pi: ExtensionAPI) {
     handler: chooseMode,
   });
 
-  pi.registerShortcut(Key.ctrl("m"), {
-    description: "Choose model mode",
-    handler: async (ctx) => chooseMode("", ctx),
+  pi.on("session_start", async (_event, ctx) => {
+    removeInputHandler?.();
+    updateStatus(pi, ctx);
+    if (ctx.mode !== "tui") return;
+    removeInputHandler = ctx.ui.onTerminalInput((data) => {
+      if (!isExplicitModeKey(data)) return;
+      if (!pickerOpen && ctx.isIdle()) {
+        void chooseMode("", ctx)
+          .catch(() => ctx.ui.notify("Could not open model modes. Use /mode to retry.", "error"));
+      }
+      return { consume: true };
+    });
   });
-
-  pi.on("session_start", async (_event, ctx) => updateStatus(pi, ctx));
+  pi.on("session_shutdown", async () => {
+    removeInputHandler?.();
+    removeInputHandler = undefined;
+  });
   pi.on("model_select", async (_event, ctx) => updateStatus(pi, ctx));
   pi.on("thinking_level_select", async (_event, ctx) => updateStatus(pi, ctx));
 }
