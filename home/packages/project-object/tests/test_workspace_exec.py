@@ -1,116 +1,174 @@
-import json
+import contextlib
+import importlib.machinery
+import importlib.util
+import io
 import os
 from pathlib import Path
 import shlex
 import subprocess
-import tempfile
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKSPACE_EXEC = ROOT / "bin" / "project-workspace-exec"
+LOADER = importlib.machinery.SourceFileLoader("workspace_exec", str(ROOT / "bin" / "project-workspace-exec"))
+SPEC = importlib.util.spec_from_loader(LOADER.name, LOADER)
+workspace_exec = importlib.util.module_from_spec(SPEC)
+LOADER.exec_module(workspace_exec)
+
+
+def client(workspace="Command Center · Agents", pid=123, address="0xabc", **extra):
+    return {"pid": pid, "address": address, "mapped": True, "workspace": {"name": workspace}, **extra}
 
 
 class WorkspaceExecTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
-        self.calls = self.root / "calls.jsonl"
-        self.clients = self.root / "clients.json"
-        self.hyprctl = self.root / "hyprctl"
-        self.hyprctl.write_text("""#!/usr/bin/env python3
-import json, os, sys
-from pathlib import Path
-arguments = sys.argv[1:]
-with Path(os.environ['CALLS']).open('a') as stream:
-    stream.write(json.dumps(arguments) + '\\n')
-if arguments == ['clients', '-j']:
-    print(Path(os.environ['CLIENTS']).read_text())
-    raise SystemExit(0)
-if arguments[:2] == ['dispatch', 'exec']:
-    raise SystemExit(int(os.environ.get('DISPATCH_STATUS', '0')))
-raise SystemExit(2)
-""")
-        self.hyprctl.chmod(0o755)
+        self.environment = mock.patch.dict(os.environ, {}, clear=True)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
 
-    def tearDown(self):
-        self.temporary.cleanup()
+    def test_uses_ancestry_before_recorded_workspace(self):
+        with mock.patch.object(workspace_exec, "ancestor_pids", return_value=[3, 2]), \
+                mock.patch.dict(os.environ, {workspace_exec.WORKSPACE_ENV: "old"}):
+            self.assertEqual(workspace_exec.invoking_workspace([client(pid=2)]), "Command Center · Agents")
 
-    def environment(self):
-        return {
-            **os.environ,
-            "PROJECT_PICKER_HYPRCTL": str(self.hyprctl),
-            "CALLS": str(self.calls),
-            "CLIENTS": str(self.clients),
-        }
+    def test_ambiguous_terminal_server_uses_recorded_workspace_not_first_client(self):
+        with mock.patch.object(workspace_exec, "ancestor_pids", return_value=[3, 2]), \
+                mock.patch.dict(os.environ, {workspace_exec.WORKSPACE_ENV: "Recorded"}):
+            self.assertEqual(workspace_exec.invoking_workspace([client("One", pid=2), client("Two", pid=2)]), "Recorded")
 
-    def run_helper(self, *arguments, clients=None, extra_environment=None):
-        self.clients.write_text(json.dumps([] if clients is None else clients))
-        environment = self.environment()
-        environment.pop("PROJECT_OBJECT_WORKSPACE_NAME", None)
-        environment.update(extra_environment or {})
-        return subprocess.run(
-            [str(WORKSPACE_EXEC), *arguments],
-            env=environment,
-            text=True,
-            capture_output=True,
-        )
+    def test_ambiguous_terminal_server_without_recorded_workspace_fails_closed(self):
+        with mock.patch.object(workspace_exec, "ancestor_pids", return_value=[3, 2]):
+            self.assertIsNone(workspace_exec.invoking_workspace([client("One", pid=2), client("Two", pid=2)]))
 
-    def calls_value(self):
-        return [json.loads(line) for line in self.calls.read_text().splitlines()]
+    def test_refuses_to_guess_from_active_workspace(self):
+        with mock.patch.object(workspace_exec, "ancestor_pids", return_value=[3]):
+            self.assertIsNone(workspace_exec.invoking_workspace([client("Focused", pid=999)]))
 
-    def test_launches_on_invoking_terminal_workspace_without_focusing_it(self):
-        clients = [{
-            "pid": os.getpid(),
-            "workspace": {"id": -42, "name": "Command Center · Agents"},
-        }]
+    def test_launches_with_marker_and_verifies_before_success(self):
         command = ["sample-app", "argument with spaces", "quote'argument"]
-        result = self.run_helper(*command, clients=clients)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(self.calls_value(), [
-            ["clients", "-j"],
-            [
-                "dispatch",
-                "exec",
-                "[workspace name:Command Center · Agents silent] "
-                + shlex.join(["env", "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME=Command Center · Agents", *command]),
-            ],
-        ])
+        with mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \
+                mock.patch.object(workspace_exec.secrets, "token_hex", return_value="unique"), \
+                mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "ok\n", "")) as run, \
+                mock.patch.object(workspace_exec, "verify_window") as verify, \
+                mock.patch.object(workspace_exec.sys, "argv", ["helper", *command]), \
+                contextlib.redirect_stdout(io.StringIO()) as output:
+            workspace_exec.main()
+        payload = run.call_args.args[0][-1]
+        self.assertEqual(payload, "[workspace name:Command Center · Agents silent] " + shlex.join([
+            "env", "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME=Command Center · Agents", "PROJECT_OBJECT_LAUNCH_ID=unique", *command,
+        ]))
+        verify.assert_called_once_with("Command Center · Agents", "unique", {"0xabc"})
+        self.assertIn("verified new window", output.getvalue())
 
-    def test_uses_recorded_project_workspace_when_client_ancestry_is_unavailable(self):
-        result = self.run_helper(
-            "sample-app",
-            extra_environment={"PROJECT_OBJECT_WORKSPACE_NAME": "Command Center · Agents"},
-        )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        payload = self.calls_value()[1][2]
-        self.assertIn("[workspace name:Command Center · Agents silent]", payload)
-        self.assertIn("'PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME=Command Center · Agents'", payload)
+    def test_rejects_rule_and_dispatch_delimiters(self):
+        for character in ";[],\r\n\0":
+            with self.subTest(character=character), self.assertRaises(RuntimeError):
+                workspace_exec.validate_workspace_rule("unsafe" + character + "name")
 
-    def test_refuses_to_guess_from_the_active_workspace(self):
-        result = self.run_helper("sample-app")
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("could not identify", result.stderr)
-        self.assertEqual(self.calls_value(), [["clients", "-j"]])
+    def test_surfaces_dispatch_failure_even_when_hyprctl_exits_zero(self):
+        for status, text in [(1, ""), (0, "Invalid dispatcher")]:
+            with self.subTest(status=status), \
+                    mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \
+                    mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], status, text, "")), \
+                    mock.patch.object(workspace_exec, "verify_window") as verify, \
+                    mock.patch.object(workspace_exec.sys, "argv", ["helper", "app"]), \
+                    self.assertRaisesRegex(SystemExit, "refused"):
+                workspace_exec.main()
+            verify.assert_not_called()
 
-    def test_rejects_workspace_rule_delimiters(self):
-        result = self.run_helper(
-            "sample-app",
-            extra_environment={"PROJECT_OBJECT_WORKSPACE_NAME": "unsafe;float"},
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("cannot be represented safely", result.stderr)
-        self.assertEqual(self.calls_value(), [["clients", "-j"]])
+    def test_verifies_correct_window_without_moving(self):
+        with mock.patch.object(workspace_exec, "hypr_clients", return_value=[client()]), \
+                mock.patch.object(workspace_exec, "process_has_launch_id", return_value=True), \
+                mock.patch.object(workspace_exec.subprocess, "run") as run:
+            workspace_exec.verify_window("Command Center · Agents", "marker", set())
+        run.assert_not_called()
 
-    def test_surfaces_dispatch_failure(self):
-        clients = [{"pid": os.getpid(), "workspace": {"name": "Command Center · Agents"}}]
-        result = self.run_helper(
-            "sample-app",
-            clients=clients,
-            extra_environment={"DISPATCH_STATUS": "1"},
-        )
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("Hyprland refused", result.stderr)
+    def test_corrects_only_marked_new_window_and_checks_actual_result(self):
+        unrelated = client("Focused", pid=999, address="0xdef")
+        old = client("Focused", pid=123, address="0x123")
+        with mock.patch.object(workspace_exec, "hypr_clients", side_effect=[
+            [unrelated, old, client("Focused")], [client()],
+        ]), mock.patch.object(workspace_exec, "process_has_launch_id", side_effect=lambda pid, _: pid == 123), \
+                mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "ok\n", "")) as run, \
+                mock.patch.object(workspace_exec.time, "sleep"):
+            workspace_exec.verify_window("Command Center · Agents", "marker", {"0x123"})
+        run.assert_called_once()
+        self.assertEqual(run.call_args.args[0], [workspace_exec.HYPRCTL, "dispatch", "movetoworkspacesilent", "name:Command Center · Agents,address:0xabc"])
+
+    def test_silent_move_failure_is_not_reported_as_success(self):
+        with mock.patch.object(workspace_exec, "hypr_clients", return_value=[client("Wrong")]), \
+                mock.patch.object(workspace_exec, "process_has_launch_id", return_value=True), \
+                mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "Invalid window", "")), \
+                self.assertRaisesRegex(RuntimeError, "silently place"):
+            workspace_exec.verify_window("Target", "marker", set())
+
+    def test_no_window_unmarked_old_unmapped_and_invalid_addresses_time_out(self):
+        cases = [[], [client()], [client(address="unsafe,address:0x1")], [client(mapped=False)], [client(address="0x123")]]
+        for clients in cases:
+            with self.subTest(clients=clients), \
+                    mock.patch.object(workspace_exec, "hypr_clients", return_value=clients), \
+                    mock.patch.object(workspace_exec, "process_has_launch_id", return_value=False), \
+                    mock.patch.object(workspace_exec.time, "monotonic", side_effect=[0, 0, 16]), \
+                    mock.patch.object(workspace_exec.time, "sleep"), \
+                    mock.patch.object(workspace_exec.subprocess, "run") as run, \
+                    self.assertRaisesRegex(RuntimeError, "application may still be running"):
+                workspace_exec.verify_window("Target", "marker", {"0x123"})
+            run.assert_not_called()
+
+    def test_successful_move_without_actual_placement_times_out(self):
+        with mock.patch.object(workspace_exec, "hypr_clients", return_value=[client("Wrong")]), \
+                mock.patch.object(workspace_exec, "process_has_launch_id", return_value=True), \
+                mock.patch.object(workspace_exec.time, "monotonic", side_effect=[0, 0, 16]), \
+                mock.patch.object(workspace_exec.time, "sleep"), \
+                mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "ok\n", "")), \
+                self.assertRaisesRegex(RuntimeError, "no new window"):
+            workspace_exec.verify_window("Target", "marker", set())
+
+    def test_environment_marker_is_exact_and_missing_process_is_not_a_match(self):
+        with mock.patch.object(Path, "read_bytes", return_value=b"OTHER=1\0PROJECT_OBJECT_LAUNCH_ID=exact\0"):
+            self.assertTrue(workspace_exec.process_has_launch_id(123, "exact"))
+            self.assertFalse(workspace_exec.process_has_launch_id(123, "exac"))
+        for pid in [None, "123", True, -1, 0]:
+            self.assertFalse(workspace_exec.process_has_launch_id(pid, "exact"))
+        with mock.patch.object(Path, "read_bytes", side_effect=PermissionError):
+            self.assertFalse(workspace_exec.process_has_launch_id(123, "exact"))
+
+    def test_second_window_cannot_hide_ineffective_move_or_replace_first_window(self):
+        for second_poll in [[client("Wrong"), client(address="0xdef")], [client(address="0xdef")]]:
+            with self.subTest(second_poll=second_poll), \
+                    mock.patch.object(workspace_exec, "hypr_clients", side_effect=[
+                        [client("Wrong"), client(address="0xdef")], second_poll,
+                    ]), mock.patch.object(workspace_exec, "process_has_launch_id", return_value=True), \
+                    mock.patch.object(workspace_exec.time, "monotonic", side_effect=[0, 0, 1, 16]), \
+                    mock.patch.object(workspace_exec.time, "sleep"), \
+                    mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "ok\n", "")) as run, \
+                    self.assertRaisesRegex(RuntimeError, "no new window"):
+                workspace_exec.verify_window("Command Center · Agents", "marker", set())
+            for call in run.call_args_list:
+                self.assertIn("address:0xabc", call.args[0][-1])
+
+    def test_sandboxed_window_matches_marked_waiting_parent(self):
+        def environ(path):
+            if str(path) == "/proc/123/environ":
+                raise PermissionError
+            return b"PROJECT_OBJECT_LAUNCH_ID=exact\0"
+        with mock.patch.object(Path, "read_bytes", autospec=True, side_effect=environ), \
+                mock.patch.object(workspace_exec, "parent_pid", return_value=456):
+            self.assertTrue(workspace_exec.process_has_launch_id(123, "exact"))
+
+    def test_cyclic_or_gone_ancestry_does_not_hang(self):
+        for parent in [123, None]:
+            with mock.patch.object(Path, "read_bytes", side_effect=PermissionError), \
+                    mock.patch.object(workspace_exec, "parent_pid", return_value=parent):
+                self.assertFalse(workspace_exec.process_has_launch_id(123, "exact"))
+
+    def test_hypr_clients_failure_and_invalid_json(self):
+        for status, stdout, stderr in [(1, "", "unavailable"), (0, "not-json", ""), (0, "{}", "")]:
+            with self.subTest(stdout=stdout), \
+                    mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], status, stdout, stderr)), \
+                    self.assertRaises(RuntimeError):
+                workspace_exec.hypr_clients()
 
 
 if __name__ == "__main__":

@@ -3,13 +3,19 @@
 import json
 import os
 from pathlib import Path
+import re
+import secrets
 import shlex
 import subprocess
 import sys
+import time
 
 HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
 WORKSPACE_ENV = "PROJECT_OBJECT_WORKSPACE_NAME"
 LAUNCH_WORKSPACE_ENV = "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME"
+LAUNCH_ID_ENV = "PROJECT_OBJECT_LAUNCH_ID"
+WINDOW_TIMEOUT = 15.0
+ADDRESS_PATTERN = re.compile(r"0x[0-9a-fA-F]+")
 
 
 def hypr_clients():
@@ -74,17 +80,77 @@ def invoking_workspace(clients):
         if isinstance(client, dict) and isinstance(client.get("pid"), int):
             workspace = client_workspace(client)
             if workspace:
-                by_pid.setdefault(client["pid"], workspace)
+                by_pid.setdefault(client["pid"], set()).add(workspace)
     for pid in ancestor_pids():
-        if pid in by_pid:
-            return by_pid[pid]
+        workspaces = by_pid.get(pid, set())
+        if len(workspaces) == 1:
+            return next(iter(workspaces))
+        if workspaces:
+            # A single terminal server can own windows on several workspaces.
+            # Do not pick the first client in compositor enumeration order.
+            break
     fallback = os.environ.get(WORKSPACE_ENV, "")
     return fallback if fallback else None
 
 
 def validate_workspace_rule(name):
-    if any(character in name for character in ";[]\r\n"):
+    if any(character in name for character in ";[],\r\n\0"):
         raise RuntimeError(f"workspace name cannot be represented safely in a Hyprland exec rule: {name!r}")
+
+
+def process_has_launch_id(pid, launch_id):
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    marker = f"{LAUNCH_ID_ENV}={launch_id}".encode()
+    seen = set()
+    while pid > 1 and pid not in seen:
+        seen.add(pid)
+        try:
+            environment = (Path("/proc") / str(pid) / "environ").read_bytes().split(b"\0")
+            if marker in environment:
+                return True
+        except OSError:
+            # Sandboxed Chromium may make its own environ unreadable. The
+            # waiting Python/shell launcher still identifies its descendants.
+            pass
+        pid = parent_pid(pid)
+        if pid is None:
+            break
+    return False
+
+
+def verify_window(workspace, launch_id, before):
+    deadline = time.monotonic() + WINDOW_TIMEOUT
+    selected_address = None
+    while time.monotonic() < deadline:
+        for client in hypr_clients():
+            if not isinstance(client, dict) or not client.get("mapped"):
+                continue
+            address = client.get("address")
+            if not isinstance(address, str) or not ADDRESS_PATTERN.fullmatch(address) or address in before:
+                continue
+            if selected_address is not None and address != selected_address:
+                continue
+            if not process_has_launch_id(client.get("pid"), launch_id):
+                continue
+            selected_address = address
+            if client_workspace(client) != workspace:
+                result = subprocess.run(
+                    [HYPRCTL, "dispatch", "movetoworkspacesilent", f"name:{workspace},address:{address}"],
+                    capture_output=True, text=True, check=False,
+                )
+                if result.returncode != 0 or result.stdout.strip() != "ok":
+                    raise RuntimeError("could not silently place the launched window")
+                # Re-read this exact window, not a second window from the
+                # same launch that may already be on the requested workspace.
+                break
+            return
+        time.sleep(0.05)
+    raise RuntimeError(
+        "no new window could be verified on the invoking workspace within 15 seconds; "
+        "the application may still be running (existing-instance handoffs and "
+        "applications that discard the launch environment cannot be verified)"
+    )
 
 
 def main():
@@ -92,16 +158,21 @@ def main():
     if not command:
         raise SystemExit("usage: project-workspace-exec COMMAND [ARG ...]")
     try:
-        workspace = invoking_workspace(hypr_clients())
+        clients = hypr_clients()
+        workspace = invoking_workspace(clients)
         if not workspace:
             raise RuntimeError("could not identify the Hyprland workspace containing the invoking terminal")
         validate_workspace_rule(workspace)
-        contextual_command = ["env", f"{LAUNCH_WORKSPACE_ENV}={workspace}", *command]
+        before = {client.get("address") for client in clients if isinstance(client, dict)}
+        launch_id = secrets.token_hex(16)
+        contextual_command = ["env", f"{LAUNCH_WORKSPACE_ENV}={workspace}", f"{LAUNCH_ID_ENV}={launch_id}", *command]
         payload = f"[workspace name:{workspace} silent] {shlex.join(contextual_command)}"
-        result = subprocess.run([HYPRCTL, "dispatch", "exec", payload], check=False)
-        if result.returncode != 0:
-            raise RuntimeError(f"Hyprland refused to launch the command (exit status {result.returncode})")
-    except RuntimeError as error:
+        result = subprocess.run([HYPRCTL, "dispatch", "exec", payload], capture_output=True, text=True, check=False)
+        if result.returncode != 0 or result.stdout.strip() != "ok":
+            raise RuntimeError("Hyprland refused to launch the command")
+        verify_window(workspace, launch_id, before)
+        print(f"project-workspace-exec: verified new window on {workspace}")
+    except (OSError, RuntimeError) as error:
         raise SystemExit(f"project-workspace-exec: {error}") from error
 
 
