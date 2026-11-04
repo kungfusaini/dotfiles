@@ -58,7 +58,7 @@ stdenvNoCC.mkDerivation {
     wrapProgram "$out/bin/project-api" \
       --prefix PATH : ${lib.makeBinPath [ libsecret ]}
     wrapProgram "$out/bin/project-terminal" \
-      --prefix PATH : ${lib.makeBinPath [ git kitty hyprland ]}
+      --prefix PATH : ${lib.makeBinPath [ git kitty hyprland libnotify ]}
     wrapProgram "$out/bin/project-workspace-exec" \
       --prefix PATH : ${lib.makeBinPath [ hyprland ]}
     wrapProgram "$out/bin/project-browser" \

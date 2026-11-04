@@ -27,6 +27,7 @@ from project_object import (  # noqa: E402
     project_session_directory,
     read_registry,
     read_stream_registry as canonical_read_stream_registry,
+    read_stream_registry_view as canonical_read_stream_registry_view,
     stream_home as canonical_stream_home,
     stream_session_directory,
     stream_workspace_name as canonical_stream_workspace_name,
@@ -366,6 +367,11 @@ def load_stream_registry(project):
     return registry
 
 
+def load_stream_registry_view(project):
+    """Discovery only; never use this partial view to write a registry."""
+    return canonical_read_stream_registry_view(DATA_ROOT, project)
+
+
 def load_session():
     empty = {"version": 2, "hyprlandInstance": HYPRLAND_INSTANCE, "openWorkspaces": []}
     session = read_json(SESSION_PATH, empty)
@@ -442,9 +448,13 @@ def reconcile_session(registry, session):
         if scope["kind"] == "project":
             name = workspace_name(project)
         else:
-            streams = load_stream_registry(project)
+            streams = load_stream_registry_view(project)
             stream = next((item for item in streams["streams"] if item["id"] == scope["streamId"] and not item.get("archivedAt")), None)
             if not stream:
+                # An unreadable record is not evidence its workspace closed.
+                # Preserve bookkeeping until the metadata can be read again.
+                if streams["errors"]:
+                    retained.append(scope)
                 continue
             name = stream_workspace_name(project, stream)
         if name in live_names:
@@ -1017,6 +1027,8 @@ def enter_project(project, session, launch_terminal):
 
 def enter_stream(project, stream, session, launch_terminal=True, *, pi_arguments=None):
     prepare_stream_worktree(project, stream)
+    if not launch_terminal and stream.get("worktree") and not git_output(stream["worktree"]["directory"], "branch", "--show-current"):
+        notify_warning(f"{stream['name']} is on detached HEAD; create a branch before committing work you want to keep.")
     enter_workspace(project, session, launch_terminal, stream=stream, pi_arguments=pi_arguments)
 
 

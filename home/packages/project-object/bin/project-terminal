@@ -9,13 +9,14 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
 from project_object import (  # noqa: E402
     RegistryError,
+    STREAM_WORKSPACE_SEPARATOR,
     ensure_private_directory,
     find_project,
     project_browser_workspace_name,
     project_home,
     project_session_directory,
     read_registry,
-    read_stream_registry,
+    read_stream_registry_view,
     find_stream,
     stream_home,
     stream_session_directory,
@@ -30,6 +31,7 @@ REGISTRY_PATH = DATA_ROOT / "projects.json"
 KITTY = os.environ.get("PROJECT_PICKER_KITTY", "kitty")
 HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
 GIT = os.environ.get("PROJECT_OBJECT_GIT", "git")
+NOTIFY = os.environ.get("PROJECT_PICKER_NOTIFY", "notify-send")
 
 
 def active_workspace_name():
@@ -51,17 +53,29 @@ def resolve_scope(project_id, stream_id, workspace=None):
                 return None, None
             if not stream_id:
                 return project, None
-            stream = find_stream(read_stream_registry(DATA_ROOT, project), stream_id=stream_id)
+            view = read_stream_registry_view(DATA_ROOT, project)
+            stream = find_stream(view, stream_id=stream_id)
+            if not stream:
+                detail = "; ".join(view["errors"]) or "not found"
+                raise RegistryError(f"Stream {stream_id} is missing or has invalid metadata: {detail}")
             return project, stream
 
         workspace = workspace if workspace is not None else active_workspace_name()
+        if not isinstance(workspace, str) or not workspace:
+            return None, None
         matches = []
         for candidate in registry["projects"]:
             if candidate.get("archivedAt"):
                 continue
             if candidate["name"] == workspace or project_browser_workspace_name(candidate["name"]) == workspace:
                 matches.append((candidate, None))
-            streams = read_stream_registry(DATA_ROOT, candidate)
+            streams = read_stream_registry_view(DATA_ROOT, candidate)
+            prefix = candidate["name"] + STREAM_WORKSPACE_SEPARATOR
+            for blocked_name in streams["blockedNames"]:
+                if (blocked_name is None and workspace.startswith(prefix)) or (
+                    blocked_name is not None and prefix + blocked_name == workspace
+                ):
+                    raise RegistryError(f"Workspace may belong to a quarantined stream: {workspace!r}")
             for stream in streams["streams"]:
                 if not stream.get("archivedAt") and stream_workspace_name(candidate["name"], stream["name"]) == workspace:
                     matches.append((candidate, stream))
@@ -138,6 +152,14 @@ def main():
                     verify_worktree_checkout(stream["worktree"], GIT)
                 except RegistryError as error:
                     raise SystemExit(f"project-terminal: stream worktree is not safely prepared; open the stream through the project picker: {error}") from error
+                branch = subprocess.run([GIT, "-C", working_directory, "branch", "--show-current"], text=True, capture_output=True, check=True).stdout.strip()
+                if not branch:
+                    warning = f"{stream['name']} is on detached HEAD; create a branch before committing work you want to keep."
+                    print(f"project-terminal: {warning}", file=sys.stderr)
+                    try:
+                        subprocess.run([NOTIFY, "Project terminal", warning], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2, check=False)
+                    except (OSError, subprocess.TimeoutExpired):
+                        pass  # Notification availability must not block safe entry.
             directories.extend([
                 home / "streams",
                 stream_data_home,

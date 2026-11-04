@@ -77,6 +77,29 @@ class ExtensionTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("duplicate normalized project name", json.loads(result.stdout)["error"])
 
+    def test_explicit_healthy_stream_ignores_broken_sibling_but_rejects_ambiguity(self):
+        stream_id = str(uuid.uuid4())
+        stream = {"id": stream_id, "name": "Healthy"}
+        broken = {"id": str(uuid.uuid4()), "name": "Broken", "worktree": {}}
+        path = self.home / self.project_id / "streams.json"
+        environment = {"PROJECT_OBJECT_ID": self.project_id, "PROJECT_OBJECT_STREAM_ID": stream_id}
+        for records, expected_error in (
+            ([stream, broken], None),
+            ([stream, broken, {"id": stream_id, "name": "Other"}], "duplicate stream ID"),
+            ([stream, broken, {"id": str(uuid.uuid4()), "name": "HEALTHY"}], "duplicate normalized stream name"),
+        ):
+            path.write_text(json.dumps({"version": 1, "streams": records}))
+            result = self.node("console.log(JSON.stringify(m.resolveProject()))", environment)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            value = json.loads(result.stdout)
+            if expected_error:
+                self.assertIn(expected_error, value["error"])
+            else:
+                self.assertEqual(value["stream"]["id"], stream_id)
+        environment["PROJECT_OBJECT_STREAM_ID"] = broken["id"]
+        result = self.node("console.log(JSON.stringify(m.resolveProject()))", environment)
+        self.assertIn("invalid worktree", json.loads(result.stdout)["error"])
+
     def test_symlinked_stream_registry_is_rejected(self):
         stream_id = str(uuid.uuid4())
         outside = self.root / "outside-streams.json"

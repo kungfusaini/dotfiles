@@ -75,6 +75,37 @@ class PickerTests(unittest.TestCase):
             ("Second", "current"),
         ])
 
+    def test_reconcile_preserves_unreadable_stream_and_healthy_sibling(self):
+        good = {"id": str(uuid.uuid4()), "name": "Healthy"}
+        broken = {"id": str(uuid.uuid4()), "name": "Broken", "worktree": {}}
+        home = self.picker.project_home(self.project)
+        home.mkdir(parents=True)
+        (home / "streams.json").write_text(json.dumps({"version": 1, "streams": [good, broken]}))
+        scopes = [self.picker.stream_scope(self.project, item) for item in (good, broken)]
+        self.session["openWorkspaces"] = list(scopes)
+        with mock.patch.object(self.picker, "hypr_json", return_value=[{"name": "Alpha · Healthy"}]), \
+             mock.patch.object(self.picker, "write_json_atomic") as write:
+            reconciled = self.picker.reconcile_session({"projects": [self.project]}, self.session)
+        self.assertEqual(reconciled["openWorkspaces"], scopes)
+        write.assert_not_called()
+        self.assertEqual(self.picker.load_stream_registry_view(self.project)["streams"], [good])
+        with self.assertRaises(self.picker.RegistryError):
+            self.picker.load_stream_registry(self.project)
+
+    def test_detached_head_entry_warns_without_checking_out_a_branch(self):
+        repository = self.make_git_repository()
+        stream = self.picker.create_stream(self.project, {"version": 1, "streams": []}, "Detached", repository=str(repository))
+        self.picker.prepare_stream_worktree(self.project, stream)
+        directory = stream["worktree"]["directory"]
+        subprocess.run(["git", "-C", directory, "switch", "--detach", "-q"], check=True)
+        with mock.patch.object(self.picker, "enter_workspace") as enter, \
+             mock.patch.object(self.picker, "notify_warning") as warning:
+            self.picker.enter_stream(self.project, stream, self.session, False)
+        warning.assert_called_once()
+        self.assertIn("detached HEAD", warning.call_args.args[0])
+        enter.assert_called_once()
+        self.assertEqual(subprocess.check_output(["git", "-C", directory, "branch", "--show-current"], text=True).strip(), "")
+
     def test_dispatch_failure_rolls_back_session(self):
         failed = mock.Mock(returncode=1)
         with mock.patch.object(self.picker, "active_workspace_name", return_value="before"), \

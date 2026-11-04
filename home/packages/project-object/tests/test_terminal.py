@@ -84,6 +84,97 @@ Path(os.environ['CAPTURE']).write_text(json.dumps({'argv': sys.argv[1:], 'env': 
         self.assertIn(f"/streams/{stream_id}/pi-sessions", captured["env"]["PI_CODING_AGENT_SESSION_DIR"])
         self.assertNotEqual(captured["env"]["PI_CODING_AGENT_SESSION_DIR"], str(self.state / "projects" / self.project_id / "pi-sessions"))
 
+    def test_direct_detached_terminal_warns_and_preserves_checkout(self):
+        stream_id = str(uuid.uuid4())
+        repository = self.root / "repository"
+        subprocess.run(["git", "init", "-q", str(repository)], check=True)
+        subprocess.run(["git", "-C", str(repository), "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "initial"], check=True)
+        directory = self.data / "worktrees" / self.project_id / stream_id
+        directory.parent.mkdir(parents=True)
+        subprocess.run(["git", "-C", str(repository), "worktree", "add", "--detach", "-q", str(directory)], check=True)
+        (directory / "keep.txt").write_text("untracked work")
+        head = subprocess.check_output(["git", "-C", str(directory), "rev-parse", "HEAD"])
+        home = self.data / "projects" / self.project_id
+        home.mkdir(parents=True)
+        (home / "streams.json").write_text(json.dumps({"version": 1, "streams": [{
+            "id": stream_id, "name": "Detached", "mainDirectory": str(directory),
+            "worktree": {"repository": str(repository), "directory": str(directory), "branch": f"project-object/{stream_id}", "baseCommit": head.decode().strip()},
+        }]}))
+        notify_capture = self.root / "notification.txt"
+        notifier = self.root / "notify"
+        notifier.write_text(f"#!/bin/sh\nprintf '%s\\n' \"$@\" > {notify_capture}\n")
+        notifier.chmod(0o755)
+        result = subprocess.run([str(TERMINAL), "--project-id", self.project_id, "--stream-id", stream_id], env={**self.environment(), "PROJECT_PICKER_NOTIFY": str(notifier)}, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("detached HEAD", result.stderr)
+        self.assertIn("detached HEAD", notify_capture.read_text())
+        self.assertEqual(subprocess.check_output(["git", "-C", str(directory), "branch", "--show-current"], text=True).strip(), "")
+        self.assertEqual(subprocess.check_output(["git", "-C", str(directory), "rev-parse", "HEAD"]), head)
+        self.assertEqual((directory / "keep.txt").read_text(), "untracked work")
+        path = home / "streams.json"
+        value = json.loads(path.read_text())
+        value["streams"].append({"id": str(uuid.uuid4()), "name": "Broken sibling", "worktree": {}})
+        path.write_text(json.dumps(value))
+        hyprctl = self.root / "hyprctl"
+        hyprctl.write_text('#!/bin/sh\nprintf \'%s\\n\' \'{"name":"Project With Spaces · Detached"}\'\n')
+        hyprctl.chmod(0o755)
+        result = subprocess.run([str(TERMINAL)], env={**self.environment(), "PROJECT_PICKER_NOTIFY": str(notifier), "PROJECT_PICKER_HYPRCTL": str(hyprctl)}, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("detached HEAD", result.stderr)
+        captured = json.loads(self.capture.read_text())
+        self.assertEqual(captured["env"]["PROJECT_OBJECT_STREAM_ID"], stream_id)
+        self.assertEqual(captured["argv"][:2], ["--directory", str(directory)])
+
+    def test_failed_workspace_query_with_unreadable_streams_opens_generic_terminal(self):
+        home = self.data / "projects" / self.project_id
+        home.mkdir(parents=True)
+        (home / "streams.json").write_text("{broken json")
+        hyprctl = self.root / "hyprctl"
+        hyprctl.write_text("#!/bin/sh\nexit 1\n")
+        hyprctl.chmod(0o755)
+        result = subprocess.run([str(TERMINAL)], env={**self.environment(), "PROJECT_PICKER_HYPRCTL": str(hyprctl)}, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+        self.assertIsNone(json.loads(self.capture.read_text())["env"]["PROJECT_OBJECT_ID"])
+
+    def test_automatic_attachment_rejects_quarantined_cross_project_collision(self):
+        home = self.data / "projects" / self.project_id
+        home.mkdir(parents=True)
+        (home / "streams.json").write_text(json.dumps({"version": 1, "streams": [{"id": str(uuid.uuid4()), "name": "B · C"}]}))
+        other = {"id": str(uuid.uuid4()), "name": "Project With Spaces · B", "mainDirectory": str(self.main)}
+        self.registry["projects"].append(other)
+        (self.data / "projects.json").write_text(json.dumps(self.registry))
+        other_home = self.data / "projects" / other["id"]
+        other_home.mkdir(parents=True)
+        path = other_home / "streams.json"
+        hyprctl = self.root / "hyprctl"
+        hyprctl.write_text('#!/bin/sh\nprintf \'%s\\n\' \'{"name":"Project With Spaces · B · C"}\'\n')
+        hyprctl.chmod(0o755)
+        for contents in [json.dumps({"version": 1, "streams": [{"id": str(uuid.uuid4()), "name": "C", "worktree": {}}]}), "{bad json"]:
+            path.write_text(contents)
+            result = subprocess.run([str(TERMINAL)], env={**self.environment(), "PROJECT_PICKER_HYPRCTL": str(hyprctl)}, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("quarantined stream", result.stderr)
+            self.assertIsNone(json.loads(self.capture.read_text())["env"]["PROJECT_OBJECT_STREAM_ID"])
+
+    def test_explicit_healthy_stream_opens_despite_broken_sibling(self):
+        stream_id, broken_id = str(uuid.uuid4()), str(uuid.uuid4())
+        home = self.data / "projects" / self.project_id
+        home.mkdir(parents=True)
+        path = home / "streams.json"
+        path.write_text(json.dumps({"version": 1, "streams": [
+            {"id": stream_id, "name": "Healthy"},
+            {"id": broken_id, "name": "Broken", "worktree": {}},
+        ]}))
+        before = path.read_bytes()
+        subprocess.run([str(TERMINAL), "--project-id", self.project_id, "--stream-id", stream_id], env=self.environment(), check=True)
+        self.assertEqual(json.loads(self.capture.read_text())["env"]["PROJECT_OBJECT_STREAM_ID"], stream_id)
+        self.capture.unlink()
+        result = subprocess.run([str(TERMINAL), "--project-id", self.project_id, "--stream-id", broken_id], env=self.environment(), capture_output=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(self.capture.exists())
+        self.assertEqual(path.read_bytes(), before)
+
     def test_direct_stream_terminal_rejects_unverified_worktree_path(self):
         stream_id = str(uuid.uuid4())
         worktree = self.data / "worktrees" / self.project_id / stream_id

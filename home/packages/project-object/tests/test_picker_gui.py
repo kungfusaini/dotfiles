@@ -2,6 +2,8 @@ import ast
 import copy
 from pathlib import Path
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -10,6 +12,53 @@ HOME_MANAGER_MODULE = ROOT / "nix" / "home-manager-module.nix"
 
 
 class PickerGuiSourceTests(unittest.TestCase):
+    def test_invalid_stream_diagnostics_cannot_open_close_resume_or_archive(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        names = {"open_selected", "request_close_workspace", "resume_stream_pi", "request_archive_project", "toggle_selected_project", "show_create_stream"}
+        methods = [copy.deepcopy(node) for node in picker.body if isinstance(node, ast.FunctionDef) and node.name in names]
+        error_type = type("StreamRegistryErrorRow", (), {})
+        row = error_type()
+        row.error = "UI Development: invalid worktree branch"
+        backend = mock.Mock()
+        namespace = {"backend": backend, "StreamRegistryErrorRow": error_type}
+        namespace.update({name: type(name, (), {}) for name in ("ProjectRow", "ProjectWorkspaceRow", "StreamRow")})
+        exec(compile(ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        app = SimpleNamespace(listbox=SimpleNamespace(get_selected_row=lambda: row), destructive_action_pending=False)
+        for name in names:
+            namespace[name](app)
+        self.assertEqual(backend.notify_error.call_count, 5)
+        backend.enter_project.assert_not_called()
+        backend.enter_stream.assert_not_called()
+        backend.write_json_atomic.assert_not_called()
+
+    def test_discovery_rows_include_healthy_stream_and_named_diagnostic(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        method = copy.deepcopy(next(node for node in picker.body if isinstance(node, ast.FunctionDef) and node.name == "list_rows"))
+        project = {"id": "project", "name": "Alpha", "mainDirectory": "/tmp"}
+        good = {"id": "healthy", "name": "Healthy"}
+        error = "UI Development: invalid worktree branch"
+        backend = mock.Mock()
+        backend.workspace_name.return_value = "Alpha"
+        backend.scope_is_open.return_value = False
+        backend.load_stream_registry_view.return_value = {"streams": [good], "errors": [error]}
+        namespace = {"backend": backend}
+        for name in ("ProjectRow", "ProjectWorkspaceRow", "StreamRow", "StreamRegistryErrorRow"):
+            namespace[name] = mock.Mock(name=name)
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        app = SimpleNamespace(
+            search=SimpleNamespace(get_text=lambda: ""),
+            project_items=lambda: [(project, "closed")], current_workspace="Other",
+            session={}, expanded_project_ids={"project"}, agent_activity={},
+            stream_items=lambda project, registry: [(good, "closed")],
+        )
+        rows = namespace["list_rows"](app)
+        self.assertEqual(len(rows), 4)
+        namespace["StreamRegistryErrorRow"].assert_called_once_with(error)
+        namespace["StreamRow"].assert_called_once_with(project, good, "closed", working=False)
+        self.assertEqual(namespace["ProjectRow"].call_args.kwargs["errors"], [error])
+
     def test_project_and_stream_creation_shortcuts_are_visible(self):
         source = GUI_SOURCE.read_text()
         tree = ast.parse(source)

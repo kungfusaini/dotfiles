@@ -105,7 +105,7 @@ window { background: transparent; }
 
 
 class ProjectRow(Gtk.ListBoxRow):
-    def __init__(self, project, expanded=False, workspace_count=1, open_workspace_count=0, agent_state=None):
+    def __init__(self, project, expanded=False, workspace_count=1, open_workspace_count=0, agent_state=None, errors=()):
         super().__init__()
         self.project = project
         self.add_css_class("project-row")
@@ -129,6 +129,9 @@ class ProjectRow(Gtk.ListBoxRow):
             content.append(agent)
 
         count_text = f"{open_workspace_count} open · {workspace_count} total" if open_workspace_count else f"{workspace_count} workspace{'s' if workspace_count != 1 else ''}"
+        if errors:
+            count_text += f" · ⚠ {len(errors)} stream error(s)"
+            self.set_tooltip_text("\n".join(errors))
         count = Gtk.Label(label=count_text)
         count.add_css_class("stream-count")
         content.append(count)
@@ -190,6 +193,19 @@ class StreamRow(Gtk.ListBoxRow):
         name.set_hexpand(True)
         content.append(name)
         self.set_child(content)
+
+
+class StreamRegistryErrorRow(Gtk.ListBoxRow):
+    """Display-only diagnostic: never carries a stream or executable scope."""
+    def __init__(self, error):
+        super().__init__()
+        self.error = error
+        self.add_css_class("scope-row")
+        label = Gtk.Label(label=f"⚠ {error}", xalign=0, ellipsize=3)
+        label.add_css_class("error")
+        label.add_css_class("row-content")
+        self.set_tooltip_text(error)
+        self.set_child(label)
 
 
 class DirectorySuggestionRow(Gtk.ListBoxRow):
@@ -544,7 +560,7 @@ class PickerApplication(Adw.Application):
         for project_id, project in known_projects.items():
             try:
                 known_streams[project_id] = {
-                    stream["id"] for stream in backend.load_stream_registry(project)["streams"]
+                    stream["id"] for stream in backend.load_stream_registry_view(project)["streams"]
                     if not stream.get("archivedAt")
                 }
             except Exception:
@@ -625,7 +641,7 @@ class PickerApplication(Adw.Application):
                 continue
             targets.append((project, None))
             try:
-                streams = backend.load_stream_registry(project)["streams"]
+                streams = backend.load_stream_registry_view(project)["streams"]
             except Exception:
                 continue
             targets.extend((project, stream) for stream in streams if not stream.get("archivedAt"))
@@ -923,7 +939,7 @@ class PickerApplication(Adw.Application):
                     self.selected_scope = {"kind": "project-header", "projectId": project["id"]}
                     break
                 try:
-                    streams = backend.load_stream_registry(project)["streams"]
+                    streams = backend.load_stream_registry_view(project)["streams"]
                 except Exception:
                     continue
                 current_stream = next((
@@ -973,10 +989,10 @@ class PickerApplication(Adw.Application):
     def project_items(self):
         return backend.project_picker_items(self.registry, self.session, self.current_workspace)
 
-    def stream_items(self, project):
+    def stream_items(self, project, registry=None):
         return backend.stream_picker_items(
             project,
-            backend.load_stream_registry(project),
+            registry if registry is not None else backend.load_stream_registry_view(project),
             self.session,
             self.current_workspace,
         )
@@ -992,9 +1008,11 @@ class PickerApplication(Adw.Application):
             )
             project_matches = query in project["name"].casefold() or query in project["mainDirectory"].casefold()
             expanded = project["id"] in self.expanded_project_ids
-            streams = self.stream_items(project)
+            stream_view = backend.load_stream_registry_view(project)
+            streams = self.stream_items(project, stream_view)
+            errors = stream_view["errors"]
             matching_streams = [item for item in streams if query in item[0]["name"].casefold()] if query else streams
-            if query and not project_matches and not matching_streams:
+            if query and not project_matches and not matching_streams and not any(query in error.casefold() for error in errors):
                 continue
             open_stream_count = sum(stream_state != "closed" for _stream, stream_state in streams)
             working_stream_ids = {
@@ -1015,8 +1033,10 @@ class PickerApplication(Adw.Application):
                 workspace_count=len(streams) + 1,
                 open_workspace_count=open_stream_count + (state != "closed"),
                 agent_state=project_agent_state,
+                errors=errors,
             ))
             if expanded or query:
+                values.extend(StreamRegistryErrorRow(error) for error in errors if not query or project_matches or query in error.casefold())
                 if not query or project_matches:
                     values.append(ProjectWorkspaceRow(project, state, working=project_working))
                 for stream, stream_state in matching_streams:
@@ -1080,7 +1100,7 @@ class PickerApplication(Adw.Application):
 
     def toggle_selected_project(self):
         row = self.listbox.get_selected_row()
-        if not row:
+        if not isinstance(row, (ProjectRow, ProjectWorkspaceRow, StreamRow)):
             return
         project = row.project
         project_id = project["id"]
@@ -1098,6 +1118,9 @@ class PickerApplication(Adw.Application):
     def open_selected(self):
         row = self.listbox.get_selected_row()
         if not row:
+            return
+        if isinstance(row, StreamRegistryErrorRow):
+            backend.notify_error(row.error)
             return
         self.selected_scope = self.row_scope(row)
         try:
@@ -1194,7 +1217,7 @@ class PickerApplication(Adw.Application):
                 if backend.workspace_name(project) == active_workspace:
                     selected_scope = {"kind": "project", "projectId": project["id"]}
                     break
-                streams = backend.load_stream_registry(project)["streams"]
+                streams = backend.load_stream_registry_view(project)["streams"]
                 stream = next((
                     item for item in streams
                     if not item.get("archivedAt")
@@ -1235,7 +1258,7 @@ class PickerApplication(Adw.Application):
         row = self.listbox.get_selected_row()
         if not row:
             return
-        if isinstance(row, ProjectRow):
+        if not isinstance(row, (ProjectWorkspaceRow, StreamRow)):
             backend.notify_error("Select a project workspace or stream before closing")
             return
         stream = row.stream if isinstance(row, StreamRow) else None
@@ -1431,7 +1454,8 @@ class PickerApplication(Adw.Application):
 
     def show_create_stream(self):
         row = self.listbox.get_selected_row()
-        if not row:
+        if not isinstance(row, (ProjectRow, ProjectWorkspaceRow, StreamRow)):
+            backend.notify_error("Select a project or healthy stream before creating a stream")
             return
         self.selected_project = row.project
         try:

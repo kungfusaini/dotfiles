@@ -19,6 +19,7 @@ from project_object import (
     project_session_directory,
     read_registry,
     read_stream_registry,
+    read_stream_registry_view,
     stream_home,
     stream_session_directory,
     stream_workspace_name,
@@ -191,7 +192,7 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(RegistryError, "invalid worktree directory"):
             validate_stream_registry({"version": 1, "streams": [stream]}, self.data, project)
 
-    def test_prepared_worktree_verification_rejects_symlink_empty_wrong_branch_and_wrong_repository(self):
+    def test_prepared_worktree_allows_branch_changes_but_rejects_unsafe_identity(self):
         repository = self.root / "repository"
         repository.mkdir()
         subprocess.run(["git", "init", "-q", str(repository)], check=True)
@@ -204,9 +205,21 @@ class RegistryTests(unittest.TestCase):
         worktree = {"repository": str(repository), "directory": str(directory), "branch": branch, "baseCommit": "a" * 40}
         verify_worktree_checkout(worktree)
 
-        subprocess.run(["git", "-C", str(directory), "switch", "-qc", "wrong-branch"], check=True)
-        with self.assertRaisesRegex(RegistryError, "unexpected branch"):
-            verify_worktree_checkout(worktree)
+        subprocess.run(["git", "-C", str(directory), "switch", "-qc", "feature/work"], check=True)
+        (directory / "README.md").write_text("uncommitted work\n")
+        (directory / "untracked.txt").write_text("keep me\n")
+        before = subprocess.check_output(["git", "-C", str(directory), "status", "--porcelain"])
+        verify_worktree_checkout(worktree)
+        subprocess.run(["git", "-C", str(directory), "branch", "-m", "feature/renamed"], check=True)
+        verify_worktree_checkout(worktree)
+        subprocess.run(["git", "-C", str(directory), "switch", "-q", "--detach"], check=True)
+        verify_worktree_checkout(worktree)
+        self.assertEqual(subprocess.check_output(["git", "-C", str(directory), "status", "--porcelain"]), before)
+        self.assertEqual((directory / "README.md").read_text(), "uncommitted work\n")
+        self.assertEqual((directory / "untracked.txt").read_text(), "keep me\n")
+        (directory / "subdirectory").mkdir()
+        with self.assertRaisesRegex(RegistryError, "unexpected checkout"):
+            verify_worktree_checkout({**worktree, "directory": str(directory / "subdirectory")})
         subprocess.run(["git", "-C", str(directory), "switch", "-q", branch], check=True)
 
         other = self.root / "other"
@@ -244,6 +257,56 @@ class RegistryTests(unittest.TestCase):
         (streams_root / stream_id).symlink_to(outside, target_is_directory=True)
         with self.assertRaisesRegex(RegistryError, "symlinked managed component"):
             stream_home(self.data, self.project_id, stream_id)
+
+    def test_stream_discovery_quarantines_invalid_records_without_writing(self):
+        project = self.base["projects"][0]
+        home = project_home(self.data, self.project_id)
+        home.mkdir(parents=True)
+        path = home / "streams.json"
+        healthy = {"id": str(uuid.uuid4()), "name": "Healthy"}
+        broken = {"id": str(uuid.uuid4()), "name": "UI Development", "worktree": {}}
+        value = {"version": 1, "streams": [healthy, broken]}
+        path.write_text(json.dumps(value))
+        before = path.read_bytes()
+        view = read_stream_registry_view(self.data, project)
+        self.assertEqual(view["streams"], [healthy])
+        self.assertEqual(len(view["errors"]), 1)
+        self.assertIn("UI Development", view["errors"][0])
+        self.assertEqual(path.read_bytes(), before)
+        with self.assertRaises(RegistryError):
+            read_stream_registry(self.data, project)
+
+        value["streams"].append({"id": healthy["id"], "name": "Duplicate"})
+        path.write_text(json.dumps(value))
+        view = read_stream_registry_view(self.data, project)
+        self.assertEqual(view["streams"], [])
+        self.assertEqual(len(view["errors"]), 3)
+
+        value = {"version": 1, "streams": [healthy, {"id": str(uuid.uuid4()), "name": "NUL path", "mainDirectory": "/tmp/bad\u0000path"}]}
+        path.write_text(json.dumps(value))
+        view = read_stream_registry_view(self.data, project)
+        self.assertEqual(view["streams"], [healthy])
+        self.assertIn("NUL path", view["errors"][0])
+        value["streams"] = [healthy, {"id": str(uuid.uuid4()), "name": "Broken\ud800"}]
+        path.write_text(json.dumps(value))
+        view = read_stream_registry_view(self.data, project)
+        self.assertEqual(view["streams"], [healthy])
+        self.assertIn(r"Broken\ud800", view["errors"][0])
+        view["errors"][0].encode("utf-8")  # Safe to pass to GTK labels/tooltips.
+        path.write_bytes(b"\xff\xfe")
+        view = read_stream_registry_view(self.data, project)
+        self.assertEqual(view["streams"], [])
+        self.assertIn("Cannot read", view["errors"][0])
+
+        path.write_text("{broken json")
+        self.assertEqual(read_stream_registry_view(self.data, project)["streams"], [])
+        self.assertIn("Cannot read", read_stream_registry_view(self.data, project)["errors"][0])
+        outside = self.root / "outside.json"
+        outside.write_text(json.dumps({"version": 1, "streams": [healthy]}))
+        path.unlink()
+        path.symlink_to(outside)
+        self.assertEqual(read_stream_registry_view(self.data, project)["streams"], [])
+        self.assertIn("Unsafe stream registry", read_stream_registry_view(self.data, project)["errors"][0])
 
     def test_missing_stream_registry_is_empty(self):
         project = self.base["projects"][0]

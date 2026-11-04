@@ -305,7 +305,7 @@ function validateStreams(parsed: unknown, project: ProjectRecord): StreamRecord[
     if (!raw || typeof raw !== "object") throw new Error(`stream record ${index} is not an object`);
     const record = raw as Record<string, unknown>;
     if (typeof record.id !== "string" || !UUID_PATTERN.test(record.id)) throw new Error(`stream record ${index} has an invalid UUID`);
-    if (typeof record.name !== "string" || record.name !== record.name.trim() || !record.name || /[\r\n\t]/.test(record.name)) throw new Error(`stream ${record.id} has an invalid name`);
+    if (typeof record.name !== "string" || record.name !== record.name.trim() || !record.name || /[\u0000-\u001f\u007f-\u009f\uD800-\uDFFF]/u.test(record.name)) throw new Error(`stream ${record.id} has an invalid name`);
     if (record.mainDirectory !== undefined && record.mainDirectory !== null && (typeof record.mainDirectory !== "string" || !isAbsolute(record.mainDirectory) || resolve(record.mainDirectory) !== record.mainDirectory)) throw new Error(`stream ${record.id} has an invalid mainDirectory`);
     let worktree: StreamWorktree | undefined;
     if (record.worktree !== undefined) {
@@ -328,7 +328,7 @@ function validateStreams(parsed: unknown, project: ProjectRecord): StreamRecord[
   });
 }
 
-function loadStreams(project: ProjectRecord): StreamRecord[] {
+function loadStreams(project: ProjectRecord, selectedId?: string): StreamRecord[] {
   const registry = join(canonicalProjectHome(project.id), "streams.json");
   let metadata;
   try {
@@ -340,7 +340,21 @@ function loadStreams(project: ProjectRecord): StreamRecord[] {
   if (metadata.isSymbolicLink() || !metadata.isFile()) throw new Error("stream registry must be a regular non-symlink file");
   if (metadata.size > MAX_STREAM_REGISTRY_BYTES) throw new Error(`stream registry exceeds ${MAX_STREAM_REGISTRY_BYTES} bytes`);
   try {
-    return validateStreams(JSON.parse(readFileSync(registry, "utf8")), project);
+    const parsed = JSON.parse(readFileSync(registry, "utf8"));
+    if (selectedId && parsed?.version === 1 && Array.isArray(parsed.streams)) {
+      // Explicit attachment may ignore unrelated broken records, but never an
+      // ambiguous ID/name. Registry mutations still use strict backend reads.
+      const records = parsed.streams as Array<Record<string, unknown> | null>;
+      const selected = records.filter((record) => record && record.id === selectedId);
+      const validated = validateStreams({ version: 1, streams: selected }, project);
+      if (validated.length === 1) {
+        const name = validated[0].name.normalize("NFKC").toLowerCase();
+        const sameName = records.filter((record) => typeof record?.name === "string" && record.name.trim().normalize("NFKC").toLowerCase() === name);
+        if (sameName.length !== 1) throw new Error(`duplicate normalized stream name: ${validated[0].name}`);
+      }
+      return validated;
+    }
+    return validateStreams(parsed, project);
   } catch (error) {
     throw new Error(`cannot load stream registry: ${(error as Error).message}`);
   }
@@ -390,7 +404,7 @@ export function resolveProject(): Resolution {
     let stream: StreamRecord | undefined;
 
     if (project && explicitStreamId) {
-      stream = loadStreams(project).find((candidate) => candidate.id === explicitStreamId && !candidate.archivedAt);
+      stream = loadStreams(project, explicitStreamId).find((candidate) => candidate.id === explicitStreamId && !candidate.archivedAt);
       if (!stream) throw new Error(`attached stream not found: ${explicitStreamId}`);
     } else if (!explicitId && workspace) {
       const matches: Array<{ project: ProjectRecord; stream?: StreamRecord }> = [];

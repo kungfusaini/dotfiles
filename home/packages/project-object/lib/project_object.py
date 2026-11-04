@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 import json
 import os
 from pathlib import Path
@@ -150,6 +151,8 @@ def validate_project_name(value: object) -> str:
         raise RegistryError("Project name must be non-empty and have no surrounding whitespace")
     if any(character in value for character in "\r\n\t"):
         raise RegistryError("Project name must fit on one line")
+    if any(unicodedata.category(character) in ("Cc", "Cs") for character in value):
+        raise RegistryError("Project name must not contain control characters or unpaired surrogates")
     return value
 
 
@@ -350,9 +353,60 @@ def read_stream_registry(data_root: Path, project: dict) -> dict:
         return {"version": STREAM_REGISTRY_VERSION, "streams": []}
     try:
         parsed = json.loads(registry_path.read_text())
-    except (OSError, json.JSONDecodeError) as error:
+    except (OSError, ValueError) as error:
         raise RegistryError(f"Cannot read {registry_path}: {error}") from error
     return validate_stream_registry(parsed, data_root, project)
+
+
+def _registry_diagnostic(value: object) -> str:
+    # JSON may contain escaped lone surrogates or controls that GTK cannot
+    # display. Diagnostics are data, never markup or executable scope names.
+    return "".join(character if character.isprintable() else character.encode("unicode_escape").decode("ascii") for character in str(value))
+
+
+def read_stream_registry_view(data_root: Path, project: dict) -> dict:
+    """Read-only discovery; never write this partial view back to the registry.
+
+    blockedNames are comparison-only hints, never executable scopes. None means
+    names are unknown, so automatic attachment must distrust this namespace.
+    """
+    def unavailable(error):
+        return {"version": STREAM_REGISTRY_VERSION, "streams": [], "errors": [_registry_diagnostic(error)], "blockedNames": [None]}
+
+    try:
+        return {**read_stream_registry(data_root, project), "errors": [], "blockedNames": []}
+    except (RegistryError, OSError, ValueError) as error:
+        registry_error = _registry_diagnostic(error)
+    try:
+        path = project_home(data_root, project["id"]) / "streams.json"
+    except (RegistryError, OSError, ValueError) as error:
+        return unavailable(error)
+    if path.is_symlink():
+        return unavailable(registry_error)
+    try:
+        value = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return unavailable(registry_error)
+    if not isinstance(value, dict) or value.get("version") != STREAM_REGISTRY_VERSION or not isinstance(value.get("streams"), list):
+        return unavailable(registry_error)
+
+    records = value["streams"]
+    ids = Counter(raw["id"] for raw in records if isinstance(raw, dict) and isinstance(raw.get("id"), str))
+    names = Counter(normalized_name(raw["name"]) for raw in records if isinstance(raw, dict) and isinstance(raw.get("name"), str))
+    streams, errors, blocked_names = [], [], []
+    for index, raw in enumerate(records):
+        raw_name = raw.get("name") if isinstance(raw, dict) and isinstance(raw.get("name"), str) else None
+        label = raw_name if raw_name is not None else f"Stream record {index + 1}"
+        try:
+            stream = validate_stream_registry({"version": STREAM_REGISTRY_VERSION, "streams": [raw]}, data_root, project)["streams"][0]
+            # Quarantine every ambiguous record, not just the second duplicate.
+            if ids[stream["id"]] != 1 or names[normalized_name(stream["name"])] != 1:
+                raise RegistryError("Duplicate stream ID or normalized name")
+            streams.append(stream)
+        except (RegistryError, OSError, ValueError) as error:
+            errors.append(_registry_diagnostic(f"{label}: {error}"))
+            blocked_names.append(raw_name)
+    return {"version": STREAM_REGISTRY_VERSION, "streams": streams, "errors": errors, "blockedNames": blocked_names}
 
 
 def verify_worktree_checkout(worktree: dict, git_executable: str = "git") -> None:
@@ -376,9 +430,8 @@ def verify_worktree_checkout(worktree: dict, git_executable: str = "git") -> Non
     top_level = str(Path(git_output(directory, "rev-parse", "--show-toplevel")).resolve())
     if top_level != str(directory.resolve()):
         raise RegistryError(f"Stream worktree resolves to an unexpected checkout: {top_level}")
-    branch = git_output(directory, "branch", "--show-current")
-    if branch != worktree["branch"]:
-        raise RegistryError(f"Stream worktree is on unexpected branch {branch or '(detached)'}")
+    # The recorded branch is a creation default, not the worktree's identity.
+    # Branch switches, renames and detached HEAD do not change containment.
     source_common = Path(git_output(worktree["repository"], "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
     worktree_common = Path(git_output(directory, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()
     if source_common != worktree_common:
