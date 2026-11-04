@@ -22,6 +22,7 @@ in
 {
   imports = [
     ./modules/codex-usage.nix
+    ./modules/command-center-roundup.nix
     ./modules/display.nix
     ./modules/hypr.nix
     ./modules/kitty.nix
