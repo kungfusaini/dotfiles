@@ -64,6 +64,7 @@ in
     unstable.zapzap
     bitwarden-desktop
     vivaldi
+    krita
     vlc
     playerctl
     waybar
