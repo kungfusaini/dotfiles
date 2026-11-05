@@ -127,6 +127,7 @@ class ProjectRow(Gtk.ListBoxRow):
     def __init__(self, project, expanded=False, agent_states=(), errors=()):
         super().__init__()
         self.project = project
+        self.render_key = (type(self), project, frozenset(agent_states), tuple(errors))
         self.add_css_class("project-row")
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
@@ -134,20 +135,21 @@ class ProjectRow(Gtk.ListBoxRow):
         arrow = Gtk.Label(label="▾" if expanded else "▸")
         arrow.add_css_class("project-arrow")
         content.append(arrow)
+        self.arrow = arrow
 
         name = Gtk.Label(label=project["name"], xalign=0, ellipsize=3)
         name.add_css_class("project-name")
         name.set_hexpand(True)
         content.append(name)
 
-        if "working" in agent_states:
-            content.append(working_spinner())
         if "idle" in agent_states:
             agent = Gtk.Label(label="●")
             agent.add_css_class("agent-status")
             agent.add_css_class("agent-status-idle")
             agent.set_tooltip_text("Agent settled / waiting for attention")
             content.append(agent)
+        if "working" in agent_states:
+            content.append(working_spinner())
 
         if errors:
             warning = Gtk.Label(label=f"⚠ {len(errors)} stream error(s)")
@@ -162,6 +164,7 @@ class ProjectWorkspaceRow(Gtk.ListBoxRow):
         super().__init__()
         self.project = project
         self.state = state
+        self.render_key = (type(self), project, state, working)
         self.add_css_class("project-row")
         self.add_css_class("scope-row")
         self.add_css_class("project-workspace-row")
@@ -172,12 +175,11 @@ class ProjectWorkspaceRow(Gtk.ListBoxRow):
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.add_css_class("row-content")
-        content.append(workspace_indicator(state, working))
-
         name = Gtk.Label(label="Project workspace", xalign=0, ellipsize=3)
         name.add_css_class("project-name")
         name.set_hexpand(True)
         content.append(name)
+        content.append(workspace_indicator(state, working))
         self.set_child(content)
 
 
@@ -187,6 +189,7 @@ class StreamRow(Gtk.ListBoxRow):
         self.project = project
         self.stream = stream
         self.state = state
+        self.render_key = (type(self), project, stream, state, working)
         self.add_css_class("project-row")
         self.add_css_class("scope-row")
         self.add_css_class("stream-row")
@@ -197,12 +200,11 @@ class StreamRow(Gtk.ListBoxRow):
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.add_css_class("row-content")
-        content.append(workspace_indicator(state, working))
-
         name = Gtk.Label(label=stream["name"], xalign=0, ellipsize=3)
         name.add_css_class("project-name")
         name.set_hexpand(True)
         content.append(name)
+        content.append(workspace_indicator(state, working))
         self.set_child(content)
 
 
@@ -211,6 +213,7 @@ class StreamRegistryErrorRow(Gtk.ListBoxRow):
     def __init__(self, error):
         super().__init__()
         self.error = error
+        self.render_key = (type(self), error)
         self.add_css_class("scope-row")
         label = Gtk.Label(label=f"⚠ {error}", xalign=0, ellipsize=3)
         label.add_css_class("error")
@@ -1057,12 +1060,26 @@ class PickerApplication(Adw.Application):
 
     def refresh_rows(self):
         desired = self.selected_scope
-        while child := self.listbox.get_first_child():
-            self.listbox.remove(child)
-        self.rows = self.list_rows()
+        previous = list(self.rows)
+        rows = []
+        for candidate in self.list_rows():
+            row = next((old for old in previous if old.render_key == candidate.render_key), candidate)
+            if row is not candidate:
+                previous.remove(row)
+                if isinstance(row, ProjectRow):
+                    row.arrow.set_label(candidate.arrow.get_label())
+            rows.append(row)
+        # Keep unchanged widgets mapped: removing/reinserting a Gtk.Spinner
+        # resets its animation even when the same Python object is reused.
+        for row in previous:
+            self.listbox.remove(row)
         selected = None
-        for row in self.rows:
-            self.listbox.append(row)
+        self.rows = rows
+        for index, row in enumerate(rows):
+            if self.listbox.get_row_at_index(index) is not row:
+                if row.get_parent() is self.listbox:
+                    self.listbox.remove(row)
+                self.listbox.insert(row, index)
             if desired and self.row_scope(row) == desired:
                 selected = row
         if self.rows:

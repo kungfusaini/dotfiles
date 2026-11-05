@@ -190,6 +190,9 @@ class PickerGuiSourceTests(unittest.TestCase):
                 self.assertEqual(sum(isinstance(child, Spinner) and child.spinning for child in children), int("working" in states))
                 self.assertEqual(sum("agent-status-idle" in child.classes for child in children), int("idle" in states))
                 self.assertFalse(any("stream-count" in child.classes for child in children))
+                if states == {"idle", "working"}:
+                    self.assertIn("agent-status-idle", children[-2].classes)
+                    self.assertIsInstance(children[-1], Spinner)
         row = namespace["ProjectRow"](project, errors=["Broken stream"])
         self.assertEqual(row.children[0].children[-1].props["label"], "⚠ 1 stream error(s)")
         self.assertEqual(row.tooltip, "Broken stream")
@@ -198,13 +201,72 @@ class PickerGuiSourceTests(unittest.TestCase):
                 for working in (False, True):
                     args = (project, {"name": "Stream"}, state) if name == "StreamRow" else (project, state)
                     row = namespace[name](*args, working=working)
-                    indicator = row.children[0].children[0]
+                    self.assertIn("project-name", row.children[0].children[0].classes)
+                    indicator = row.children[0].children[-1]
                     self.assertEqual(isinstance(indicator, Spinner), working and state != "closed")
                     if isinstance(indicator, Spinner):
                         self.assertTrue(indicator.spinning)
                     else:
                         self.assertEqual(indicator.props["label"], "○" if state == "closed" else "●")
                     self.assertEqual("active-workspace-row" in row.classes, state == "current")
+
+    def test_refresh_keeps_unchanged_rows_mapped_across_expansion_and_updates(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        method = copy.deepcopy(next(node for node in picker.body if isinstance(node, ast.FunctionDef) and node.name == "refresh_rows"))
+        class Row:
+            def __init__(self, key, label="▸"):
+                self.render_key = key
+                self.parent = None
+                self.arrow = mock.Mock()
+                self.arrow.get_label.return_value = label
+            def get_parent(self): return self.parent
+        class ListBox:
+            def __init__(self):
+                self.rows = []
+                self.removed = []
+            def remove(self, row):
+                self.rows.remove(row)
+                self.removed.append(row)
+                row.parent = None
+            def insert(self, row, index):
+                self.rows.insert(index, row)
+                row.parent = self
+            def get_row_at_index(self, index):
+                return self.rows[index] if index < len(self.rows) else None
+        namespace = {"ProjectRow": Row}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        box = ListBox()
+        first, second = Row("first"), Row("second")
+        box.insert(first, 0)
+        box.insert(second, 1)
+        app = SimpleNamespace(rows=[first, second], listbox=box, selected_scope="second",
+                              row_scope=lambda row: row.render_key, select_visible_row=mock.Mock())
+        def refresh(candidates):
+            app.list_rows = lambda: candidates
+            namespace["refresh_rows"](app)
+            self.assertEqual(box.rows, app.rows)
+        child = Row("child")
+        refresh([Row("first", "▾"), child, Row("second")])
+        self.assertEqual(app.rows, [first, child, second])
+        self.assertEqual(box.removed, [])
+        first.arrow.set_label.assert_called_with("▾")
+        app.select_visible_row.assert_called_with(second)
+        refresh([Row("first"), Row("second")])
+        self.assertEqual(box.removed, [child])
+        self.assertEqual(app.rows, [first, second])
+        # A changed presentation must replace the stale widget, while unrelated
+        # working rows stay mapped. Reordering and filtering remain supported.
+        changed = Row("second-updated")
+        refresh([Row("first"), changed])
+        self.assertEqual(box.removed, [child, second])
+        self.assertEqual(app.rows, [first, changed])
+        refresh([Row("second-updated"), Row("first")])
+        self.assertEqual(app.rows, [changed, first])
+        refresh([Row("first")])
+        self.assertEqual(app.rows, [first])
+        refresh([])
+        self.assertEqual(app.rows, [])
 
     def test_visible_picker_refreshes_every_scope_context(self):
         source = GUI_SOURCE.read_text()
