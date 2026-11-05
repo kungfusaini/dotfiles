@@ -869,15 +869,12 @@ class PickerApplication(Adw.Application):
             backend.notify_error(str(error))
 
     def scope_requires_attention(self, project, stream=None):
-        key = self.context_key(project, stream)
-        states = self.agent_activity.get(key, set())
-        context = self.context_cache.get(key, {})
-        if "working" in states:
+        scope = backend.stream_scope(project, stream) if stream else backend.project_scope(project)
+        workspace = backend.stream_workspace_name(project, stream) if stream else backend.workspace_name(project)
+        if self.current_workspace != workspace and not backend.scope_is_open(self.session, scope):
             return False
-        attention = context.get("briefAttention")
-        if attention is not None:
-            return attention in ("review", "decision", "action")
-        return "idle" in states
+        states = self.agent_activity.get(self.context_key(project, stream), set())
+        return "idle" in states and "working" not in states
 
     def attention_scopes(self):
         scopes = []
@@ -893,17 +890,31 @@ class PickerApplication(Adw.Application):
     def select_next_attention(self):
         scopes = self.attention_scopes()
         if not scopes:
-            self.footer_hint.set_text("No project currently requests your attention")
+            self.footer_hint.set_text("No open workspace has a settled agent")
             GLib.timeout_add_seconds(2, self.restore_footer_hint)
             return
+        ordered = [
+            backend.stream_scope(project, stream) if stream else backend.project_scope(project)
+            for project, stream in self.context_scope_targets
+        ]
+        anchor = self.selected_scope
+        header = anchor and anchor.get("kind") == "project-header"
+        if header:
+            anchor = {"kind": "project", "projectId": anchor["projectId"]}
         try:
-            index = scopes.index(self.selected_scope)
+            index = ordered.index(anchor) - int(bool(header))
         except ValueError:
             index = -1
-        self.selected_scope = scopes[(index + 1) % len(scopes)]
+        self.selected_scope = next(
+            scope for offset in range(1, len(ordered) + 1)
+            if (scope := ordered[(index + offset) % len(ordered)]) in scopes
+        )
         self.expanded_project_ids.add(self.selected_scope["projectId"])
         try:
             self.save_picker_state()
+            # The destination must be visible even if the current search hides it.
+            if self.search.get_text():
+                self.search.set_text("")
             self.refresh_rows()
         except Exception as error:
             backend.notify_error(str(error))
@@ -1033,12 +1044,15 @@ class PickerApplication(Adw.Application):
                 if stream_state != "closed" and "working" in self.agent_activity.get((project["id"], stream["id"]), set())
             }
             project_working = state != "closed" and "working" in self.agent_activity.get((project["id"], None), set())
-            project_agent_states = {
-                agent_state
-                for (project_id, _stream_id), states in self.agent_activity.items()
-                if project_id == project["id"]
-                for agent_state in states
-            }
+            project_agent_states = set()
+            for scope_stream, scope_state in [(None, state), *streams]:
+                if scope_state == "closed":
+                    continue
+                states = self.agent_activity.get(self.context_key(project, scope_stream), set())
+                if "working" in states:
+                    project_agent_states.add("working")
+                elif "idle" in states:
+                    project_agent_states.add("idle")
             values.append(ProjectRow(
                 project,
                 expanded=expanded,

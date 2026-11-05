@@ -51,6 +51,7 @@ class PickerGuiSourceTests(unittest.TestCase):
             search=SimpleNamespace(get_text=lambda: ""),
             project_items=lambda: [(project, "closed")], current_workspace="Other",
             session={}, expanded_project_ids={"project"}, agent_activity={},
+            context_key=lambda project, stream=None: (project["id"], stream["id"] if stream else None),
             stream_items=lambda project, registry: [(good, "closed")],
         )
         rows = namespace["list_rows"](app)
@@ -130,14 +131,14 @@ class PickerGuiSourceTests(unittest.TestCase):
         self.assertIn("GLib.idle_add(self.reveal_row, row)", methods["select_visible_row"])
         self.assertIn("adjustment.clamp_page", methods["reveal_row"])
 
-    def test_project_header_aggregates_both_agent_states_without_other_projects(self):
+    def test_project_header_aggregates_only_open_scopes_with_working_priority(self):
         tree = ast.parse(GUI_SOURCE.read_text())
         picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
         method = copy.deepcopy(next(node for node in picker.body if isinstance(node, ast.FunctionDef) and node.name == "list_rows"))
         project = {"id": "project", "name": "Alpha", "mainDirectory": "/tmp"}
         backend = mock.Mock()
         backend.workspace_name.return_value = "Alpha"
-        backend.scope_is_open.return_value = False
+        backend.scope_is_open.return_value = True
         backend.load_stream_registry_view.return_value = {"streams": [], "errors": []}
         row = mock.Mock()
         namespace = {"backend": backend, "ProjectRow": row}
@@ -145,17 +146,30 @@ class PickerGuiSourceTests(unittest.TestCase):
         app = SimpleNamespace(
             search=SimpleNamespace(get_text=lambda: ""),
             project_items=lambda: [(project, "closed")], current_workspace="Other",
-            session={}, expanded_project_ids=set(), stream_items=lambda *args: [],
+            session={}, expanded_project_ids=set(),
+            context_key=lambda project, stream=None: (project["id"], stream["id"] if stream else None),
         )
-        for states in (set(), {"idle"}, {"working"}, {"idle", "working"}):
-            with self.subTest(states=states):
+        cases = [
+            (True, set(), "open", set(), set()),
+            (True, {"idle"}, "closed", set(), {"idle"}),
+            (True, {"idle", "working"}, "open", {"working"}, {"working"}),
+            (True, {"working"}, "open", {"idle"}, {"idle", "working"}),
+            (False, {"idle"}, "closed", {"idle"}, set()),
+            (False, {"working"}, "open", {"idle"}, {"idle"}),
+            (True, set(), "open", {"idle", "working"}, {"working"}),
+        ]
+        for main_open, main_states, stream_state, stream_states, expected in cases:
+            with self.subTest(main_open=main_open, main=main_states, stream=stream_states, stream_state=stream_state):
+                backend.scope_is_open.return_value = main_open
+                app.stream_items = lambda *args: [({"id": "stream", "name": "Stream"}, stream_state)]
                 app.agent_activity = {
-                    ("project", None): states & {"idle"},
-                    ("project", "stream"): states & {"working"},
+                    ("project", None): main_states,
+                    ("project", "stream"): stream_states,
+                    ("project", "unknown"): {"idle", "working"},
                     ("unrelated", None): {"idle", "working"},
                 }
                 namespace["list_rows"](app)
-                self.assertEqual(row.call_args.kwargs["agent_states"], states)
+                self.assertEqual(row.call_args.kwargs["agent_states"], expected)
                 self.assertNotIn("workspace_count", row.call_args.kwargs)
                 self.assertNotIn("open_workspace_count", row.call_args.kwargs)
 
@@ -297,6 +311,69 @@ class PickerGuiSourceTests(unittest.TestCase):
         self.assertNotIn("backend.load_stream_registry", methods["project_preview_target"])
         self.assertNotIn("backend.load_stream_registry", methods["attention_scopes"])
         self.assertNotIn("backend.load_scope_context", methods["scope_requires_attention"])
+
+    def test_next_attention_targets_open_settled_scopes_and_moves_forward(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        names = {"scope_requires_attention", "attention_scopes", "select_next_attention"}
+        methods = [copy.deepcopy(node) for node in picker.body if isinstance(node, ast.FunctionDef) and node.name in names]
+        backend = mock.Mock()
+        backend.project_scope.side_effect = lambda p: {"kind": "project", "projectId": p["id"]}
+        backend.stream_scope.side_effect = lambda p, s: {"kind": "stream", "projectId": p["id"], "streamId": s["id"]}
+        backend.workspace_name.side_effect = lambda p: p["id"]
+        backend.stream_workspace_name.side_effect = lambda p, s: p["id"] + "/" + s["id"]
+        backend.scope_is_open.side_effect = lambda session, scope: scope in session["openWorkspaces"]
+        namespace = {"backend": backend, "GLib": mock.Mock()}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        project = {"id": "a"}
+        targets = [(project, None)] + [(project, {"id": name}) for name in ("working", "mixed", "settled", "closed", "empty", "later")]
+        targets.append(({"id": "b"}, None))
+        scopes = [backend.stream_scope(p, s) if s else backend.project_scope(p) for p, s in targets]
+        app = SimpleNamespace(
+            session={"openWorkspaces": [s for s in scopes if s.get("streamId") != "closed"]},
+            current_workspace="elsewhere", context_scope_targets=targets,
+            context_key=lambda p, s=None: (p["id"], s["id"] if s else None),
+            context_cache={("a", None): {"briefAttention": "none"}, ("a", "empty"): {"briefAttention": "action"}},
+            agent_activity={
+                ("a", None): {"idle"}, ("a", "working"): {"working"},
+                ("a", "mixed"): {"idle", "working"}, ("a", "settled"): {"idle"},
+                ("a", "closed"): {"idle"}, ("a", "later"): {"idle"},
+                ("b", None): {"idle"},
+            },
+            expanded_project_ids=set(), footer_hint=mock.Mock(), restore_footer_hint=mock.Mock(),
+            search=mock.Mock(), save_picker_state=mock.Mock(), refresh_rows=mock.Mock(),
+        )
+        app.search.get_text.return_value = "hidden by search"
+        app.scope_requires_attention = lambda *args: namespace["scope_requires_attention"](app, *args)
+        app.attention_scopes = lambda: namespace["attention_scopes"](app)
+        self.assertEqual(app.attention_scopes(), [scopes[0], scopes[3], scopes[6], scopes[7]])
+        # Main scope with briefAttention=none still qualifies; action-only empty
+        # scope and stale idle activity on a closed workspace do not.
+        for anchor, expected in [
+            (scopes[1], scopes[3]), (scopes[2], scopes[3]),
+            (scopes[3], scopes[6]), (scopes[6], scopes[7]), (scopes[7], scopes[0]),
+            ({"kind": "project-header", "projectId": "a"}, scopes[0]),
+            (None, scopes[0]),
+        ]:
+            with self.subTest(anchor=anchor):
+                app.selected_scope = anchor
+                namespace["select_next_attention"](app)
+                self.assertEqual(app.selected_scope, expected)
+                self.assertIn(expected["projectId"], app.expanded_project_ids)
+        app.search.set_text.assert_called_with("")
+        app.refresh_rows.assert_called()
+        # Current compositor workspace is open even before session state catches up.
+        app.current_workspace = "a/closed"
+        self.assertIn(scopes[4], app.attention_scopes())
+        app.current_workspace = "elsewhere"
+        app.agent_activity = {}
+        app.selected_scope = scopes[2]
+        app.refresh_rows.reset_mock()
+        namespace["select_next_attention"](app)
+        self.assertEqual(app.selected_scope, scopes[2])
+        app.refresh_rows.assert_not_called()
+        app.footer_hint.set_text.assert_called_with("No open workspace has a settled agent")
+        backend.notify_error.assert_not_called()
 
     def test_next_attention_key_uses_explicit_window_handler(self):
         source = GUI_SOURCE.read_text()
