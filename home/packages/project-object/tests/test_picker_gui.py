@@ -130,26 +130,81 @@ class PickerGuiSourceTests(unittest.TestCase):
         self.assertIn("GLib.idle_add(self.reveal_row, row)", methods["select_visible_row"])
         self.assertIn("adjustment.clamp_page", methods["reveal_row"])
 
-    def test_project_header_working_state_outranks_idle_state(self):
-        source = GUI_SOURCE.read_text()
-        tree = ast.parse(source)
-        picker = next(
-            node for node in tree.body
-            if isinstance(node, ast.ClassDef) and node.name == "PickerApplication"
+    def test_project_header_aggregates_both_agent_states_without_other_projects(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        method = copy.deepcopy(next(node for node in picker.body if isinstance(node, ast.FunctionDef) and node.name == "list_rows"))
+        project = {"id": "project", "name": "Alpha", "mainDirectory": "/tmp"}
+        backend = mock.Mock()
+        backend.workspace_name.return_value = "Alpha"
+        backend.scope_is_open.return_value = False
+        backend.load_stream_registry_view.return_value = {"streams": [], "errors": []}
+        row = mock.Mock()
+        namespace = {"backend": backend, "ProjectRow": row}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        app = SimpleNamespace(
+            search=SimpleNamespace(get_text=lambda: ""),
+            project_items=lambda: [(project, "closed")], current_workspace="Other",
+            session={}, expanded_project_ids=set(), stream_items=lambda *args: [],
         )
-        list_rows = ast.unparse(next(
-            node for node in picker.body
-            if isinstance(node, ast.FunctionDef) and node.name == "list_rows"
-        ))
+        for states in (set(), {"idle"}, {"working"}, {"idle", "working"}):
+            with self.subTest(states=states):
+                app.agent_activity = {
+                    ("project", None): states & {"idle"},
+                    ("project", "stream"): states & {"working"},
+                    ("unrelated", None): {"idle", "working"},
+                }
+                namespace["list_rows"](app)
+                self.assertEqual(row.call_args.kwargs["agent_states"], states)
+                self.assertNotIn("workspace_count", row.call_args.kwargs)
+                self.assertNotIn("open_workspace_count", row.call_args.kwargs)
 
-        self.assertIn(
-            "project_agent_state = 'working' if 'working' in project_agent_states else 'idle' if 'idle' in project_agent_states else None",
-            list_rows,
-        )
-        self.assertNotIn(
-            "project_agent_state = 'idle' if 'idle' in project_agent_states else 'working'",
-            list_rows,
-        )
+    def test_activity_widgets_and_error_warning(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        class Widget:
+            def __init__(self, **kwargs):
+                self.props = kwargs
+                self.children = []
+                self.classes = set()
+                self.spinning = False
+            def add_css_class(self, name): self.classes.add(name)
+            def append(self, child): self.children.append(child)
+            def set_child(self, child): self.children = [child]
+            def set_tooltip_text(self, text): self.tooltip = text
+            def set_size_request(self, *args): self.size = args
+            def set_valign(self, value): pass
+            def set_hexpand(self, value): pass
+            def start(self): self.spinning = True
+        class Spinner(Widget): pass
+        gtk = SimpleNamespace(ListBoxRow=Widget, Box=Widget, Label=Widget, Spinner=Spinner,
+                              Orientation=SimpleNamespace(HORIZONTAL=0), Align=SimpleNamespace(CENTER=0))
+        names = {"working_spinner", "workspace_indicator", "ProjectRow", "ProjectWorkspaceRow", "StreamRow"}
+        nodes = [copy.deepcopy(node) for node in tree.body if isinstance(node, (ast.ClassDef, ast.FunctionDef)) and node.name in names]
+        namespace = {"Gtk": gtk}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=nodes, type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        project = {"name": "Alpha"}
+        for states in (set(), {"idle"}, {"working"}, {"idle", "working"}):
+            with self.subTest(states=states):
+                row = namespace["ProjectRow"](project, agent_states=states)
+                children = row.children[0].children
+                self.assertEqual(sum(isinstance(child, Spinner) and child.spinning for child in children), int("working" in states))
+                self.assertEqual(sum("agent-status-idle" in child.classes for child in children), int("idle" in states))
+                self.assertFalse(any("stream-count" in child.classes for child in children))
+        row = namespace["ProjectRow"](project, errors=["Broken stream"])
+        self.assertEqual(row.children[0].children[-1].props["label"], "⚠ 1 stream error(s)")
+        self.assertEqual(row.tooltip, "Broken stream")
+        for name in ("ProjectWorkspaceRow", "StreamRow"):
+            for state in ("closed", "open", "current"):
+                for working in (False, True):
+                    args = (project, {"name": "Stream"}, state) if name == "StreamRow" else (project, state)
+                    row = namespace[name](*args, working=working)
+                    indicator = row.children[0].children[0]
+                    self.assertEqual(isinstance(indicator, Spinner), working and state != "closed")
+                    if isinstance(indicator, Spinner):
+                        self.assertTrue(indicator.spinning)
+                    else:
+                        self.assertEqual(indicator.props["label"], "○" if state == "closed" else "●")
+                    self.assertEqual("active-workspace-row" in row.classes, state == "current")
 
     def test_visible_picker_refreshes_every_scope_context(self):
         source = GUI_SOURCE.read_text()

@@ -59,10 +59,9 @@ window { background: transparent; }
 .project-arrow { color: #8990a3; font-size: 12px; min-width: 16px; }
 .project-dot { color: #676f86; font-size: 12px; min-width: 20px; }
 .running-scope-row .project-dot { color: #74d3ae; }
-.working-scope-row .project-dot { color: #e7bd63; }
+.agent-spinner { color: #e7bd63; }
 .agent-status { font-size: 9px; min-width: 12px; }
 .agent-status-idle { color: #74d3ae; }
-.agent-status-working { color: #e7bd63; }
 .scope-row .row-content { min-height: 30px; margin-left: 28px; }
 .project-name { font-size: 12px; font-weight: 650; }
 .scope-row .project-name { font-weight: 540; }
@@ -104,8 +103,28 @@ window { background: transparent; }
 """
 
 
+def working_spinner():
+    spinner = Gtk.Spinner()
+    spinner.add_css_class("agent-spinner")
+    spinner.set_size_request(12, 12)
+    spinner.set_valign(Gtk.Align.CENTER)
+    spinner.set_tooltip_text("Agent working")
+    spinner.start()
+    return spinner
+
+
+def workspace_indicator(state, working):
+    if working and state != "closed":
+        indicator = working_spinner()
+        indicator.set_size_request(20, 12)
+        return indicator
+    dot = Gtk.Label(label="●" if state != "closed" else "○")
+    dot.add_css_class("project-dot")
+    return dot
+
+
 class ProjectRow(Gtk.ListBoxRow):
-    def __init__(self, project, expanded=False, workspace_count=1, open_workspace_count=0, agent_state=None, errors=()):
+    def __init__(self, project, expanded=False, agent_states=(), errors=()):
         super().__init__()
         self.project = project
         self.add_css_class("project-row")
@@ -121,20 +140,20 @@ class ProjectRow(Gtk.ListBoxRow):
         name.set_hexpand(True)
         content.append(name)
 
-        if agent_state:
+        if "working" in agent_states:
+            content.append(working_spinner())
+        if "idle" in agent_states:
             agent = Gtk.Label(label="●")
             agent.add_css_class("agent-status")
-            agent.add_css_class(f"agent-status-{agent_state}")
-            agent.set_tooltip_text("Agent waiting for attention" if agent_state == "idle" else "Agent working")
+            agent.add_css_class("agent-status-idle")
+            agent.set_tooltip_text("Agent settled / waiting for attention")
             content.append(agent)
 
-        count_text = f"{open_workspace_count} open · {workspace_count} total" if open_workspace_count else f"{workspace_count} workspace{'s' if workspace_count != 1 else ''}"
         if errors:
-            count_text += f" · ⚠ {len(errors)} stream error(s)"
+            warning = Gtk.Label(label=f"⚠ {len(errors)} stream error(s)")
+            warning.add_css_class("stream-count")
+            content.append(warning)
             self.set_tooltip_text("\n".join(errors))
-        count = Gtk.Label(label=count_text)
-        count.add_css_class("stream-count")
-        content.append(count)
         self.set_child(content)
 
 
@@ -148,16 +167,12 @@ class ProjectWorkspaceRow(Gtk.ListBoxRow):
         self.add_css_class("project-workspace-row")
         if state != "closed":
             self.add_css_class("running-scope-row")
-        if working and state != "closed":
-            self.add_css_class("working-scope-row")
         if state == "current":
             self.add_css_class("active-workspace-row")
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.add_css_class("row-content")
-        dot = Gtk.Label(label="●" if state != "closed" else "○")
-        dot.add_css_class("project-dot")
-        content.append(dot)
+        content.append(workspace_indicator(state, working))
 
         name = Gtk.Label(label="Project workspace", xalign=0, ellipsize=3)
         name.add_css_class("project-name")
@@ -177,16 +192,12 @@ class StreamRow(Gtk.ListBoxRow):
         self.add_css_class("stream-row")
         if state != "closed":
             self.add_css_class("running-scope-row")
-        if working and state != "closed":
-            self.add_css_class("working-scope-row")
         if state == "current":
             self.add_css_class("active-workspace-row")
 
         content = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
         content.add_css_class("row-content")
-        dot = Gtk.Label(label="●" if state != "closed" else "○")
-        dot.add_css_class("project-dot")
-        content.append(dot)
+        content.append(workspace_indicator(state, working))
 
         name = Gtk.Label(label=stream["name"], xalign=0, ellipsize=3)
         name.add_css_class("project-name")
@@ -1014,7 +1025,6 @@ class PickerApplication(Adw.Application):
             matching_streams = [item for item in streams if query in item[0]["name"].casefold()] if query else streams
             if query and not project_matches and not matching_streams and not any(query in error.casefold() for error in errors):
                 continue
-            open_stream_count = sum(stream_state != "closed" for _stream, stream_state in streams)
             working_stream_ids = {
                 stream["id"] for stream, stream_state in streams
                 if stream_state != "closed" and "working" in self.agent_activity.get((project["id"], stream["id"]), set())
@@ -1026,13 +1036,10 @@ class PickerApplication(Adw.Application):
                 if project_id == project["id"]
                 for agent_state in states
             }
-            project_agent_state = "working" if "working" in project_agent_states else "idle" if "idle" in project_agent_states else None
             values.append(ProjectRow(
                 project,
                 expanded=expanded,
-                workspace_count=len(streams) + 1,
-                open_workspace_count=open_stream_count + (state != "closed"),
-                agent_state=project_agent_state,
+                agent_states=project_agent_states,
                 errors=errors,
             ))
             if expanded or query:
