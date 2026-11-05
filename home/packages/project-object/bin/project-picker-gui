@@ -33,7 +33,7 @@ APP_ID = "dev.project_object.Picker"
 COMPACT_WIDTH = 760
 INSPECTOR_WIDTH = 1180
 WINDOW_HEIGHT = 570
-FOOTER_HINT = "j/k Move   Space Context   n Next attention   d Details   Enter Open/Expand   x Close"
+FOOTER_HINT = "j/k Move   Shift+Tab Toggle all   Space Context   n Next attention   d Details   Enter Open/Expand   x Close"
 CREATE_FOOTER_HINT = "Ctrl+N New project   Ctrl+Shift+N New stream"
 
 CSS = """
@@ -1153,6 +1153,24 @@ class PickerApplication(Adw.Application):
         self.set_normal_actions_enabled(False)
         self.search.grab_focus()
 
+    def toggle_all_projects(self):
+        project_ids = {project["id"] for project, _state in self.project_items()}
+        if self.expanded_project_ids & project_ids:
+            self.expanded_project_ids.clear()
+            if self.selected_scope:
+                self.selected_scope = {
+                    "kind": "project-header", "projectId": self.selected_scope["projectId"],
+                }
+            # A search reveals children even for collapsed projects.
+            self.search.set_text("")
+        else:
+            self.expanded_project_ids = project_ids
+        try:
+            self.save_picker_state()
+            self.refresh_rows()
+        except Exception as error:
+            backend.notify_error(str(error))
+
     def toggle_selected_project(self):
         row = self.listbox.get_selected_row()
         if not isinstance(row, (ProjectRow, ProjectWorkspaceRow, StreamRow)):
@@ -1893,7 +1911,10 @@ class PickerApplication(Adw.Application):
             self.activate_action("next-attention", None)
             return True
         if keyval in (Gdk.KEY_Tab, Gdk.KEY_ISO_Left_Tab):
-            self.toggle_selected_project()
+            if shift or keyval == Gdk.KEY_ISO_Left_Tab:
+                self.toggle_all_projects()
+            else:
+                self.toggle_selected_project()
             return True
         if keyval == Gdk.KEY_r:
             self.resume_stream_pi()

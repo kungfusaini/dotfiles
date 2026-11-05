@@ -412,6 +412,69 @@ class PickerGuiSourceTests(unittest.TestCase):
         app.footer_hint.set_text.assert_called_with("No open workspace has a settled agent")
         backend.notify_error.assert_not_called()
 
+    def test_toggle_all_collapses_if_any_project_is_expanded(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        method = copy.deepcopy(next(node for node in picker.body if isinstance(node, ast.FunctionDef) and node.name == "toggle_all_projects"))
+        backend = mock.Mock()
+        namespace = {"backend": backend}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        for expanded, expected in [
+            (set(), {"a", "b"}), ({"a"}, set()), ({"b"}, set()),
+            ({"a", "b"}, set()), ({"deleted"}, {"a", "b"}),
+        ]:
+            with self.subTest(expanded=expanded):
+                app = SimpleNamespace(
+                    project_items=lambda: [({"id": "a"}, "open"), ({"id": "b"}, "closed")],
+                    expanded_project_ids=expanded.copy(),
+                    selected_scope={"kind": "stream", "projectId": "b", "streamId": "s"},
+                    search=mock.Mock(), save_picker_state=mock.Mock(), refresh_rows=mock.Mock(),
+                )
+                namespace["toggle_all_projects"](app)
+                self.assertEqual(app.expanded_project_ids, expected)
+                app.save_picker_state.assert_called_once_with()
+                app.refresh_rows.assert_called_once_with()
+                if not expected:
+                    self.assertEqual(app.selected_scope, {"kind": "project-header", "projectId": "b"})
+                    app.search.set_text.assert_called_once_with("")
+                else:
+                    self.assertEqual(app.selected_scope["kind"], "stream")
+                    app.search.set_text.assert_not_called()
+        app.project_items = lambda: []
+        app.selected_scope = None
+        namespace["toggle_all_projects"](app)
+        self.assertEqual(app.expanded_project_ids, set())
+        app.refresh_rows.side_effect = RuntimeError("refresh failed")
+        namespace["toggle_all_projects"](app)
+        backend.notify_error.assert_called_once_with("refresh failed")
+
+    def test_shift_tab_toggles_all_but_tab_only_toggles_selection(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        method = copy.deepcopy(next(node for node in picker.body if isinstance(node, ast.FunctionDef) and node.name == "on_key_pressed"))
+        keys = {node.attr for node in ast.walk(method) if isinstance(node, ast.Attribute) and node.attr.startswith("KEY_")}
+        gdk = SimpleNamespace(**{key: index for index, key in enumerate(sorted(keys), 1)})
+        gdk.ModifierType = SimpleNamespace(SHIFT_MASK=1, CONTROL_MASK=2)
+        namespace = {"Gdk": gdk}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        for key, state, all_projects in [
+            (gdk.KEY_Tab, 0, False), (gdk.KEY_Tab, 1, True),
+            (gdk.KEY_ISO_Left_Tab, 1, True), (gdk.KEY_ISO_Left_Tab, 0, True),
+        ]:
+            app = SimpleNamespace(
+                stack=SimpleNamespace(get_visible_child_name=lambda: "list"), search_mode=False,
+                is_next_attention_key=lambda *args: False,
+                toggle_all_projects=mock.Mock(), toggle_selected_project=mock.Mock(),
+            )
+            self.assertTrue(namespace["on_key_pressed"](app, None, key, 0, state))
+            self.assertEqual(app.toggle_all_projects.call_count, int(all_projects))
+            self.assertEqual(app.toggle_selected_project.call_count, int(not all_projects))
+            app.search_mode = True
+            self.assertFalse(namespace["on_key_pressed"](app, None, key, 0, state))
+            app.search_mode = False
+            app.stack.get_visible_child_name = lambda: "create-stream"
+            self.assertFalse(namespace["on_key_pressed"](app, None, key, 0, state))
+
     def test_next_attention_key_uses_explicit_window_handler(self):
         source = GUI_SOURCE.read_text()
         tree = ast.parse(source)
