@@ -26,9 +26,18 @@ def worker(arguments):
     case = Path(case)
     wait_for(lambda: (case / "go").exists())
     command = [router, "open", "--mode", "project", *urls]
-    if mode == "wrapped":
+    if mode.startswith("raw"):
+        options = ["--new-window"] if mode == "raw-new-window" else []
+        command = [helper, "vivaldi", *options, *urls]
+        if mode == "raw-background":
+            # The literal failing shell shape, but wait on the background PID
+            # so this test can inspect completion despite discarded diagnostics.
+            command = ["sh", "-c", shlex.join(command) + ' >/dev/null 2>&1 & wait "$!"']
+    elif mode == "wrapped":
         command = [sys.executable, "-c", "import subprocess; subprocess.run(" + repr(command) + ",check=True)"]
-    if mode == "direct":
+    if mode.startswith("raw"):
+        pass
+    elif mode == "direct":
         # Pi context should auto-route direct project-browser calls safely.
         command = [router, "open", *urls]
     else:
@@ -69,6 +78,7 @@ def run(args):
     bindir = root / "bin"
     bindir.mkdir()
     (bindir / "project-workspace-exec").symlink_to(Path(args.helper).resolve())
+    (bindir / "vivaldi").symlink_to(wrapper)
     env["PATH"] = str(bindir) + ":" + env["PATH"]
     processes, events, requests = [], [], []
 
@@ -126,13 +136,18 @@ def run(args):
         threading.Thread(target=record_events, args=(ipc.parent / ".socket2.sock",), daemon=True).start()
         browser_pid, normal = None, None
         app_addresses = []
-        labels = ["fresh", "existing", "same-workspace", "wrapped", "multi", "direct"]
+        labels = ["fresh", "existing", "same-workspace", "wrapped", "multi", "direct",
+                  "raw-url", "raw-storage-query", "raw-new-window", "raw-background"]
         for label in labels:
             case = root / label
             case.mkdir()
             ctl("dispatch", "workspace", "name:Agent · Target")
-            urls = [base + "/" + label + "/" + str(i) for i in range(2 if label == "multi" else 1)]
-            mode = label if label in ("wrapped", "direct") else "helper"
+            urls = [base + "/" + label + "/" + str(i) for i in range(2 if label in ("multi", "raw-new-window") else 1)]
+            if label == "raw-url":
+                urls = [base + "/mail/options/general/storage"]
+            elif label == "raw-storage-query":
+                urls = [base + "/storage?authuser=account%40example.com"]
+            mode = "raw-url" if label == "fresh" else label if label in ("wrapped", "direct") or label.startswith("raw") else "helper"
             worker_command = [sys.executable, str(Path(__file__).resolve()), "--worker", str(case), str(Path(args.helper).resolve()), str(Path(args.router).resolve()), mode, *urls]
             ctl("dispatch", "exec", shlex.join([args.kitty, "--class", "agent-" + label, "env", "PROJECT_OBJECT_WORKSPACE_NAME=Wrong recorded workspace", *worker_command]))
             wait_for(lambda: any(c["class"] == "agent-" + label for c in clients()))

@@ -9,9 +9,10 @@ import shlex
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
-from agent_browser import app_launch_matches  # noqa: E402
+from agent_browser import app_launch_matches, ascii_uri, validate as validate_browser_launch  # noqa: E402
 
 HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
 WORKSPACE_ENV = "PROJECT_OBJECT_WORKSPACE_NAME"
@@ -157,6 +158,21 @@ def verify_window(workspace, launch_id, before):
     )
 
 
+def raw_browser_urls(command):
+    """Accept only URL opens; never pass arbitrary flags to the shared browser."""
+    arguments = command[1:]
+    if arguments[:1] == ["--new-window"]:
+        arguments = arguments[1:]
+    if arguments[:1] == ["--"]:
+        arguments = arguments[1:]
+    if not arguments or any(argument.startswith("-") for argument in arguments):
+        raise RuntimeError(
+            "unsupported Vivaldi launch; use project-workspace-exec project-browser open URL [URL ...] "
+            "(raw Vivaldi accepts only optional --new-window, optional --, and HTTP(S) URLs)"
+        )
+    return arguments
+
+
 def main():
     command = sys.argv[1:]
     if command in (["--help"], ["-h"]):
@@ -172,11 +188,26 @@ def main():
         validate_workspace_rule(workspace)
         before = {client.get("address") for client in clients if isinstance(client, dict)}
         launch_id = secrets.token_hex(16)
+        browser_executable = None
+        if Path(command[0]).name in ("vivaldi", "vivaldi-stable"):
+            urls = raw_browser_urls(command)
+            validate_browser_launch(workspace, urls, launch_id)
+            urls = [ascii_uri(url) for url in urls]
+            # urllib's parser/IDNA codec are not hostname validators: they
+            # preserve spaces, escapes and other forbidden browser host bytes.
+            # Accept plain DNS/IP hosts only (IPv6 is checked by urlsplit).
+            if any(not re.fullmatch(r"[A-Za-z0-9_.:-]+", urlsplit(url).hostname or "") for url in urls):
+                raise ValueError("Raw Vivaldi URLs require a plain DNS or IP hostname")
+            browser_executable = command[0]
+            # Use the sibling router from this package, not an older PATH copy.
+            command = [str(Path(__file__).resolve().with_name("project-browser")), "open", *urls]
         if Path(command[0]).name in ("project-browser", ".project-browser-wrapped"):
             # The browser has its own exact app-id rule and verifies every URL.
             # Do not add competing exec rules or a second new-process verifier.
             environment = {**os.environ, LAUNCH_WORKSPACE_ENV: workspace, LAUNCH_ID_ENV: launch_id}
             environment.setdefault("PROJECT_BROWSER_HYPRCTL", HYPRCTL)
+            if browser_executable is not None:
+                environment.setdefault("PROJECT_BROWSER_VIVALDI", browser_executable)
             result = subprocess.run(command, env=environment, check=False)
             if result.returncode:
                 raise SystemExit(result.returncode)
@@ -189,7 +220,7 @@ def main():
             raise RuntimeError("Hyprland refused to launch the command")
         verify_window(workspace, launch_id, before)
         print(f"project-workspace-exec: verified new window on {workspace}")
-    except (OSError, RuntimeError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         raise SystemExit(f"project-workspace-exec: {error}") from error
 
 

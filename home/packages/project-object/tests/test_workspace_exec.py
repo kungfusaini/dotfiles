@@ -73,6 +73,62 @@ class WorkspaceExecTests(unittest.TestCase):
         self.assertEqual(run.call_args.kwargs["env"][workspace_exec.LAUNCH_WORKSPACE_ENV], "Command Center · Agents")
         verify.assert_not_called()
 
+    def test_raw_vivaldi_url_forms_use_sibling_router_and_verified_workspace(self):
+        urls = ["https://outlook.office.com/mail/options/general/storage", "https://one.google.com/storage?authuser=account%40example.com"]
+        for binary in ["vivaldi", "vivaldi-stable", "/package/bin/vivaldi"]:
+            for options in [[], ["--new-window"], ["--"], ["--new-window", "--"]]:
+                with self.subTest(binary=binary, options=options), \
+                        mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \
+                        mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run, \
+                        mock.patch.object(workspace_exec, "verify_window") as verify, \
+                        mock.patch.object(workspace_exec.sys, "argv", ["helper", binary, *options, *urls]), \
+                        contextlib.redirect_stdout(io.StringIO()) as output:
+                    workspace_exec.main()
+                self.assertEqual(run.call_count, 1)
+                self.assertEqual(run.call_args.args[0], [str(ROOT / "bin" / "project-browser"), "open", *urls])
+                env = run.call_args.kwargs["env"]
+                self.assertEqual(env[workspace_exec.LAUNCH_WORKSPACE_ENV], "Command Center · Agents")
+                self.assertEqual(env["PROJECT_BROWSER_VIVALDI"], binary)
+                self.assertIn("verified browser launch", output.getvalue())
+                verify.assert_not_called()
+
+    def test_raw_vivaldi_normalizes_unicode_before_delegation(self):
+        with mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \
+                mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run, \
+                mock.patch.object(workspace_exec.sys, "argv", ["helper", "vivaldi", "https://münich.example/café"]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            workspace_exec.main()
+        self.assertEqual(run.call_args.args[0][-1], "https://xn--mnich-kva.example/caf%C3%A9")
+
+    def test_raw_vivaldi_respects_configured_browser_and_propagates_failure(self):
+        with mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \
+                mock.patch.dict(os.environ, {"PROJECT_BROWSER_VIVALDI": "/test/vivaldi"}), \
+                mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 5)) as run, \
+                mock.patch.object(workspace_exec.sys, "argv", ["helper", "vivaldi", "https://example.com"]), \
+                self.assertRaises(SystemExit) as error:
+            workspace_exec.main()
+        self.assertEqual(error.exception.code, 5)
+        self.assertEqual(run.call_args.kwargs["env"]["PROJECT_BROWSER_VIVALDI"], "/test/vivaldi")
+
+    def test_unsupported_raw_vivaldi_forms_never_launch_any_process(self):
+        cases = [[], ["--new-window"], ["--incognito", "https://example.com"],
+                 ["--user-data-dir=/tmp/profile", "https://example.com"], ["--app=https://example.com"],
+                 ["https://example.com", "--new-window"], ["--new-window", "--new-window", "https://example.com"],
+                 ["file:///tmp/page"], ["javascript:alert(1)"], ["example.com"],
+                 ["https://example.com:invalid/"], ["https://example.com:65536/"],
+                 ["https://exa mple.com/"], ["https://example.com%zz/"],
+                 ["https://example.com", "https://exa mple.com/"], ["https://example.com\\evil/"],
+                 ["https://" + "a" * 64 + ".example/"], ["https://[invalid]/"],
+                 ["https://example.com", "file:///tmp/page"], ["https://example.com/\nunsafe"]]
+        for arguments in cases:
+            with self.subTest(arguments=arguments), \
+                    mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \
+                    mock.patch.object(workspace_exec.subprocess, "run") as run, \
+                    mock.patch.object(workspace_exec.sys, "argv", ["helper", "vivaldi", *arguments]), \
+                    self.assertRaises(SystemExit):
+                workspace_exec.main()
+            run.assert_not_called()
+
     def test_browser_failure_is_propagated(self):
         with mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \
                 mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 5)), \
