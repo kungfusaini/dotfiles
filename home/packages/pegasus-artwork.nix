@@ -85,6 +85,17 @@ let
     "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/71230/ss_3e9f51f97a38e52a03749975a595754335427c4a.1920x1080.jpg"
     "0ca1700lnd0xv2wgjxjbmkvvn2yybyz8q8jj3lyi4p4c2pglqka2";
 
+  # Official Konami promotional key art; crop away the baked-in bottom logo.
+  symphonyKeyArt = fetch "symphony-of-the-night-key-art.jpg"
+    "https://www.konami.com/kde_cms/eu_publish/uploads/castlevania-key-art_with-logo.jpg"
+    "sha256-t/Eg7ju7xJW/ctjN2nGfbyr8BWUY2mysXud0l3ThujU=";
+  symphonyCover = fetch "symphony-of-the-night-cover.jpg"
+    "https://www.castlevaniacrypt.com/wp-content/img/sotn/case/case-front.jpg"
+    "sha256-Sxz7kJaeEenFurVG+NdG0SXSLSeAwwnG3RaQs6dMEus=";
+  symphonyLogo = fetch "symphony-of-the-night-logo.png"
+    "https://www.castlevaniacrypt.com/wp-content/img/sotn/logos/sotn-10.png"
+    "sha256-elVdNocbipqVQ5Roc0fa8L/Hk+IMuiBJIcydtk7uZLc=";
+
   raymanCover = fetchWithUserAgent "rayman-legends-cover.jpg"
     "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/242550/0782d002fa65af183a2fda2fc5f963059b33eaea/library_capsule.jpg"
     "15gkb7ydypdc51nihyaxag6xl9q5rkfqlp0qpb63q13a0x1innac";
@@ -131,6 +142,7 @@ pkgs.runCommand "pegasus-curated-artwork" {
     "$out/switch/super-smash-bros-ultimate" \
     "$out/switch/super-mario-3d-world-bowsers-fury" \
     "$out/ps2/crazy-taxi" \
+    "$out/pc/symphony-of-the-night" \
     "$out/steam/rayman-legends" \
     "$out/steam/civilization-vi"
 
@@ -182,6 +194,12 @@ pkgs.runCommand "pegasus-curated-artwork" {
   make_screenshot ${crazyTaxiScreenshot2} "$out/ps2/crazy-taxi/screenshot-2.jpg"
   make_screenshot ${crazyTaxiScreenshot3} "$out/ps2/crazy-taxi/screenshot-3.jpg"
   make_background ${crazyTaxiKeyArt} "$out/ps2/crazy-taxi/background.jpg"
+
+  make_box ${symphonyCover} "$out/pc/symphony-of-the-night/boxFront.jpg"
+  magick ${symphonyKeyArt} -crop '3330x1740+34+34' +repage \
+    -resize '1920x1080^' -gravity center -extent 1920x1080 \
+    -strip -quality 90 "$out/pc/symphony-of-the-night/background.jpg"
+  make_logo ${symphonyLogo} "$out/pc/symphony-of-the-night/logo.png"
 
   make_box ${raymanCover} "$out/steam/rayman-legends/boxFront.jpg"
   make_background ${raymanBackground} "$out/steam/rayman-legends/background.jpg"

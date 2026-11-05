@@ -37,12 +37,14 @@ let
     done
   '';
   pegasusArtwork = import ../packages/pegasus-artwork.nix { inherit pkgs; };
+  symphonyRecomp = pkgs.callPackage ../packages/symphony-recomp { };
 in
 {
   home.packages = with pkgs; [
     pcsx2
     pegasus-frontend
     ryubing
+    symphonyRecomp
   ];
 
   # Pegasus reads these as its native configuration. Keep the UI behavior and

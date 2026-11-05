@@ -15,3 +15,20 @@
 # players: 1
 # release: 2026-01-01
 # summary: A short description.
+
+collection: PC
+shortname: pc
+
+# Native recompilation, not an emulator. The supplied CUE gates availability.
+game: Castlevania: Symphony of the Night
+file: /home/sumeet/matrix/data/emulation/roms/ps1/Castlevania - Symphony of the Night (USA)/Castlevania - Symphony of the Night (USA).cue
+launch: symphony-recomp
+developer: Konami
+publisher: Konami
+genre: Action, Adventure, Role-playing
+players: 1
+release: 1997-10-02
+summary: Explore Dracula's sprawling castle as Alucard, uncover hidden passages, and master an arsenal of weapons and spells. Runs natively through SymphonyRecomp (beta).
+assets.box_front: /home/sumeet/.config/pegasus-frontend/media/pc/symphony-of-the-night/boxFront.jpg
+assets.background: /home/sumeet/.config/pegasus-frontend/media/pc/symphony-of-the-night/background.jpg
+assets.logo: /home/sumeet/.config/pegasus-frontend/media/pc/symphony-of-the-night/logo.png
