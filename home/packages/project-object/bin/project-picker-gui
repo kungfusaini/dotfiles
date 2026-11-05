@@ -916,8 +916,17 @@ class PickerApplication(Adw.Application):
             if self.search.get_text():
                 self.search.set_text("")
             self.refresh_rows()
+            row = self.listbox.get_selected_row()
+            if row:
+                # Wait for the frame's layout after expanding/filtering, then
+                # center using the new row bounds and scroll adjustment range.
+                row.add_tick_callback(self.center_row_after_layout)
         except Exception as error:
             backend.notify_error(str(error))
+
+    def center_row_after_layout(self, row, _clock):
+        GLib.idle_add(self.reveal_row, row, True)
+        return GLib.SOURCE_REMOVE
 
     def restore_footer_hint(self):
         if self.stack.get_visible_child_name() == "list" and self.pending_stream_open_id is None:
@@ -1103,13 +1112,21 @@ class PickerApplication(Adw.Application):
         self.listbox.select_row(row)
         GLib.idle_add(self.reveal_row, row)
 
-    def reveal_row(self, row):
+    def reveal_row(self, row, center=False):
         if row not in self.rows or row.get_parent() is not self.listbox:
+            return GLib.SOURCE_REMOVE
+        if center and self.listbox.get_selected_row() is not row:
             return GLib.SOURCE_REMOVE
         computed, bounds = row.compute_bounds(self.listbox)
         if computed:
             adjustment = self.list_scroll.get_vadjustment()
-            adjustment.clamp_page(bounds.get_y(), bounds.get_y() + bounds.get_height())
+            if center:
+                target = bounds.get_y() + bounds.get_height() / 2 - adjustment.get_page_size() / 2
+                adjustment.set_value(max(adjustment.get_lower(), min(
+                    target, adjustment.get_upper() - adjustment.get_page_size(),
+                )))
+            else:
+                adjustment.clamp_page(bounds.get_y(), bounds.get_y() + bounds.get_height())
         return GLib.SOURCE_REMOVE
 
     def move_selection(self, delta):

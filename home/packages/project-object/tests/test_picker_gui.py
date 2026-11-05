@@ -131,6 +131,41 @@ class PickerGuiSourceTests(unittest.TestCase):
         self.assertIn("GLib.idle_add(self.reveal_row, row)", methods["select_visible_row"])
         self.assertIn("adjustment.clamp_page", methods["reveal_row"])
 
+    def test_center_destination_after_layout_and_clamp_at_list_edges(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        methods = [copy.deepcopy(node) for node in picker.body if isinstance(node, ast.FunctionDef) and node.name in {"reveal_row", "center_row_after_layout"}]
+        glib = mock.Mock(SOURCE_REMOVE=False)
+        namespace = {"GLib": glib}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        row, listbox, adjustment, bounds = (mock.Mock() for _ in range(4))
+        row.get_parent.return_value = listbox
+        row.compute_bounds.return_value = (True, bounds)
+        listbox.get_selected_row.return_value = row
+        adjustment.get_lower.return_value = 0
+        adjustment.get_upper.return_value = 2000
+        adjustment.get_page_size.return_value = 400
+        bounds.get_height.return_value = 40
+        app = SimpleNamespace(rows=[row], listbox=listbox, list_scroll=SimpleNamespace(get_vadjustment=lambda: adjustment))
+        app.reveal_row = lambda *args: namespace["reveal_row"](app, *args)
+        self.assertFalse(namespace["center_row_after_layout"](app, row, None))
+        glib.idle_add.assert_called_once_with(app.reveal_row, row, True)
+        for y, expected in [(800, 620), (0, 0), (1960, 1600)]:
+            bounds.get_y.return_value = y
+            app.reveal_row(row, True)
+            adjustment.set_value.assert_called_with(expected)
+        adjustment.set_value.reset_mock()
+        listbox.get_selected_row.return_value = None
+        app.reveal_row(row, True)
+        adjustment.set_value.assert_not_called()
+        listbox.get_selected_row.return_value = row
+        row.get_parent.return_value = None
+        app.reveal_row(row, True)
+        adjustment.set_value.assert_not_called()
+        row.get_parent.return_value = listbox
+        app.reveal_row(row)
+        adjustment.clamp_page.assert_called_once_with(1960, 2000)
+
     def test_project_header_aggregates_only_open_scopes_with_working_priority(self):
         tree = ast.parse(GUI_SOURCE.read_text())
         picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
@@ -342,6 +377,7 @@ class PickerGuiSourceTests(unittest.TestCase):
             },
             expanded_project_ids=set(), footer_hint=mock.Mock(), restore_footer_hint=mock.Mock(),
             search=mock.Mock(), save_picker_state=mock.Mock(), refresh_rows=mock.Mock(),
+            listbox=mock.Mock(), center_row_after_layout=mock.Mock(),
         )
         app.search.get_text.return_value = "hidden by search"
         app.scope_requires_attention = lambda *args: namespace["scope_requires_attention"](app, *args)
@@ -362,6 +398,7 @@ class PickerGuiSourceTests(unittest.TestCase):
                 self.assertIn(expected["projectId"], app.expanded_project_ids)
         app.search.set_text.assert_called_with("")
         app.refresh_rows.assert_called()
+        app.listbox.get_selected_row.return_value.add_tick_callback.assert_called_with(app.center_row_after_layout)
         # Current compositor workspace is open even before session state catches up.
         app.current_workspace = "a/closed"
         self.assertIn(scopes[4], app.attention_scopes())
