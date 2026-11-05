@@ -26,6 +26,8 @@ from project_object import (  # noqa: E402
     write_json_atomic,
 )
 
+from agent_browser import APP_PREFIX, open_agent_urls  # noqa: E402
+
 HOME = Path.home()
 DATA_ROOT = Path(os.environ.get("PROJECT_OBJECT_DATA_DIR", Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "project-object"))
 RUNTIME_ROOT = Path(os.environ.get("PROJECT_OBJECT_RUNTIME_DIR", Path(os.environ.get("XDG_RUNTIME_DIR", f"/tmp/project-object-{os.getuid()}")) / "project-object"))
@@ -96,6 +98,8 @@ def clients() -> list[dict]:
 
 def is_browser(client: dict) -> bool:
     classes = (str(client.get("class", "")).lower(), str(client.get("initialClass", "")).lower())
+    if any(value.startswith(APP_PREFIX) for value in classes):
+        return False  # Interactive tab routing must never reuse an agent app window.
     return any(any(value.startswith(prefix) for prefix in BROWSER_CLASSES) for value in classes)
 
 
@@ -453,12 +457,26 @@ def main() -> int:
     try:
         desktops = os.environ.get("XDG_CURRENT_DESKTOP", "").lower().split(":")
         if "hyprland" not in desktops:
+            if os.environ.get(LAUNCH_WORKSPACE_ENV) or os.environ.get("PI_CODING_AGENT"):
+                raise ValueError("Focus-preserving agent browser launches require Hyprland")
             # Shared MIME handler also runs in the optional GNOME session.
             # There are no Hyprland workspaces to resolve or place windows in.
             if args.command != "mark-project-click":
                 urls = validate_urls(args.urls) if args.command == "open" else []
                 subprocess.Popen([VIVALDI, *urls], start_new_session=True)
             return 0
+        if os.environ.get(LAUNCH_WORKSPACE_ENV):
+            if args.command != "open":
+                raise ValueError("Agent browser launches may open URLs, not change focus")
+            with browser_lock():
+                open_agent_urls(args.urls, os.environ[LAUNCH_WORKSPACE_ENV],
+                                os.environ.get("PROJECT_OBJECT_LAUNCH_ID", ""),
+                                hyprctl=HYPRCTL, vivaldi=VIVALDI)
+            return 0
+        if os.environ.get("PI_CODING_AGENT"):
+            if args.command != "open":
+                raise ValueError("Agents may open browser URLs, not change focus")
+            return subprocess.run(["project-workspace-exec", sys.argv[0], *sys.argv[1:]], check=False).returncode
         if args.command == "mark-project-click":
             mark_project_click()
         elif args.command == "focus":

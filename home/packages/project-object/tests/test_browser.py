@@ -30,6 +30,9 @@ def load_browser(root: Path):
 
 class BrowserTests(unittest.TestCase):
     def setUp(self):
+        environment = mock.patch.dict(os.environ, {"PI_CODING_AGENT": "", "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME": ""})
+        environment.start()
+        self.addCleanup(environment.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
         self.data = self.root / "data"
@@ -49,6 +52,42 @@ class BrowserTests(unittest.TestCase):
 
     def tearDown(self):
         self.temporary.cleanup()
+
+    def test_agent_mode_overrides_interactive_project_route(self):
+        with mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland", "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME": "Alpha", "PROJECT_OBJECT_LAUNCH_ID": "a" * 32}), \
+                mock.patch("sys.argv", ["project-browser", "open", "--mode", "project", "https://example.com"]), \
+                mock.patch.object(self.browser, "browser_lock", return_value=nullcontext()), \
+                mock.patch.object(self.browser, "open_agent_urls") as agent, \
+                mock.patch.object(self.browser, "open_urls") as interactive, \
+                mock.patch.object(self.browser, "consume_click_mode") as click:
+            self.assertEqual(self.browser.main(), 0)
+        agent.assert_called_once_with(["https://example.com"], "Alpha", "a" * 32,
+                                      hyprctl=self.browser.HYPRCTL, vivaldi=self.browser.VIVALDI)
+        interactive.assert_not_called()
+        click.assert_not_called()
+
+    def test_direct_pi_browser_launch_is_routed_through_workspace_helper(self):
+        with mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland", "PI_CODING_AGENT": "1"}), \
+                mock.patch("sys.argv", ["project-browser", "open", "https://example.com"]), \
+                mock.patch.object(self.browser.subprocess, "run") as run:
+            run.return_value.returncode = 7
+            self.assertEqual(self.browser.main(), 7)
+        run.assert_called_once_with(["project-workspace-exec", "project-browser", "open", "https://example.com"], check=False)
+
+    def test_agent_cannot_focus_or_fall_back_to_gnome(self):
+        for desktop, args in [("Hyprland", ["focus"]), ("GNOME", ["open", "https://example.com"])]:
+            with mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": desktop, "PI_CODING_AGENT": "1"}), \
+                    mock.patch("sys.argv", ["project-browser", *args]), \
+                    mock.patch.object(self.browser, "notify_error"), \
+                    mock.patch.object(self.browser, "focus_browser") as focus, \
+                    mock.patch.object(self.browser.subprocess, "Popen") as launch:
+                self.assertEqual(self.browser.main(), 1)
+            focus.assert_not_called()
+            launch.assert_not_called()
+
+    def test_interactive_routing_excludes_agent_app_windows(self):
+        self.assertFalse(self.browser.is_browser({"class": "vivaldi-127.0.0.1__poagentabc-Default"}))
+        self.assertTrue(self.browser.is_browser({"class": "vivaldi-stable"}))
 
     def test_gnome_opens_links_without_querying_hyprland(self):
         with mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "GNOME"}), \

@@ -61,6 +61,48 @@ class WorkspaceExecTests(unittest.TestCase):
         verify.assert_called_once_with("Command Center · Agents", "unique", {"0xabc"})
         self.assertIn("verified new window", output.getvalue())
 
+    def test_browser_delegates_synchronously_without_competing_exec_rule(self):
+        with mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \
+                mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run, \
+                mock.patch.object(workspace_exec, "verify_window") as verify, \
+                mock.patch.object(workspace_exec.sys, "argv", ["helper", "/package/bin/project-browser", "open", "--mode", "project", "https://example.com"]), \
+                contextlib.redirect_stdout(io.StringIO()):
+            workspace_exec.main()
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_args.args[0][0], "/package/bin/project-browser")
+        self.assertEqual(run.call_args.kwargs["env"][workspace_exec.LAUNCH_WORKSPACE_ENV], "Command Center · Agents")
+        verify.assert_not_called()
+
+    def test_browser_failure_is_propagated(self):
+        with mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \
+                mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 5)), \
+                mock.patch.object(workspace_exec.sys, "argv", ["helper", "project-browser", "open", "https://example.com"]), \
+                self.assertRaises(SystemExit) as error:
+            workspace_exec.main()
+        self.assertEqual(error.exception.code, 5)
+
+    def test_app_handoff_matches_class_without_process_environment(self):
+        identity = "a" * 32
+        window = client(**{"class": "vivaldi-127.0.0.1__poagent" + identity + "b" * 16 + "-Default"})
+        with mock.patch.object(workspace_exec, "hypr_clients", return_value=[window]), \
+                mock.patch.object(workspace_exec, "process_has_launch_id", return_value=False):
+            workspace_exec.verify_window("Command Center · Agents", identity, set())
+
+    def test_selected_address_survives_parent_exit_after_move(self):
+        with mock.patch.object(workspace_exec, "hypr_clients", side_effect=[[client("Wrong")], [client()]]), \
+                mock.patch.object(workspace_exec, "process_has_launch_id", side_effect=[True, False]) as marker, \
+                mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "ok")), \
+                mock.patch.object(workspace_exec.time, "sleep"):
+            workspace_exec.verify_window("Command Center · Agents", "marker", set())
+        self.assertEqual(marker.call_count, 1)
+
+    def test_help_does_not_contact_compositor(self):
+        with mock.patch.object(workspace_exec.sys, "argv", ["helper", "--help"]), \
+                mock.patch.object(workspace_exec, "hypr_clients") as clients, \
+                contextlib.redirect_stdout(io.StringIO()):
+            workspace_exec.main()
+        clients.assert_not_called()
+
     def test_rejects_rule_and_dispatch_delimiters(self):
         for character in ";[],\r\n\0":
             with self.subTest(character=character), self.assertRaises(RuntimeError):
