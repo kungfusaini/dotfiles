@@ -20,6 +20,7 @@ in
     piBin = "${pi}/bin/pi";
     notifyBin = "${pkgs.libnotify}/bin/notify-send";
     busBin = "${pkgs.systemd}/bin/busctl";
+    systemctlBin = "${pkgs.systemd}/bin/systemctl";
     timezone = "Europe/London";
     firstDate = "2026-11-03";
     model = "gpt-6.1-sol";
@@ -30,6 +31,7 @@ in
     Service = {
       Type = "oneshot";
       ExecStart = "${roundup}/bin/command-center-roundup run";
+      ExecStopPost = "${roundup}/bin/command-center-roundup schedule-retry";
       Environment = [
         "XDG_CONFIG_HOME=${config.xdg.configHome}"
         "XDG_DATA_HOME=${config.xdg.dataHome}"
@@ -71,6 +73,17 @@ in
       AccuracySec = "1min";
     };
     Install.WantedBy = [ "timers.target" ];
+  };
+  # Not enabled at login: the service arms this only for bounded quality retries.
+  systemd.user.timers.command-center-roundup-retry = {
+    Unit.Description = "Retry a roundup quality check after two minutes";
+    Timer = {
+      OnActiveSec = "2min";
+      Unit = "command-center-roundup.service";
+      AccuracySec = "1s";
+      RemainAfterElapse = false;
+      WakeSystem = false;
+    };
   };
   systemd.user.tmpfiles.rules = [
     "d ${archive} 0700 - - -"

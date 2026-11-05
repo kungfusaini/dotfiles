@@ -4,6 +4,7 @@
 let
   home = config.home-manager.users.sumeet;
   timer = home.systemd.user.timers.command-center-roundup.Timer;
+  retry = home.systemd.user.timers.command-center-roundup-retry;
   service = home.systemd.user.services.command-center-roundup.Service;
   # Parse for assertions only; production retains the original store dependencies.
   settings = builtins.fromJSON (builtins.unsafeDiscardStringContext home.xdg.configFile."command-center/roundup.json".text);
@@ -12,6 +13,11 @@ in
 assert timer.OnCalendar == "*-*-* 00:15:00 Europe/London";
 assert timer.Persistent && !timer.WakeSystem;
 assert timer.OnStartupSec == "2min" && timer.OnUnitInactiveSec == "1h";
+assert retry.Timer.OnActiveSec == "2min" && retry.Timer.AccuracySec == "1s";
+assert retry.Timer.Unit == "command-center-roundup.service";
+assert !retry.Timer.WakeSystem && !retry.Timer.RemainAfterElapse;
+assert (retry.Install.WantedBy or [ ]) == [ ];
+assert builtins.match ".* schedule-retry" service.ExecStopPost != null;
 assert settings.model == "gpt-6.1-sol";
 assert settings.timezone == "Europe/London" && settings.firstDate == "2026-11-03";
 assert settings.piBin == "${pi}/bin/pi";
@@ -23,6 +29,7 @@ assert builtins.substring 0 11 (builtins.head service.ExecStart) == "/nix/store/
 {
   schedule = timer.OnCalendar;
   persistent = timer.Persistent;
+  fastRetryWait = retry.Timer.OnActiveSec;
   wakeLaptop = timer.WakeSystem;
   model = settings.model;
   sourceReadOnly = true;

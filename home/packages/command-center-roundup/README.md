@@ -7,7 +7,8 @@ Nix-managed, Codex-only, headless daily achievement records. The Home Manager mo
 - At 00:15 **Europe/London**, generate the previous calendar day. DST uses local calendar dates, not fixed 24-hour UTC subtraction.
 - Startup and hourly cheap pending checks catch missed days without waking a sleeping laptop. Persistent systemd activation is one catch-up invocation, so the application enumerates all missing dates itself.
 - Start at 3 November 2026. Existing dated `roundup.md` + `sources.json` accounts are preserved, including the manually reviewed first day. No automatic revision or silent replacement.
-- At most three missing dates are processed per invocation. Each failed date gets at most three attempts per local day, at least one hour apart. Further backlog drains through later hourly checks; existing days cause no model calls.
+- At most three missing dates are processed per invocation. Each failed date gets at most three attempts per local day. Draft, review, citation and source-change problems retry after **two minutes from failure completion**; network/service and other failures keep a one-hour backoff. Existing days cause no model calls.
+- A separate Nix-managed one-shot timer is armed by the service's stop hook only while a fast failure has budget remaining. It stops after success or exhaustion, is not enabled at login, and never wakes the laptop. Daily/startup/hourly checks remain the fallback. There is no permanent two-minute poll. A durable per-attempt dispatch marker prevents rearming the same stale failure if a subsequent run cannot record progress (for example, disk full or an inaccessible archive). Timer-control failures fall back to the normal hourly checks rather than looping. A retry still needs its own generation/review time; two minutes is the wait, not a completion promise.
 - Empty dates receive a deterministic no-recorded-activity account without model calls or success notifications. This does not claim the user did no work.
 
 Inputs are the registered project/stream worklogs, **including archived scopes**. Raw AI transcripts, arbitrary repository files and project notes are not read. UUID-based paths, no-follow file access, single-link/ownership checks, byte bounds and strict parsing protect managed state. Oversized days, incomplete lines and malformed sources fail closed, never silently truncate. A conservative obvious-secret detector blocks suspicious input; it is **not a complete secret/privacy scanner**. Ordinary worklog prose is processed by the configured Codex subscription provider, as in normal Pi work.
@@ -25,7 +26,7 @@ The existing managed Pi package runs `openai-codex/gpt-6.1-sol` with medium reas
 
 An automated same-model reviewer can miss errors. A passed check is **not** independent factual verification or a guarantee of all claims. The renderer labels that limitation. There is no claim of live deployment verification. Source IDs, paths, line numbers, timestamps and hashes preserve traceability without copying complete source logs.
 
-Unresolved reviews remain private under state `pending/DATE/` and do not become completed archive days. Failure state contains safe codes, never raw exceptions, model output or worklog payloads in the journal. Successful model reasoning/event streams are temporary, private and discarded. Existing Codex auth can be refreshed normally; no key is copied into the store or another credential directory.
+Unresolved reviews remain private under state `pending/DATE/` and do not become completed archive days. State also keeps the **latest 90 attempts**, with start/finish times, outcome/reason code and bounded reviewer feedback (at most two reviews, ten 500-character issues each). Each completed review is checkpointed immediately, so history survives later retries/success or interruption during a correction. Interrupted attempts retain an explicit unknown-outcome observation rather than a fabricated finish time. No per-attempt raw draft/transcript copy is made. Obvious secret patterns in review feedback are withheld, though this is not a complete secret scanner. Only safe reason codes go to the journal, never reviewer text, raw exceptions or worklog payloads. Successful model reasoning/event streams are temporary, private and discarded. Existing Codex auth can be refreshed normally; no key is copied into the store or another credential directory.
 
 ## Storage and notifications
 
@@ -43,11 +44,12 @@ Late-written historical events are not silently folded into an existing roundup.
 ```console
 command-center-roundup run
 command-center-roundup status
+command-center-roundup schedule-retry  # service stop hook; normally automatic
 command-center-roundup test-notification
 ```
 
 `--config PATH` supports isolated fixture runs. Normal configuration is Home Manager's `~/.config/command-center/roundup.json`. Test notification is visible only when explicitly invoked; unit/package tests mock notifications and models.
 
-Package checks cover time boundaries/DST, multi-day catch-up, empty days, correction/rejection, failed/offline calls, retry budgets, concurrent execution/publication, source changes, malformed files, symlink/hardlink/FIFO containment, permissions, deferred notifications and actual-model/no-tool enforcement.
+Package checks cover time boundaries/DST, multi-day catch-up, empty days, correction/rejection, failed/offline calls, differentiated retry deadlines from completion, daily budgets, on-demand timer arming/stopping, bounded private attempt history, concurrent execution/publication, source changes, malformed files, symlink/hardlink/FIFO containment, permissions, deferred notifications and actual-model/no-tool enforcement.
 
 The service sandbox makes the source root read-only and allows writes only to the archive, private state and existing Pi auth directory (atomic OAuth refresh needs the containing directory). Nix-managed Pi files resolve into the read-only store. This is not an OS sandbox against all same-user processes; model tools are disabled rather than entrusted with system access.

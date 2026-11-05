@@ -124,6 +124,199 @@ class RoundupTests(unittest.TestCase):
         self.assertEqual(result["status"], "ok")
         self.assertEqual(result["published"], ["2026-11-03"])
 
+    def test_quality_retry_two_minutes_and_stops_at_daily_budget(self):
+        def rejected(stage, payload):
+            self.calls.append(stage)
+            return self.draft(payload["events"]) if stage == "draft" else {"verdict": "revise", "issues": ["Explain the internal test name E00002"]}
+        first = self.run_job(model=rejected)
+        self.assertEqual(first["failure_reasons"], {"2026-11-03": "draft_needs_review"})
+        state = r.read_json(Path(self.config["stateRoot"]) / "state.json")
+        self.assertEqual(state["failures"]["2026-11-03"]["retry_after"], self.now.timestamp() + 120)
+        self.assertTrue(r.fast_retry_pending(state, self.now, "Europe/London"))
+        self.run_job(model=rejected, now=self.now + dt.timedelta(seconds=119))
+        self.assertEqual(len(self.calls), 4)
+        self.run_job(model=rejected, now=self.now + dt.timedelta(seconds=120))
+        self.assertEqual(len(self.calls), 8)
+        self.run_job(model=rejected, now=self.now + dt.timedelta(seconds=240))
+        self.run_job(model=rejected, now=self.now + dt.timedelta(seconds=360))
+        self.assertEqual(len(self.calls), 12)
+        state = r.read_json(Path(self.config["stateRoot"]) / "state.json")
+        self.assertFalse(r.fast_retry_pending(state, self.now, "Europe/London"))
+        self.assertEqual(len(self.notices), 1)
+
+    def test_backoff_starts_at_failure_completion_not_job_start(self):
+        end = self.now + dt.timedelta(minutes=5)
+        for code, delay in [("invalid_model_json", 120), ("codex_unavailable", 3600)]:
+            with self.subTest(code=code):
+                state_path = Path(self.config["stateRoot"]) / "state.json"
+                state_path.unlink(missing_ok=True)
+                def failed(stage, payload):
+                    raise r.Problem(code)
+                self.run_job(model=failed, clock=lambda: end)
+                state = r.read_json(state_path)
+                self.assertEqual(state["failures"]["2026-11-03"]["retry_after"], end.timestamp() + delay)
+                self.assertEqual(state["history"][-1]["finished_at"], r.iso_now(end))
+
+    def test_network_deadline_survives_local_midnight(self):
+        def failed(stage, payload):
+            raise r.Problem("codex_unavailable")
+        late = dt.datetime(2026, 11, 4, 23, 50, tzinfo=r.UTC)
+        self.run_job(model=failed, now=late)
+        self.run_job(now=late + dt.timedelta(minutes=20))
+        self.assertFalse(self.calls)
+        self.assertEqual(self.run_job(now=late + dt.timedelta(hours=1))["published"][0], "2026-11-03")
+
+    def test_attempt_history_survives_later_success(self):
+        def rejected(stage, payload):
+            return self.draft(payload["events"]) if stage == "draft" else {"verdict": "revise", "issues": ["Unsupported claim E00001"]}
+        self.run_job(model=rejected)
+        self.run_job(now=self.now + dt.timedelta(minutes=2))
+        state = r.read_json(Path(self.config["stateRoot"]) / "state.json")
+        self.assertFalse(state["failures"])
+        self.assertEqual([h["status"] for h in state["history"]], ["failed", "published"])
+        self.assertEqual(state["history"][0]["code"], "draft_needs_review")
+        self.assertEqual(state["history"][0]["reviews"][1]["issues"], ["Unsupported claim E00001"])
+        self.assertEqual(state["history"][1]["reviews"][0]["verdict"], "pass")
+
+    def test_attempt_history_is_bounded_and_private(self):
+        state_path = Path(self.config["stateRoot"]) / "state.json"
+        old = {"version": 1, "failures": {}, "notified": [], "history": [{"id": str(i), "status": "published"} for i in range(100)]}
+        r.save_json(state_path, old)
+        self.run_job()
+        state = r.read_json(state_path)
+        self.assertEqual(len(state["history"]), 90)
+        self.assertEqual(stat.S_IMODE(state_path.stat().st_mode), 0o600)
+        self.assertEqual(state["history"][0]["id"], "11")
+
+    def test_private_review_history_masks_obvious_secrets(self):
+        value = "sk-" + "A" * 40
+        def rejected(stage, payload):
+            return self.draft(payload["events"]) if stage == "draft" else {"verdict": "revise", "issues": [value]}
+        self.run_job(model=rejected)
+        state = r.read_json(Path(self.config["stateRoot"]) / "state.json")
+        self.assertNotIn(value, json.dumps(state["history"]))
+        self.assertEqual(state["history"][0]["reviews"][0]["issues"], ["Private review detail withheld"])
+        self.assertNotIn(value, json.dumps(self.notices))
+
+    def test_schedule_retry_arms_then_stops_without_permanent_polling(self):
+        def rejected(stage, payload):
+            raise r.Problem("invalid_model_json")
+        self.run_job(model=rejected)
+        self.config["systemctlBin"] = "systemctl"
+        class Reply:
+            returncode = 0
+        with patch.object(r.subprocess, "run", return_value=Reply()) as call:
+            self.assertEqual(r.schedule_retry(self.config), {"fast_retry_timer": "armed"})
+            self.assertIn("restart", call.call_args.args[0])
+            self.assertIn("--no-block", call.call_args.args[0])
+        self.run_job(now=self.now + dt.timedelta(minutes=2))
+        with patch.object(r.subprocess, "run", return_value=Reply()) as call:
+            self.assertEqual(r.schedule_retry(self.config), {"fast_retry_timer": "stopped"})
+            self.assertIn("stop", call.call_args.args[0])
+
+    def test_fast_timer_not_rearmed_if_attempt_cannot_advance(self):
+        def failed(stage, payload):
+            raise r.Problem("invalid_model_json")
+        self.run_job(model=failed)
+        self.config["systemctlBin"] = "systemctl"
+        class Reply:
+            returncode = 0
+        with patch.object(r.subprocess, "run", return_value=Reply()) as call:
+            self.assertEqual(r.schedule_retry(self.config)["fast_retry_timer"], "armed")
+            self.assertIn("restart", call.call_args.args[0])
+        original = r.directory
+        def inaccessible(path, create=False):
+            if Path(path) == Path(self.config["archiveRoot"]):
+                raise PermissionError("archive unavailable")
+            return original(path, create)
+        with patch.object(r, "directory", side_effect=inaccessible):
+            with self.assertRaises(PermissionError):
+                self.run_job(now=self.now + dt.timedelta(minutes=3))
+        for _ in range(3):
+            with patch.object(r.subprocess, "run", return_value=Reply()) as call:
+                self.assertEqual(r.schedule_retry(self.config)["fast_retry_timer"], "stopped")
+                self.assertIn("stop", call.call_args.args[0])
+        state = r.read_json(Path(self.config["stateRoot"]) / "state.json")
+        self.assertEqual(state["failures"]["2026-11-03"]["attempts"], 1)
+        self.assertEqual(len(state["fast_retry_scheduled"]), 1)
+
+    def test_schedule_reservation_failure_does_not_arm_timer(self):
+        def failed(stage, payload):
+            raise r.Problem("invalid_model_json")
+        self.run_job(model=failed)
+        self.config["systemctlBin"] = "systemctl"
+        class Reply:
+            returncode = 0
+        with patch.object(r, "save_json", side_effect=OSError("disk full")), patch.object(r.subprocess, "run", return_value=Reply()) as call:
+            with self.assertRaises(OSError):
+                r.schedule_retry(self.config)
+            self.assertEqual(call.call_count, 1)
+            self.assertIn("stop", call.call_args.args[0])
+
+    def test_repeated_stop_hook_does_not_cancel_not_yet_due_retry(self):
+        def failed(stage, payload):
+            raise r.Problem("invalid_model_json")
+        self.run_job(model=failed)
+        self.config["systemctlBin"] = "systemctl"
+        state_path = Path(self.config["stateRoot"]) / "state.json"
+        state = r.read_json(state_path)
+        state["failures"]["2026-11-03"]["retry_after"] = dt.datetime.now(r.UTC).timestamp() + 120
+        r.save_json(state_path, state)
+        class Reply:
+            returncode = 0
+        with patch.object(r.subprocess, "run", return_value=Reply()):
+            self.assertEqual(r.schedule_retry(self.config)["fast_retry_timer"], "armed")
+        Reply.stdout = b"waiting\n"
+        with patch.object(r.subprocess, "run", return_value=Reply()) as call:
+            self.assertEqual(r.schedule_retry(self.config), {"fast_retry_timer": "unchanged", "reason": "timer_still_waiting"})
+            self.assertEqual(call.call_count, 1)
+            self.assertIn("show", call.call_args.args[0])
+
+    def test_delayed_dispatch_uses_actual_timer_state_not_old_failure_deadline(self):
+        def failed(stage, payload):
+            raise r.Problem("invalid_model_json")
+        self.run_job(model=failed)
+        self.config["systemctlBin"] = "systemctl"
+        class Reply:
+            returncode = 0
+            stdout = b"waiting\n"
+        # The fixture failure is in the past; a long backfill delayed dispatch.
+        with patch.object(r.subprocess, "run", return_value=Reply()):
+            self.assertEqual(r.schedule_retry(self.config)["fast_retry_timer"], "armed")
+        with patch.object(r.subprocess, "run", return_value=Reply()) as call:
+            self.assertEqual(r.schedule_retry(self.config)["fast_retry_timer"], "unchanged")
+            self.assertEqual(call.call_count, 1)
+            self.assertIn("show", call.call_args.args[0])
+
+    def test_completed_review_survives_interrupted_correction(self):
+        calls = []
+        def model(stage, payload):
+            calls.append(stage)
+            if stage == "review":
+                return {"verdict": "revise", "issues": ["First completed critique E00001"]}
+            if len(calls) > 1:
+                raise KeyboardInterrupt()
+            return self.draft(payload["events"])
+        with self.assertRaises(KeyboardInterrupt):
+            self.run_job(model=model)
+        state = r.read_json(Path(self.config["stateRoot"]) / "state.json")
+        entry = state["history"][0]
+        self.assertEqual(entry["status"], "started")
+        self.assertNotIn("finished_at", entry)
+        self.assertEqual(entry["reviews"], [{"verdict": "revise", "issues": ["First completed critique E00001"]}])
+        self.run_job()
+        state = r.read_json(Path(self.config["stateRoot"]) / "state.json")
+        self.assertEqual(state["history"][0]["status"], "interrupted")
+        self.assertEqual(state["history"][0]["reviews"], entry["reviews"])
+
+    def test_service_failure_does_not_arm_fast_timer(self):
+        def failed(stage, payload):
+            raise r.Problem("codex_unavailable")
+        self.run_job(model=failed)
+        state = r.read_json(Path(self.config["stateRoot"]) / "state.json")
+        self.assertFalse(r.fast_retry_pending(state, self.now, "Europe/London"))
+        self.assertEqual(state["history"][0]["retry_delay_seconds"], 3600)
+
     def test_three_failed_attempts_per_local_day(self):
         def failed(stage, payload):
             self.calls.append(stage)
@@ -312,7 +505,11 @@ class RoundupTests(unittest.TestCase):
             self.run_job(model=interrupted)
         state = r.read_json(Path(self.config["stateRoot"]) / "state.json")
         self.assertEqual(state["failures"]["2026-11-03"]["attempts"], 1)
+        self.assertEqual(state["history"][0]["status"], "started")
         self.assertEqual(self.run_job()["published"], [])
+        state = r.read_json(Path(self.config["stateRoot"]) / "state.json")
+        self.assertEqual(state["history"][0]["status"], "interrupted")
+        self.assertEqual(state["history"][0]["code"], "outcome_not_recorded")
         self.assertFalse(self.calls)
         self.assertEqual(self.run_job(now=self.now + dt.timedelta(hours=2))["published"], ["2026-11-03"])
 

@@ -22,6 +22,16 @@ UTC = dt.timezone.utc
 TEXT_FIELDS = ("summary", "task", "result", "reason", "lesson", "blocker", "next")
 MAX_PACKET = 400_000
 MAX_FILE = 64 * 1024 * 1024
+FAST_RETRY_SECONDS = 120
+SLOW_RETRY_SECONDS = 3600
+HISTORY_LIMIT = 90
+FAST_FAILURES = frozenset({
+    "draft_needs_review", "invalid_model_json", "invalid_draft_text",
+    "invalid_draft_claims", "invalid_draft_claim", "invalid_draft_schema",
+    "invalid_sections", "invalid_section", "empty_section", "invalid_citation",
+    "missing_workstream_coverage", "draft_too_long", "invalid_review",
+    "inconsistent_review", "sources_changed_retry",
+})
 SECRET = re.compile(r"(?:-----BEGIN .{0,30}PRIVATE KEY-----|\b(?:sk-|ghp_|github_pat_)[A-Za-z0-9_-]{20,}|\bAKIA[A-Z0-9]{16}\b|\b[0-9]{8,12}:[A-Za-z0-9_-]{30,})")
 
 
@@ -409,7 +419,7 @@ def notify(config, title, body):
         return False
 
 
-def build(config, day, now, model, pending):
+def build(config, day, now, model, pending, audit=None, checkpoint=None):
     root, archive = Path(config["sourceRoot"]), Path(config["archiveRoot"])
     events, sources = collect(root, day, config["timezone"])
     if not events:
@@ -422,6 +432,12 @@ def build(config, day, now, model, pending):
         for attempt in range(2):
             review = validate_review(model("review", {"date": day.isoformat(), "events": events, "draft": draft}))
             reviews.append(review)
+            if audit is not None:
+                # Private, bounded feedback only; never copy drafts into history.
+                issues = ["Private review detail withheld" if SECRET.search(issue) else issue[:500] for issue in review["issues"][:10]]
+                audit.append({"verdict": review["verdict"], "issues": issues})
+                if checkpoint is not None:
+                    checkpoint()
             if review["verdict"] == "pass":
                 break
             if attempt == 0:
@@ -440,8 +456,88 @@ def build(config, day, now, model, pending):
     return bool(events)
 
 
-def run(config, now=None, model=None, notifier=notify):
-    now = now or dt.datetime.now(UTC)
+def fast_retry_pending(state, now, timezone):
+    if not isinstance(state, dict) or not isinstance(state.get("failures", {}), dict) or any(not isinstance(f, dict) for f in state.get("failures", {}).values()):
+        raise Problem("invalid_state")
+    today = now.astimezone(ZoneInfo(timezone)).date().isoformat()
+    return any(f.get("code") in FAST_FAILURES and (f.get("attempt_day") != today or f.get("attempts", 0) < 3) for f in state.get("failures", {}).values())
+
+
+def timer_action(config, action):
+    try:
+        result = subprocess.run([config["systemctlBin"], "--user", "--no-block", action, "command-center-roundup-retry.timer"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        raise Problem("retry_timer_unavailable") from None
+    if result.returncode:
+        raise Problem("retry_timer_unavailable")
+
+
+def timer_waiting(config):
+    try:
+        result = subprocess.run([config["systemctlBin"], "--user", "show", "--property=SubState", "--value", "command-center-roundup-retry.timer"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0 and getattr(result, "stdout", b"").strip() == b"waiting"
+
+
+def schedule_retry(config):
+    """Dispatch at most one fast timer for each durably recorded failed attempt."""
+    root = Path(config["stateRoot"])
+    try:
+        parent = directory(root)
+    except FileNotFoundError:
+        timer_action(config, "stop")
+        return {"fast_retry_timer": "stopped"}
+    try:
+        lock = os.open("run.lock", os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600, dir_fd=parent)
+    finally:
+        os.close(parent)
+    try:
+        info = os.fstat(lock)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
+            raise Problem("unsafe_lock")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {"fast_retry_timer": "unchanged", "reason": "generation_in_progress"}
+        state_path = root / "state.json"
+        state = read_json(state_path, missing=True) or {}
+        now = dt.datetime.now(UTC)
+        if not fast_retry_pending(state, now, config["timezone"]):
+            timer_action(config, "stop")
+            return {"fast_retry_timer": "stopped"}
+        if not isinstance(state.get("history", []), list) or any(not isinstance(h, dict) for h in state.get("history", [])) or not isinstance(state.get("fast_retry_scheduled", []), list) or any(not isinstance(i, str) for i in state.get("fast_retry_scheduled", [])):
+            raise Problem("invalid_history")
+        # An unchanged stale failure cannot arm an endless loop if a later run
+        # cannot save its reservation (disk full, inaccessible archive, etc.).
+        sent = set(state.get("fast_retry_scheduled", []))
+        history = state.get("history", [])
+        candidates = [f.get("attempt_id") for f in state.get("failures", {}).values() if isinstance(f, dict) and fast_retry_pending({"failures": {"day": f}}, now, config["timezone"]) and isinstance(f.get("attempt_id"), str) and f.get("attempt_id") not in sent and any(h.get("id") == f.get("attempt_id") and h.get("status") == "failed" for h in history)]
+        if candidates:
+            retained = {h["id"] for h in history if "id" in h}
+            state["fast_retry_scheduled"] = sorted((sent | set(candidates)) & retained)
+            try:
+                save_json(state_path, state)
+            except (Problem, OSError):
+                timer_action(config, "stop")
+                raise
+            timer_action(config, "restart")
+            return {"fast_retry_timer": "armed"}
+        # The actual timer may have been dispatched well after a backfill day's
+        # retry_after, or paused across suspend. Preserve its real waiting state,
+        # not a guessed wall-clock deadline. A firing timer is no longer waiting.
+        if any(f.get("attempt_id") in sent for f in state.get("failures", {}).values()) and timer_waiting(config):
+            return {"fast_retry_timer": "unchanged", "reason": "timer_still_waiting"}
+        timer_action(config, "stop")
+        return {"fast_retry_timer": "stopped"}
+    finally:
+        os.close(lock)
+
+
+def run(config, now=None, model=None, notifier=notify, clock=None):
+    if clock is None:
+        clock = (lambda: now) if now is not None else (lambda: dt.datetime.now(UTC))
+    now = now or clock()
     zone = ZoneInfo(config["timezone"])
     local = now.astimezone(zone)
     cutoff = local.date() - dt.timedelta(days=1 if (local.hour, local.minute) >= (0, 15) else 2)
@@ -464,6 +560,13 @@ def run(config, now=None, model=None, notifier=notify):
             state = {"version": 1, "failures": {}, "notified": []}
         if not isinstance(state, dict) or state.get("version") != 1 or not isinstance(state.get("failures"), dict) or not isinstance(state.get("notified"), list):
             raise Problem("invalid_state")
+        history = state.setdefault("history", [])
+        if not isinstance(history, list) or any(not isinstance(entry, dict) for entry in history):
+            raise Problem("invalid_history")
+        for entry in history:
+            if entry.get("status") == "started":
+                entry.update(status="interrupted", code="outcome_not_recorded", interruption_observed_at=iso_now(now))
+        state["history"] = history[-HISTORY_LIMIT:]
         model = model or Codex(config, state_root)
         published, notices, failed, attempted = [], [], [], 0
         day = dt.date.fromisoformat(config["firstDate"])
@@ -484,28 +587,38 @@ def run(config, now=None, model=None, notifier=notify):
             if attempted >= 3:
                 break
             failure = state["failures"].get(key, {})
-            if failure.get("attempt_day") == local.date().isoformat() and (failure.get("attempts", 0) >= 3 or failure.get("retry_after", 0) > now.timestamp()):
+            if (failure.get("attempt_day") == local.date().isoformat() and failure.get("attempts", 0) >= 3) or failure.get("retry_after", 0) > now.timestamp():
                 day += dt.timedelta(days=1)
                 continue
             attempted += 1
             attempts = failure.get("attempts", 0) if failure.get("attempt_day") == local.date().isoformat() else 0
             # Reserve before invoking Pi: shutdown/OOM must not reset the budget.
-            state["failures"][key] = {"code": "interrupted_attempt_pending", "attempts": attempts + 1, "attempt_day": local.date().isoformat(), "retry_after": now.timestamp() + 3600}
+            state["failures"][key] = {"code": "interrupted_attempt_pending", "attempts": attempts + 1, "attempt_day": local.date().isoformat(), "retry_after": now.timestamp() + SLOW_RETRY_SECONDS}
+            reviews = []
+            entry = {"id": uuid.uuid4().hex, "date": key, "attempt": attempts + 1, "started_at": iso_now(clock()), "status": "started", "reviews": reviews}
+            state["failures"][key]["attempt_id"] = entry["id"]
+            state["history"].append(entry)
+            state["history"] = state["history"][-HISTORY_LIMIT:]
             save_json(state_path, state)
             pending = state_root / "pending" / key
             try:
                 if prior_error:
                     raise Problem(prior_error)
                 os.close(directory(pending, create=True))
-                active = build(config, day, now, model, pending)
+                active = build(config, day, now, model, pending, audit=reviews, checkpoint=lambda: save_json(state_path, state))
+                entry.update(status="published", code="published")
                 published.append(key)
                 state["failures"].pop(key, None)
                 if active:
                     notices.append(key)
             except (Problem, OSError, ValueError, TypeError) as error:
                 code = str(error) if isinstance(error, Problem) else "source_or_runtime_error"
-                state["failures"][key]["code"] = code
+                finished = clock()
+                delay = FAST_RETRY_SECONDS if code in FAST_FAILURES else SLOW_RETRY_SECONDS
+                state["failures"][key].update(code=code, retry_after=finished.timestamp() + delay)
+                entry.update(status="failed", code=code, retry_delay_seconds=delay)
                 failed.append(key)
+            entry.update(finished_at=iso_now(clock()), reviews=reviews)
             # A process failure cannot erase successful earlier backfill days.
             save_json(state_path, state)
             day += dt.timedelta(days=1)
@@ -526,19 +639,22 @@ def run(config, now=None, model=None, notifier=notify):
             if notifier(config, "Daily roundup needs attention", "A day is pending review or retry. Existing roundups are unchanged."):
                 state["failure_notified_day"] = local.date().isoformat()
         save_json(state_path, state)
-        return {"status": "pending" if state["failures"] else "ok", "published": published, "failed": failed, "pending_days": sorted(state["failures"])}
+        return {"status": "pending" if state["failures"] else "ok", "published": published, "failed": failed, "pending_days": sorted(state["failures"]), "failure_reasons": {day: failure["code"] for day, failure in state["failures"].items()}}
     finally:
         os.close(lock)
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("run", "status", "test-notification"))
+    parser.add_argument("command", choices=("run", "status", "schedule-retry", "test-notification"))
     parser.add_argument("--config", type=Path, default=Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "command-center/roundup.json")
     args = parser.parse_args()
     try:
         # Nix-managed configuration can be a symlink; it is configuration, not private state.
         config = json.loads(args.config.read_text())
+        if args.command == "schedule-retry":
+            print(json.dumps(schedule_retry(config)))
+            return 0
         if args.command == "test-notification":
             return 0 if notify(config, "Command Center roundup test", "Daily roundup notifications are ready. This is only a test.") else 1
         if args.command == "status":
