@@ -58,6 +58,7 @@ in
       bind = lib.mkAfter [
         "$mod, P, exec, ${package}/bin/project-picker"
         "$mod, X, exec, ${package}/bin/project-picker --close-active-workspace"
+        "$mod, n, exec, ${package}/bin/project-picker --next-attention"
       ];
       exec-once = lib.mkAfter [ "${package}/bin/project-picker --preload" ];
       windowrule = lib.mkAfter [

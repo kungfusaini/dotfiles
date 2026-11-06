@@ -347,6 +347,69 @@ class PickerGuiSourceTests(unittest.TestCase):
         self.assertNotIn("backend.load_stream_registry", methods["attention_scopes"])
         self.assertNotIn("backend.load_scope_context", methods["scope_requires_attention"])
 
+    def test_global_next_attention_jumps_from_active_workspace_without_showing_picker(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        names = {"scope_requires_attention", "attention_scopes", "jump_next_attention"}
+        methods = [copy.deepcopy(node) for node in picker.body if isinstance(node, ast.FunctionDef) and node.name in names]
+        backend = mock.Mock()
+        backend.project_scope.side_effect = lambda p: {"kind": "project", "projectId": p["id"]}
+        backend.stream_scope.side_effect = lambda p, s: {"kind": "stream", "projectId": p["id"], "streamId": s["id"]}
+        backend.workspace_name.side_effect = lambda p: p["id"]
+        backend.stream_workspace_name.side_effect = lambda p, s: p["id"] + "/" + s["id"]
+        backend.scope_is_open.side_effect = lambda session, scope: scope not in closed
+        backend.run.return_value.returncode = 0
+        namespace = {"backend": backend, "GLib": SimpleNamespace(SOURCE_CONTINUE=True)}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        project = {"id": "a"}
+        targets = [(project, None)] + [(project, {"id": name}) for name in ("working", "mixed", "settled", "closed", "empty")]
+        targets.append(({"id": "b"}, None))
+        scopes = [backend.stream_scope(p, s) if s else backend.project_scope(p) for p, s in targets]
+        closed = [scopes[4]]
+        activity = {
+            ("a", None): {"idle"}, ("a", "working"): {"working"},
+            ("a", "mixed"): {"idle", "working"}, ("a", "settled"): {"idle"},
+            ("a", "closed"): {"idle"}, ("b", None): {"idle"},
+        }
+        app = SimpleNamespace(
+            destructive_action_pending=False, context_targets=lambda: targets,
+            context_key=lambda p, s=None: (p["id"], s["id"] if s else None),
+            load_agent_activity=lambda: activity, expanded_project_ids=set(),
+            save_picker_state=mock.Mock(), dismiss_window=mock.Mock(),
+            selected_scope=scopes[-1], show_window=mock.Mock(),
+        )
+        app.scope_requires_attention = lambda *args: namespace["scope_requires_attention"](app, *args)
+        app.attention_scopes = lambda: namespace["attention_scopes"](app)
+        for active, expected in [("a", "a/settled"), ("a/working", "a/settled"),
+                                 ("a/settled", "b"), ("b", "a"), ("unmanaged", "a")]:
+            with self.subTest(active=active):
+                backend.active_workspace_name.return_value = active
+                self.assertTrue(namespace["jump_next_attention"](app))
+                backend.run.assert_called_with([backend.HYPRCTL, "dispatch", "workspace", "name:" + expected])
+        app.show_window.assert_not_called()
+        self.assertEqual(activity[("a", None)], {"idle"})
+        # No qualifying scopes: notify, do not dispatch or change selection.
+        activity.clear()
+        backend.run.reset_mock()
+        previous = app.selected_scope
+        namespace["jump_next_attention"](app)
+        backend.run.assert_not_called()
+        self.assertEqual(app.selected_scope, previous)
+        backend.notify_warning.assert_called_once()
+        # A dispatch failure must not persist or dismiss anything.
+        activity[("a", None)] = {"idle"}
+        backend.run.return_value.returncode = 1
+        app.save_picker_state.reset_mock()
+        app.dismiss_window.reset_mock()
+        namespace["jump_next_attention"](app)
+        app.save_picker_state.assert_not_called()
+        app.dismiss_window.assert_not_called()
+        backend.notify_error.assert_called_once()
+        backend.run.reset_mock()
+        app.destructive_action_pending = True
+        namespace["jump_next_attention"](app)
+        backend.run.assert_not_called()
+
     def test_next_attention_targets_open_settled_scopes_and_moves_forward(self):
         tree = ast.parse(GUI_SOURCE.read_text())
         picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")

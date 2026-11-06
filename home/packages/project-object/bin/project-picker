@@ -71,12 +71,14 @@ def wait_for_daemon(process, timeout=10):
     raise RuntimeError("The project picker daemon did not become ready")
 
 
-def start_daemon(show, close_active_workspace=False):
+def start_daemon(show, close_active_workspace=False, next_attention=False):
     arguments = [str(GUI), "--daemon"]
     if show:
         arguments.append("--show")
     if close_active_workspace:
         arguments.append("--close-active-workspace")
+    if next_attention:
+        arguments.append("--next-attention")
     process = subprocess.Popen(
         arguments,
         stdin=subprocess.DEVNULL,
@@ -89,6 +91,7 @@ def start_daemon(show, close_active_workspace=False):
 
 def main():
     preload = "--preload" in sys.argv[1:]
+    next_attention = "--next-attention" in sys.argv[1:]
     close_active_workspace = "--close-active-workspace" in sys.argv[1:]
     RUNTIME_ROOT.mkdir(parents=True, exist_ok=True, mode=0o700)
     RUNTIME_ROOT.chmod(0o700)
@@ -98,12 +101,17 @@ def main():
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         pid = running_daemon()
         if pid:
-            if close_active_workspace:
+            if next_attention:
+                os.kill(pid, signal.SIGHUP)
+            elif close_active_workspace:
                 os.kill(pid, signal.SIGUSR2)
             elif not preload and not dismiss_existing_picker(pid):
                 os.kill(pid, signal.SIGUSR1)
             return
-        start_daemon(show=not preload and not close_active_workspace, close_active_workspace=close_active_workspace)
+        if next_attention:
+            start_daemon(show=False, next_attention=True)
+        else:
+            start_daemon(show=not preload and not close_active_workspace, close_active_workspace=close_active_workspace)
     finally:
         os.close(lock_fd)
 
