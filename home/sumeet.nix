@@ -67,6 +67,7 @@ in
   home.packages = with pkgs; [
     brightnessctl
     cli-microsoft365
+    nicotine-plus
     nodejs
     poppler-utils
   ];
