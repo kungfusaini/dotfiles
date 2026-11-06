@@ -11,6 +11,7 @@ class SymphonyPegasusTests(unittest.TestCase):
         text = (ROOT / "home/config/pegasus/custom.metadata.pegasus.txt").read_text()
         self.fields = {}
         self.collection = None
+        self.shortname = None
         active = False
         for line in text.splitlines():
             if not line or line.startswith("#"):
@@ -19,13 +20,16 @@ class SymphonyPegasusTests(unittest.TestCase):
             value = value.strip()
             if key == "collection":
                 self.collection = value
+            if key == "shortname":
+                self.shortname = value
             if key == "game":
                 active = value == "Castlevania: Symphony of the Night"
             if active:
                 self.fields.setdefault(key, []).append(value)
 
     def test_native_command_and_disc_gate(self):
-        self.assertEqual(self.collection, "PC")
+        self.assertEqual(self.collection, "PlayStation")
+        self.assertEqual(self.shortname, "psx")
         self.assertEqual(self.fields["launch"], ["symphony-recomp"])
         self.assertEqual(self.fields["file"], [
             "/home/sumeet/matrix/data/emulation/roms/ps1/"

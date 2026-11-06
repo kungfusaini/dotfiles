@@ -4,7 +4,8 @@ Pinned upstream Linux x64 binary release, installed through `home/modules/pegasu
 This is beta software; upstream warns about game-breaking bugs. The source has no
 license grant, so the package is marked unfree. No ROMs or saves enter the Nix store.
 
-- Pegasus: **PC → Castlevania: Symphony of the Night**
+- Pegasus: **PlayStation → Castlevania: Symphony of the Night** (PS1/`psx`
+  branding, grouped by the original console even though it runs natively).
 - No desktop application-menu entry; Pegasus calls `symphony-recomp`.
 - Pegasus metadata: `home/config/pegasus/custom.metadata.pegasus.txt`
 - Curated artwork: `home/packages/pegasus-artwork.nix` (Konami promotional

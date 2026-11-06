@@ -16,8 +16,8 @@
 # release: 2026-01-01
 # summary: A short description.
 
-collection: PC
-shortname: pc
+collection: PlayStation
+shortname: psx
 
 # Native recompilation, not an emulator. The supplied CUE gates availability.
 game: Castlevania: Symphony of the Night
