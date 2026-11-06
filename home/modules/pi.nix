@@ -2,6 +2,7 @@
 
 let
   modelDiscovery = pkgs.callPackage ../packages/pi-model-discovery { };
+  browserAutomation = pkgs.callPackage ../packages/pi-browser { };
   modelModePolicy = builtins.fromJSON (builtins.readFile ../config/pi/model-modes.json);
   defaultModelMode = builtins.head (builtins.filter (mode: mode.id == modelModePolicy.default) modelModePolicy.modes);
 
@@ -27,7 +28,7 @@ let
   };
 in
 {
-  home.packages = [ modelDiscovery ];
+  home.packages = [ modelDiscovery browserAutomation ];
 
   systemd.user.services.pi-model-discovery = {
     Unit.Description = "Check the authenticated Codex model catalog without invoking models";
@@ -80,6 +81,7 @@ in
   xdg.configFile."pi/agent/extensions/review.ts".source = ../config/pi/extensions/review.ts;
   xdg.configFile."pi/agent/skills/nanogpt/SKILL.md".source = ../config/pi/skills/nanogpt/SKILL.md;
   xdg.configFile."pi/agent/skills/workstream/SKILL.md".source = ../config/pi/skills/workstream/SKILL.md;
+  xdg.configFile."pi/agent/skills/browser/SKILL.md".source = ../config/pi/skills/browser/SKILL.md;
   xdg.configFile."pi/agent/model-modes.json".source = ../config/pi/model-modes.json;
 
   xdg.configFile."pi/agent/settings.json".text = builtins.toJSON {

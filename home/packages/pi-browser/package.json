@@ -1,0 +1,10 @@
+{
+  "name": "pi-browser-runtime",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Pinned official Playwright CLI for isolated Pi browser sessions",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@playwright/cli": "0.1.23"
+  }
+}
