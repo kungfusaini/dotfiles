@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Session-scoped headless launcher for the official Playwright CLI, not a sandbox."""
+"""Session-scoped launcher for the official Playwright CLI, not a workflow policy."""
 
 import fcntl
 import hashlib
@@ -11,46 +11,54 @@ import subprocess
 import sys
 import tempfile
 
-COMMANDS = set("""
-open close goto type click dblclick fill drag drop hover select upload check uncheck
-snapshot find eval dialog-accept dialog-dismiss resize go-back go-forward reload
-press keydown keyup mousemove mousedown mouseup mousewheel screenshot pdf
- tab-list tab-new tab-close tab-select state-load state-save
-cookie-list cookie-get cookie-set cookie-delete cookie-clear
-localstorage-list localstorage-get localstorage-set localstorage-delete localstorage-clear
-sessionstorage-list sessionstorage-get sessionstorage-set sessionstorage-delete sessionstorage-clear
-set-color-scheme set-reduced-motion set-forced-colors set-contrast set-media
-clear-color-scheme clear-reduced-motion clear-forced-colors clear-contrast clear-media
-requests request request-headers request-body response-headers response-body
-route route-list unroute network-state-set console run-code tracing-start tracing-stop
-recording-start recording-stop generate-locator highlight
-""".split())
-# Deliberately no launch, profile, attachment, global-session, installation, or UI flags.
-OPTIONS = set("""
-json raw help filename depth boxes regex submit full-page hires path data domain
-expires httpOnly secure sameSite status body content-type headers remove-header
-hide style isolated-context static
-""".split())
+# Installation belongs to Nix; cross-session destructive controls are not scoped.
+UNSCOPED_COMMANDS = {"install", "install-browser", "close-all", "kill-all"}
 
 
 def validate_args(args):
-    if args in ([], ["--help"], ["--version"], ["paths"]):
+    if args in ([], ["--help"], ["-h"], ["--version"]):
         return
-    # Require command first; don't let upstream's permissive parser accept -s aliases.
-    if args[0] not in COMMANDS:
-        raise ValueError("Use a supported page command; attach, show, install and global session commands are disabled")
-    for arg in args[1:]:
+    if args[0].startswith("-"):
+        raise ValueError("Put the command before its options")
+    if args[0] in UNSCOPED_COMMANDS:
+        raise ValueError("Use Nix for installation and close/delete-data for this browser session")
+    for arg in args:
         if arg == "--":
-            break  # Upstream treats everything after this as literal positional data.
+            break  # Upstream treats the rest as literal positional data.
         if arg.startswith("-"):
-            # Negative mouse coordinates and numeric values are ordinary arguments.
             try:
                 float(arg)
                 continue
             except ValueError:
                 pass
-            if not arg.startswith("--") or arg[2:].split("=", 1)[0] not in OPTIONS:
-                raise ValueError(f"Unsupported option: {arg.split('=', 1)[0]}")
+            # Upstream accepts packed short aliases, including -sNAME and -hsNAME.
+            if ((not arg.startswith("--") and arg != "-h")
+                    or arg.split("=", 1)[0] in {"--session", "--s", "--no-session", "--no-s"}):
+                raise ValueError("Session selection is supplied by Pi; use long option names")
+
+
+def absolute_inputs(args, cwd):
+    """Config/profile paths belong to the caller, not the private daemon cwd."""
+    result = list(args)
+    for index, arg in enumerate(result):
+        if arg == "--":
+            break
+        if arg in ("--config", "--profile") and index + 1 < len(result):
+            if not result[index + 1]:
+                raise ValueError(f"{arg} requires a non-empty path")
+            if not result[index + 1].startswith("-"):
+                result[index + 1] = str((cwd / result[index + 1]).resolve())
+        elif arg.startswith(("--config=", "--profile=")):
+            name, value = arg.split("=", 1)
+            if not value:
+                raise ValueError(f"{name} requires a non-empty path")
+            result[index] = name + "=" + str((cwd / value).resolve())
+    return result
+
+
+def has_option(args, option):
+    options = args[:args.index("--")] if "--" in args else args
+    return any(arg == option or arg.startswith(option + "=") for arg in options)
 
 
 def private_dir(path):
@@ -83,9 +91,11 @@ def runtime_root(root):
 
 
 def child_env(env, root):
+    # Explicit CLI/config arguments select modes; inherited MCP connection settings
+    # must not silently attach to an unrelated browser. Keep display/exec-rule env
+    # so headed launches can use the verified project workspace launcher.
     result = {k: v for k, v in env.items()
-              if not k.startswith(("PLAYWRIGHT_", "PWTEST_"))
-              and k not in ("DISPLAY", "WAYLAND_DISPLAY", "XAUTHORITY")}
+              if not k.startswith(("PLAYWRIGHT_", "PWTEST_"))}
     result.update({
         "NO_UPDATE_NOTIFIER": "1",
         "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
@@ -97,6 +107,7 @@ def child_env(env, root):
 
 def run(args, *, cli, chromium):
     validate_args(args)
+    args = absolute_inputs(args, Path.cwd())
     os.umask(0o077)
     root = session_root(os.environ)
     for name in (".playwright", "cache", "artifacts"):
@@ -114,11 +125,12 @@ def run(args, *, cli, chromium):
             raise ValueError("Invalid command lock")
         fcntl.flock(lock, fcntl.LOCK_EX)
         config = root / "config.json"
-        # Replace atomically, never follow a pre-existing config symlink.
         out, temp = tempfile.mkstemp(prefix="config-", suffix=".new", dir=root)
         with os.fdopen(out, "w") as stream:
             json.dump({
-                "browser": {"browserName": "chromium", "isolated": True,
+                # Leave isolated unset: upstream derives it from --persistent,
+                # --profile and attachment mode instead of overriding those modes.
+                "browser": {"browserName": "chromium",
                             "launchOptions": {"executablePath": chromium, "headless": True,
                                               "chromiumSandbox": True}},
                 "outputDir": str(root / "artifacts"),
@@ -126,8 +138,11 @@ def run(args, *, cli, chromium):
             }, stream)
         os.replace(temp, config)
         command = [cli, "-s=agent"]
-        if args and args[0] == "open":
-            command += [f"--config={config}", "--idle-timeout=900000"]
+        if args and args[0] in ("open", "attach"):
+            if not has_option(args, "--config"):
+                command += [f"--config={config}"]
+            # Headless sessions keep upstream's idle timeout; headed/attached
+            # sessions are not forcibly ended while a human is logging in.
         command += args or ["--help"]
         print(f"pi-browser artifacts: {root / 'artifacts'}", file=sys.stderr, flush=True)
         return subprocess.run(command, cwd=root, env=child_env(os.environ, root), check=False).returncode

@@ -56,10 +56,28 @@ class WorkspaceExecTests(unittest.TestCase):
             workspace_exec.main()
         payload = run.call_args.args[0][-1]
         self.assertEqual(payload, "[workspace name:Command Center · Agents silent] " + shlex.join([
-            "env", "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME=Command Center · Agents", "PROJECT_OBJECT_LAUNCH_ID=unique", *command,
+            "env", "--chdir=" + os.getcwd(), "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME=Command Center · Agents", "PROJECT_OBJECT_LAUNCH_ID=unique", *command,
         ]))
         verify.assert_called_once_with("Command Center · Agents", "unique", {"0xabc"})
         self.assertIn("verified new window", output.getvalue())
+
+    def test_forwards_only_pi_identity_and_state_path_through_compositor_exec(self):
+        environment = {"PI_SESSION_ID": "owner-id", "PI_SESSION_FILE": "/state/session with spaces",
+                       "XDG_STATE_HOME": "/private/state", "EXAMPLE_SECRET": "must-not-forward"}
+        for command in (["pi-browser", "open", "--headed"], ["python", "launcher.py"]):
+            with self.subTest(command=command), mock.patch.dict(os.environ, environment), \
+                    mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \
+                    mock.patch.object(workspace_exec.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "ok\n", "")) as run, \
+                    mock.patch.object(workspace_exec, "verify_window"), \
+                    mock.patch.object(workspace_exec.sys, "argv", ["helper", *command]), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                workspace_exec.main()
+            payload = run.call_args.args[0][-1]
+            for name in ("PI_SESSION_ID", "PI_SESSION_FILE", "XDG_STATE_HOME"):
+                self.assertIn(shlex.quote(f"{name}={environment[name]}"), payload)
+            self.assertIn(shlex.quote("--chdir=" + os.getcwd()), payload)
+            self.assertNotIn("EXAMPLE_SECRET", payload)
+            self.assertNotIn("must-not-forward", payload)
 
     def test_browser_delegates_synchronously_without_competing_exec_rule(self):
         with mock.patch.object(workspace_exec, "hypr_clients", return_value=[client(pid=os.getpid())]), \

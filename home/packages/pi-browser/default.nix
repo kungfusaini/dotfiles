@@ -30,7 +30,7 @@ buildNpmPackage {
     install -Dm644 README.md "$out/share/doc/pi-browser/README.md"
   '';
   meta = {
-    description = "Session-isolated headless Playwright CLI for Pi agents";
+    description = "Session-scoped Playwright CLI for Pi browser workflows";
     platforms = lib.platforms.linux;
     license = lib.licenses.asl20;
     mainProgram = "pi-browser";

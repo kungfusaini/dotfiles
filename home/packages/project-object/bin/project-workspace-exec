@@ -213,7 +213,14 @@ def main():
                 raise SystemExit(result.returncode)
             print(f"project-workspace-exec: verified browser launch on {workspace}")
             return
-        contextual_command = ["env", f"{LAUNCH_WORKSPACE_ENV}={workspace}", f"{LAUNCH_ID_ENV}={launch_id}", *command]
+        # Hyprland's exec inherits compositor env, not this terminal's env.
+        # Keep the invoking Pi browser owner even through Python/shell launchers;
+        # forward only identity/path metadata, never the complete environment.
+        context = [f"{name}={os.environ[name]}" for name in
+                   ("PI_SESSION_ID", "PI_SESSION_FILE", "XDG_STATE_HOME") if name in os.environ]
+        contextual_command = ["env", "--chdir=" + os.getcwd(),
+                              f"{LAUNCH_WORKSPACE_ENV}={workspace}", f"{LAUNCH_ID_ENV}={launch_id}",
+                              *context, *command]
         payload = f"[workspace name:{workspace} silent] {shlex.join(contextual_command)}"
         result = subprocess.run([HYPRCTL, "dispatch", "exec", payload], capture_output=True, text=True, check=False)
         if result.returncode != 0 or result.stdout.strip() != "ok":

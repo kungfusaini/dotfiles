@@ -5,10 +5,13 @@ import json
 import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
 import tempfile
 import threading
+import time
+import urllib.request
 
 PAGE = b'''<!doctype html><title>Pi browser fixture</title>
 <label>Name <input id="name"></label><button id="save" onclick="
@@ -43,6 +46,9 @@ def main():
         base = dict(os.environ, XDG_STATE_HOME=str(work / "state"),
                     PLAYWRIGHT_MCP_CDP_ENDPOINT="http://127.0.0.1:1",
                     PLAYWRIGHT_MCP_HEADLESS="false")
+
+        for key in ("DISPLAY", "WAYLAND_DISPLAY", "WAYLAND_SOCKET", "XAUTHORITY"):
+            base.pop(key, None)
 
         def run(identity, *args, cwd=first_cwd, ok=True):
             result = subprocess.run([executable, *args], env={**base, "PI_SESSION_ID": identity},
@@ -93,7 +99,7 @@ def main():
                 links = re.findall(r'\]\((.*?)\)', requests)
                 assert any("127.0.0.1" in (root("acceptance-a") / link).read_text()
                            for link in links), requests
-            for args in (("open", "--headed"), ("attach",), ("show",), ("kill-all",)):
+            for args in (("kill-all",), ("close-all",), ("install",), ("open", "--session=other")):
                 assert run("acceptance-a", *args, ok=False).returncode != 0
             assert root("acceptance-a") != root("acceptance-b")
             for identity in ("acceptance-a", "acceptance-b"):
@@ -123,9 +129,65 @@ def main():
             assert "Alice" not in run("acceptance-a", "localstorage-get", "name").stdout
             assert "synthetic-test-only" not in run("acceptance-a", "cookie-get", "fixture-cookie").stdout
             assert "Not saved" in snapshot("acceptance-b")
-            print("PASS: snapshot, fill/click verification, storage/cookie persistence and isolation, cwd stability,")
-            print("tabs, screenshot, console/network, refused unsafe controls, failure visibility,")
-            print("private artifacts, actual headless/sandbox flags, no project pollution, close/reopen isolation")
+            run("acceptance-a", "close")
+            run("acceptance-a", "open", "--persistent", url)
+            run("acceptance-a", "localstorage-set", "persistent-fixture", "synthetic-login")
+            run("acceptance-a", "eval", "document.cookie='persisted=synthetic; max-age=3600; path=/'")
+            run("acceptance-a", "close")
+            run("acceptance-a", "open", "--persistent", url)
+            assert "synthetic-login" in run("acceptance-a", "localstorage-get", "persistent-fixture").stdout
+            assert "synthetic" in run("acceptance-a", "cookie-get", "persisted").stdout
+            run("acceptance-a", "close")
+            run("acceptance-b", "close")
+            # Explicit profiles can be reused sequentially across Pi sessions.
+            run("acceptance-a", "open", "--profile=shared-profile", url)
+            run("acceptance-a", "localstorage-set", "shared-fixture", "synthetic-shared")
+            run("acceptance-a", "close")
+            profile = first_cwd / "shared-profile"
+            run("acceptance-b", "open", "--profile=" + str(profile), url, cwd=second_cwd)
+            assert "synthetic-shared" in run("acceptance-b", "localstorage-get", "shared-fixture").stdout
+            run("acceptance-b", "close")
+            # User configs replace wrapper defaults and resolve from caller cwd.
+            config = json.loads((root("acceptance-a") / "config.json").read_text())
+            chromium = config["browser"]["launchOptions"]["executablePath"]
+            (first_cwd / "custom.json").write_text(json.dumps(config))
+            run("acceptance-a", "open", "--config=custom.json", url)
+            assert "Pi browser fixture" in run("acceptance-a", "eval", "document.title").stdout
+            run("acceptance-a", "close")
+            # Attach to a separately owned synthetic headless browser, then detach
+            # without terminating it. Never use a personal debugging endpoint.
+            temporary = Path(json.loads(run("acceptance-a", "paths").stdout)["temporary"])
+            external_profile = temporary / "external-profile"
+            external_env = {k: v for k, v in base.items() if not k.startswith("PLAYWRIGHT_")}
+            external_env["TMPDIR"] = str(temporary)
+            with (work / "external.log").open("w") as log:
+                external = subprocess.Popen([chromium, "--headless", "--remote-debugging-address=127.0.0.1",
+                                             "--remote-debugging-port=0", "--user-data-dir=" + str(external_profile),
+                                             "--no-first-run", "--no-default-browser-check", url],
+                                            env=external_env, stdout=log, stderr=log, start_new_session=True)
+                try:
+                    active_port = external_profile / "DevToolsActivePort"
+                    deadline = time.monotonic() + 20
+                    while not active_port.exists() and time.monotonic() < deadline:
+                        assert external.poll() is None, (work / "external.log").read_text()
+                        time.sleep(0.05)
+                    port = int(active_port.read_text().splitlines()[0])
+                    endpoint = f"http://127.0.0.1:{port}"
+                    run("acceptance-a", "attach", "--cdp=" + endpoint)
+                    assert "Pi browser fixture" in run("acceptance-a", "eval", "document.title").stdout
+                    run("acceptance-a", "fill", "#name", "Attached")
+                    run("acceptance-a", "click", "#save")
+                    assert "Saved Attached" in snapshot("acceptance-a")
+                    run("acceptance-a", "detach")
+                    assert external.poll() is None
+                    with urllib.request.urlopen(endpoint + "/json/list", timeout=5) as response:
+                        assert any(page.get("title") == "Pi browser fixture" for page in json.load(response))
+                finally:
+                    os.killpg(external.pid, signal.SIGTERM)
+                    external.wait(timeout=10)
+            print("PASS: headless interaction and isolation, persistent close/reopen login state,")
+            print("cross-session explicit profiles, custom config, external CDP attach/drive/detach,")
+            print("tabs/screenshots/diagnostics, failure visibility and actual sandbox/headless flags")
         finally:
             for identity in ("acceptance-a", "acceptance-b"):
                 run(identity, "close", ok=False)
