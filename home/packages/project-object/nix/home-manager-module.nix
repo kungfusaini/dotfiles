@@ -27,6 +27,14 @@ in
   config = lib.mkIf cfg.enable {
     home.packages = [ package ];
 
+    xdg.configFile."vivaldi/NativeMessagingHosts/org.project_object.browser.json".text = builtins.toJSON {
+      name = "org.project_object.browser";
+      description = "Private Project Object native-session bridge";
+      path = "${package}/bin/project-browser-host";
+      type = "stdio";
+      allowed_origins = [ "chrome-extension://gkagbidkbfggbfholmeainnbjjbcapfo/" ];
+    };
+
     xdg.configFile."pi/agent/extensions/project-object.ts" = lib.mkIf cfg.installPiExtension {
       source = "${package}/share/project-object/pi/project-object.ts";
     };

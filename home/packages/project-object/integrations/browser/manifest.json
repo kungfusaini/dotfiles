@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Project Object Browser Bridge",
+  "version": "1.0.0",
+  "description": "Local native-session bridge for Command Center project browsers. No web-page access.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAstqjEiL3olJxtv+8gyzuO+mRwynClQJEACRXP71p/pzgp4sBuWMxUNLFTYXifgj/P62/mn+BIEHt6C6dCCCBAmc6Bze5SHoUipK8rSBBc+uB8V/W+iSmUoBPbAED1WBxMPZPU24m6Uopb7ubbrXaHJ6/6kAFBag9uVsGX5d1y6GePWAhnTBvalvMkmIO507KYgYLZTiSVUgkigOJ0VNuAkJsQGtsvwFMGbwmTtTZ1kcRQysNQmJojVZ3HOK2ywx3vRUBAlmXm8CmcTRks8qEqMsHmHPCuUoq0Lx1cLO54swRDQ4G+EzBijGiQRDbU1aaWAPE5KR4sP2ojZ1fLkhmGQIDAQAB",
+  "permissions": ["nativeMessaging"],
+  "background": {"service_worker": "background.js"},
+  "externally_connectable": {"ids": ["mpognobbkildjkofajifpdfhcoklimli"]},
+  "incognito": "not_allowed"
+}

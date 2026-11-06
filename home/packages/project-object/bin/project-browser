@@ -12,6 +12,7 @@ import re
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
@@ -27,6 +28,11 @@ from project_object import (  # noqa: E402
 )
 
 from agent_browser import APP_PREFIX, open_agent_urls  # noqa: E402
+from browser_restore import Restoration  # noqa: E402
+
+
+def restoration():
+    return Restoration(SimpleNamespace(**globals()))
 
 HOME = Path.home()
 DATA_ROOT = Path(os.environ.get("PROJECT_OBJECT_DATA_DIR", Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "project-object"))
@@ -307,8 +313,9 @@ def ensure_project_browser(
     ):
         state["returns"][project["id"]] = origin_workspace
         save_state(state)
+    restored = restoration().restore(project)
     dispatch("workspace", f"name:{workspace}")
-    primary = state["primary"].get(project["id"])
+    primary = restored[0] if restored else state["primary"].get(project["id"])
     address = discover_address(workspace, primary)
     if address:
         open_in_window(address, [] if focus_only else urls)
@@ -449,12 +456,25 @@ def parse_args(arguments: list[str]) -> argparse.Namespace:
     opener.add_argument("urls", nargs="+")
     commands.add_parser("mark-project-click")
     commands.add_parser("focus")
+    closer = commands.add_parser("checkpoint-close")
+    closer.add_argument("--project-id", required=True)
+    commands.add_parser("reconcile-startup")
     return parser.parse_args(arguments)
 
 
 def main() -> int:
     args = parse_args(sys.argv[1:])
     try:
+        if args.command in ("checkpoint-close", "reconcile-startup"):
+            with browser_lock():
+                if args.command == "reconcile-startup":
+                    restoration().reconcile_startup()
+                else:
+                    project = find_project(load_registry(), project_id=args.project_id)
+                    if not project:
+                        raise ValueError("Unknown project browser")
+                    restoration().close(project)
+            return 0
         desktops = os.environ.get("XDG_CURRENT_DESKTOP", "").lower().split(":")
         if "hyprland" not in desktops:
             if os.environ.get(LAUNCH_WORKSPACE_ENV) or os.environ.get("PI_CODING_AGENT"):

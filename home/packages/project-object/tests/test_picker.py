@@ -581,13 +581,16 @@ class PickerTests(unittest.TestCase):
         with mock.patch.object(self.picker, "run", side_effect=run), \
              mock.patch.object(self.picker, "active_workspace_name", return_value="Elsewhere"), \
              mock.patch.object(self.picker, "live_workspace_exists", return_value=True), \
-             mock.patch.object(self.picker, "workspace_clients", side_effect=[[client], [], [], [browser_client], [], []]), \
+             mock.patch.object(self.picker, "workspace_clients", side_effect=[[browser_client], [client], [], []]), \
              mock.patch.object(self.picker, "write_json_atomic") as write:
             self.picker.close_stream(self.project, stream, session)
         self.assertEqual(session["openWorkspaces"], [])
         self.assertIn([self.picker.PROJECT_SNAPSHOT, "--project-id", self.project["id"], "--stream-id", stream["id"]], commands)
         self.assertIn([self.picker.HYPRCTL, "dispatch", "closewindow", "address:0xabc"], commands)
-        self.assertIn([self.picker.HYPRCTL, "dispatch", "closewindow", "address:0xdef"], commands)
+        checkpoint = [str(Path(self.picker.__file__).with_name("project-browser")), "checkpoint-close", "--project-id", self.project["id"]]
+        self.assertIn(checkpoint, commands)
+        self.assertLess(commands.index(checkpoint), commands.index([self.picker.PROJECT_SNAPSHOT, "--project-id", self.project["id"], "--stream-id", stream["id"]]))
+        self.assertNotIn([self.picker.HYPRCTL, "dispatch", "closewindow", "address:0xdef"], commands)
         write.assert_called_once()
 
     def test_close_pauses_captured_pi_and_resumes_it_when_revalidation_refuses(self):

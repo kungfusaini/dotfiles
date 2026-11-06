@@ -1154,42 +1154,25 @@ def close_browser_workspace(project):
     name = project_browser_workspace_name(project)
     if not live_workspace_exists(name):
         return
-    clients = workspace_clients(name)
-    addresses = []
-    for client in clients:
-        address = str(client.get("address", ""))
-        if not re.fullmatch(r"0x[0-9a-fA-F]+", address):
-            raise RuntimeError(f"Could not safely identify a browser window in {name}")
-        addresses.append(address)
-    if active_workspace_name() == name:
-        result = run([HYPRCTL, "dispatch", "workspace", "previous"])
-        if result.returncode != 0:
-            raise RuntimeError(f"Could not leave project browser workspace {name}")
-    for address in addresses:
-        result = run([HYPRCTL, "dispatch", "closewindow", f"address:{address}"])
-        if result.returncode != 0:
-            raise RuntimeError(f"Could not close a browser window in {name}")
-    deadline = time.monotonic() + 2.0
-    while addresses and time.monotonic() < deadline:
-        if not workspace_clients(name):
-            break
-        time.sleep(0.05)
-    if workspace_clients(name):
-        raise RuntimeError(f"A browser window did not close in {name}")
+    if not workspace_clients(name):
+        return
+    result = run([str(Path(__file__).with_name("project-browser")), "checkpoint-close", "--project-id", project["id"]])
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr.strip() or f"Browser checkpoint failed; windows left open in {name}")
 
 
 def close_project(project, session):
     scope = project_scope(project)
-    close_workspace(project, session)
     if not project_has_other_open_scope(project, session, scope):
         close_browser_workspace(project)
+    close_workspace(project, session)
 
 
 def close_stream(project, stream, session):
     scope = stream_scope(project, stream)
-    close_workspace(project, session, stream)
     if not project_has_other_open_scope(project, session, scope):
         close_browser_workspace(project)
+    close_workspace(project, session, stream)
 
 
 def archive_stream(project, stream, stream_registry, session):

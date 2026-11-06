@@ -3,8 +3,12 @@
 let
   module = import ../hosts/kirax1/modules/desktop/vivaldi.nix { inherit (pkgs) lib; };
   overlay = builtins.head module.nixpkgs.overlays;
-  required = "--ozone-platform=wayland --enable-wayland-ime --wayland-text-input-version=3";
-  probe = args: (overlay {} { vivaldi.override = change: change args; }).vivaldi.commandLineArgs;
+  extension = pkgs.callPackage ../home/packages/project-object/nix/browser-extension.nix {};
+  required = "--ozone-platform=wayland --enable-wayland-ime --wayland-text-input-version=3 --load-extension=${extension}";
+  probe = args: (overlay {} {
+    inherit (pkgs) callPackage;
+    vivaldi.override = change: (change args) // { overrideAttrs = _: change args; };
+  }).vivaldi.commandLineArgs;
   expectedSearch = builtins.toJSON {
     DefaultSearchProviderEnabled = true;
     DefaultSearchProviderName = "Google";
@@ -27,5 +31,9 @@ pkgs.runCommand "vivaldi-startup-contract" {} ''
   ${pkgs.gnugrep}/bin/grep -Fq "Exec=$wrapper %U" "$desktop"
   ${pkgs.gnugrep}/bin/grep -Fq "Exec=$wrapper --new-window" "$desktop"
   ${pkgs.gnugrep}/bin/grep -Fq "Exec=$wrapper --incognito" "$desktop"
+  ${pkgs.gnugrep}/bin/grep -Fq -- '--load-extension=${extension}' "$wrapper"
+  ui=${pkgs.vivaldi}/opt/vivaldi/resources/vivaldi
+  ${pkgs.gnugrep}/bin/grep -Fq 'project-object-adapter.js' "$ui/main.html"
+  cmp ${../home/packages/project-object/integrations/browser/adapter.js} "$ui/project-object-adapter.js"
   touch "$out"
 ''

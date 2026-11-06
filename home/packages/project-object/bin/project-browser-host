@@ -1,0 +1,171 @@
+#!/usr/bin/env python3
+"""Native-messaging host. No network listener, credentials, or browser debugger."""
+import fcntl
+import os
+from pathlib import Path
+import socket
+import stat
+import struct
+import subprocess
+import sys
+import threading
+import uuid
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from browser_protocol import EXTENSION_ID, VERSION, receive, send
+from project_object import ensure_private_directory
+
+
+def browser_identity():
+    """Only the browser ancestor determines the profile; never global focus/PIDs."""
+    pid = os.getppid()
+    for _ in range(64):
+        proc = Path('/proc') / str(pid)
+        fields = (proc / 'stat').read_text().rsplit(')', 1)[1].split()
+        args = (proc / 'cmdline').read_bytes()
+        executable = (proc / 'exe').resolve().name
+        if executable == 'vivaldi-bin' and b'--type=' not in args:
+            # Chromium rewrites argv into one space-delimited process title;
+            # parsing it silently loses paths with spaces. Open profile database
+            # descriptors are kernel-resolved and fail closed for multi-profile.
+            opened = set()
+            for descriptor in (proc / 'fd').iterdir():
+                try:
+                    opened.add(descriptor.resolve(strict=True))
+                except OSError:
+                    continue
+            profiles = {path.parent for path in opened if path.name == 'History'
+                        and path.parent / 'Web Data' in opened
+                        and (path.parent / 'Preferences').is_file()}
+            if len(profiles) != 1:
+                raise ValueError('Exactly one regular browser profile must be open')
+            return {'pid': pid, 'startTime': fields[19], 'profile': str(profiles.pop())}
+        pid = int(fields[1])
+        if pid <= 1:
+            break
+    raise ValueError('Native browser ancestry could not be verified')
+
+
+def main():
+    if sys.argv[1:2] != ['chrome-extension://' + EXTENSION_ID + '/']:
+        return 1
+    identity = browser_identity()
+    runtime = Path(os.environ['XDG_RUNTIME_DIR']) / 'project-object'
+    ensure_private_directory(runtime)
+    lock = os.open(runtime / 'browser-host.lock', os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return 1  # Multiple profiles/hosts must not replace the registered browser.
+    path = runtime / 'browser-bridge.sock'
+    if path.exists() or path.is_symlink():
+        metadata = path.lstat()
+        if not stat.S_ISSOCK(metadata.st_mode) or metadata.st_uid != os.getuid():
+            return 1
+        path.unlink()
+    listener = socket.socket(socket.AF_UNIX)
+    listener.bind(str(path))
+    os.chmod(path, 0o600)
+    listener.listen(8)
+    pending = {}
+    output_lock = threading.Lock()
+    request_lock = threading.Lock()
+    slots = threading.BoundedSemaphore(16)
+    ready = threading.Event()
+    stopping = threading.Event()
+    instance = None
+
+    def emit(value):
+        with output_lock:
+            send(sys.stdout.buffer, value)
+
+    def handle(client):
+        with client:
+            try:
+                _pid, uid, _gid = struct.unpack('3i', client.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                if uid != os.getuid():
+                    return
+                client.settimeout(60)
+                with client.makefile('rwb', buffering=0) as stream:
+                    request = receive(stream)
+                    if request.get('op') == 'hello':
+                        send(stream, {'ok': True, 'protocol': VERSION, 'ready': ready.is_set(), 'instance': instance, **identity})
+                        return
+                    if not ready.is_set():
+                        raise ValueError('Browser adapter is not ready')
+                    if not request_lock.acquire(blocking=False):
+                        send(stream, {'ok': False, 'error': 'Browser bridge busy; retry after the current operation'})
+                        return
+                    try:
+                        token = uuid.uuid4().hex
+                        event, response = threading.Event(), {}
+                        pending[token] = (event, response)
+                        try:
+                            emit({'id': token, 'request': request})
+                            if not event.wait(45):
+                                raise ValueError('Browser operation timed out; inspect the browser before retrying')
+                            send(stream, response)
+                        finally:
+                            pending.pop(token, None)
+                    finally:
+                        request_lock.release()
+            except (OSError, ValueError, EOFError):
+                try:
+                    send(client.makefile('wb', buffering=0), {'ok': False, 'error': 'Browser bridge unavailable or operation timed out; windows were not force-closed'})
+                except OSError:
+                    pass
+
+    def accept():
+        while not stopping.is_set():
+            try:
+                client, _ = listener.accept()
+            except OSError:
+                break
+            if not slots.acquire(blocking=False):
+                client.close()
+                continue
+            def bounded(client=client):
+                try:
+                    handle(client)
+                finally:
+                    slots.release()
+            threading.Thread(target=bounded, daemon=True).start()
+
+    threading.Thread(target=accept, daemon=True).start()
+    try:
+        emit({'event': 'hello', 'protocol': VERSION})
+        for_message = sys.stdin.buffer
+        while True:
+            message = receive(for_message)
+            if message.get('event') == 'ready' and message.get('protocol') == VERSION:
+                if instance is not None:
+                    continue
+                instance = message.get('instance')
+                if not isinstance(instance, str) or len(instance) != 36:
+                    raise ValueError('Invalid adapter identity')
+                ready.set()
+                # Reconcile tagged recovery windows silently. A separate process
+                # leaves stdin responsive while it requests native operations.
+                subprocess.Popen([str(Path(__file__).with_name('project-browser')), 'reconcile-startup'],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True)
+            elif isinstance(message.get('id'), str) and message['id'] in pending:
+                event, response = pending[message['id']]
+                if isinstance(message.get('response'), dict):
+                    response.update(message['response'])
+                    event.set()
+    except (EOFError, OSError, ValueError):
+        return 0
+    finally:
+        ready.clear()
+        stopping.set()
+        listener.close()
+        path.unlink(missing_ok=True)
+        os.close(lock)
+
+
+if __name__ == '__main__':
+    try:
+        sys.exit(main())
+    except (OSError, ValueError, KeyError):
+        sys.exit(1)
