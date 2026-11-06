@@ -10,8 +10,8 @@ in
 {
   environment.systemPackages = [ deployKirax1 ];
 
-  # This no-argument helper deploys only a clean, committed main revision of
-  # this machine's canonical flake. The helper itself rejects all arguments.
+  # This no-argument helper validates and deploys only a pinned, committed main
+  # revision. Uncommitted files are excluded; the helper rejects all arguments.
   security.sudo.extraRules = [
     {
       users = [ "sumeet" ];

@@ -76,13 +76,15 @@ Manage system and user configuration declaratively through this repository where
 
 Do not directly edit generated files, deployed Nix-store files, or Home Manager symlink targets. Change their canonical source in the Nix repository. Do not introduce mutable out-of-store configuration or runtime dependencies on the repository checkout unless Sumeet explicitly approves that exception.
 
-After an approved NixOS change is validated, reviewed, and committed to a clean `main` branch, deploy it with:
+After an approved NixOS change is reviewed and committed to `main`, validate the exact committed snapshot non-privileged (use a `git+file://` flake URL with an explicit `rev`, not the dirty checkout), then deploy it with:
 
 ```bash
 deploy-kirax1
 ```
 
-Never bypass this helper or weaken its safeguards. After deployment, verify the active generation and affected services. If Pi guidance, extensions, skills, or settings changed, call `reload_all_sessions` to refresh every running Pi session. Only after live verification succeeds, push the verified `main` commit to its configured upstream without force, then confirm local `main` matches the upstream branch. Never push unrelated changes or publish an unverified deployment.
+Never bypass this helper or weaken its safeguards. The helper serializes deployments and validates and deploys one pinned `main` commit; staged, unstaged, and untracked files are excluded and need not be cleaned or stashed. In a shared checkout, stage only the approved files or hunks, and coordinate overlapping edits. Never commit another agent's unfinished work to unblock deployment.
+
+Record the deployed commit and verify the active generation matches that snapshot and affected services work. If Pi guidance, extensions, skills, or settings changed, call `reload_all_sessions` to refresh every running Pi session. Only after live verification succeeds, push that exact verified commit to the configured upstream branch without force (use an explicit `<verified-revision>:refs/heads/<upstream-branch>` refspec, not a moving `main`). Confirm upstream resolves to the verified revision; if local `main` has advanced, report the pending commits rather than publishing them unverified. Stop and coordinate if upstream has diverged or the push would include unrelated unverified commits.
 
 ## System layout
 
