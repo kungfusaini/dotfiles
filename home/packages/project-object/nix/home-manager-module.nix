@@ -53,6 +53,27 @@ in
       noDisplay = true;
     };
 
+    # A compact navigation label, independent of ordinary notification styling.
+    services.mako.settings."app-name=\"Project Workspace\"" = {
+      anchor = "top-center";
+      layer = "overlay";
+      format = "%s";
+      markup = false;
+      icons = false;
+      history = false;
+      "text-alignment" = "center";
+      font = "sans-serif 16";
+      width = 640;
+      height = 80;
+      padding = "14,24";
+      margin = "48,12";
+      "border-radius" = 12;
+      "background-color" = "#181825ee";
+      "border-color" = "#45475aff";
+      "default-timeout" = 1500;
+      "ignore-timeout" = true;
+    };
+
     wayland.windowManager.hyprland.settings = lib.mkIf cfg.enableHyprlandBinding {
       "$terminal" = lib.mkForce "${package}/bin/project-terminal";
       bind = lib.mkAfter [

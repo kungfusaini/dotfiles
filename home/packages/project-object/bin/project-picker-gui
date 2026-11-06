@@ -887,6 +887,21 @@ class PickerApplication(Adw.Application):
                 scopes.append({"kind": "project", "projectId": project["id"]})
         return scopes
 
+    def show_workspace_label(self, workspace):
+        # One transient notification, replaced on rapid cycling; failures must
+        # never turn a successful workspace switch into a navigation error.
+        try:
+            subprocess.run(
+                [backend.NOTIFY, "--app-name=Project Workspace", "--transient",
+                 "--expire-time=1500",
+                 "--hint=string:x-dunst-stack-tag:project-object-workspace",
+                 "--", workspace],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                check=False, timeout=2,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
     def jump_previous_attention(self):
         return self.jump_next_attention(direction=-1)
 
@@ -919,6 +934,7 @@ class PickerApplication(Adw.Application):
                 self.expanded_project_ids.add(scope["projectId"])
                 self.save_picker_state()
                 self.dismiss_window()
+                self.show_workspace_label(workspace)
                 return GLib.SOURCE_CONTINUE
             backend.notify_warning("No open workspace has a settled agent")
         except Exception as error:

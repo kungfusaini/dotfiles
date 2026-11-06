@@ -39,6 +39,8 @@ Global shortcuts:
 - `Super+n` — jump directly to the next open project or stream with a settled live agent and no working agents (the same green-dot targets as picker `n`), wrapping from the active workspace without showing the picker; notify when none qualify. No Shift required. Visiting does not clear agent state or worklog attention.
 - `Super+Shift+n` — jump backward through the same green-dot targets, wrapping at the start; outside a managed workspace, start at the last qualifying target.
 
+Both shortcuts show a transient top-centre **Project · Stream** label (just **Project** for the main workspace) for 1.5 seconds after a successful jump. Rapid cycling replaces the label, without notification history or focus changes. This reuses the installed libnotify/Mako service; ordinary notification styling and Do Not Disturb remain unchanged.
+
 Picker controls:
 
 - `j` / `k` or `↑` / `↓` — navigate in normal mode, wrapping between the first and last visible entries

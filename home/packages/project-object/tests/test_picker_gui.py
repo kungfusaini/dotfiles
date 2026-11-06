@@ -1,6 +1,7 @@
 import ast
 import copy
 from pathlib import Path
+import subprocess
 import unittest
 from types import SimpleNamespace
 from unittest import mock
@@ -347,6 +348,35 @@ class PickerGuiSourceTests(unittest.TestCase):
         self.assertNotIn("backend.load_stream_registry", methods["attention_scopes"])
         self.assertNotIn("backend.load_scope_context", methods["scope_requires_attention"])
 
+    def test_workspace_label_replaces_transient_feedback_and_ignores_failures(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        method = copy.deepcopy(next(node for node in picker.body if isinstance(node, ast.FunctionDef) and node.name == "show_workspace_label"))
+        namespace = {"backend": SimpleNamespace(NOTIFY="notify-send"), "subprocess": subprocess}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=[method], type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        # Even an old numeric ID must never be reused after Mako restarts:
+        # replacement is scoped by app name + stack tag, not daemon-local IDs.
+        app = SimpleNamespace(workspace_label_id=42)
+        show = lambda text: namespace["show_workspace_label"](app, text)
+        with mock.patch.object(subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run:
+            for label in ("Command Center · Surface", "Project only", "<b>Project & stream</b> --option"):
+                show(label)
+                args = run.call_args.args[0]
+                self.assertIn("--app-name=Project Workspace", args)
+                self.assertIn("--hint=string:x-dunst-stack-tag:project-object-workspace", args)
+                self.assertFalse(any(arg.startswith("--replace-id") for arg in args))
+                self.assertIn("--transient", args)
+                self.assertIn("--expire-time=1500", args)
+                self.assertEqual(args[-2:], ["--", label])
+            run.return_value = SimpleNamespace(returncode=1)
+            show("Project")
+            for error in (OSError("unavailable"), subprocess.TimeoutExpired("notify-send", 2)):
+                run.side_effect = error
+                show("Project")
+        module = HOME_MANAGER_MODULE.read_text()
+        for setting in ('format = "%s";', 'markup = false;', 'history = false;', 'anchor = "top-center";'):
+            self.assertIn(setting, module)
+
     def test_global_next_attention_jumps_from_active_workspace_without_showing_picker(self):
         tree = ast.parse(GUI_SOURCE.read_text())
         picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
@@ -376,6 +406,7 @@ class PickerGuiSourceTests(unittest.TestCase):
             context_key=lambda p, s=None: (p["id"], s["id"] if s else None),
             load_agent_activity=lambda: activity, expanded_project_ids=set(),
             save_picker_state=mock.Mock(), dismiss_window=mock.Mock(),
+            show_workspace_label=mock.Mock(),
             selected_scope=scopes[-1], show_window=mock.Mock(),
         )
         app.scope_requires_attention = lambda *args: namespace["scope_requires_attention"](app, *args)
@@ -386,6 +417,7 @@ class PickerGuiSourceTests(unittest.TestCase):
                 backend.active_workspace_name.return_value = active
                 self.assertTrue(namespace["jump_next_attention"](app))
                 backend.run.assert_called_with([backend.HYPRCTL, "dispatch", "workspace", "name:" + expected])
+                app.show_workspace_label.assert_called_with(expected)
         app.jump_next_attention = lambda **kwargs: namespace["jump_next_attention"](app, **kwargs)
         for active, expected in [("a", "b"), ("b", "a/settled"),
                                  ("a/settled", "a"), ("a/mixed", "a"),
@@ -394,6 +426,7 @@ class PickerGuiSourceTests(unittest.TestCase):
                 backend.active_workspace_name.return_value = active
                 self.assertTrue(namespace["jump_previous_attention"](app))
                 backend.run.assert_called_with([backend.HYPRCTL, "dispatch", "workspace", "name:" + expected])
+                app.show_workspace_label.assert_called_with(expected)
         # A single target wraps to itself; an empty registry never dispatches.
         app.context_targets = lambda: [(project, None)]
         backend.active_workspace_name.return_value = "a"
@@ -411,7 +444,9 @@ class PickerGuiSourceTests(unittest.TestCase):
         activity.clear()
         backend.run.reset_mock()
         previous = app.selected_scope
+        app.show_workspace_label.reset_mock()
         namespace["jump_previous_attention"](app)
+        app.show_workspace_label.assert_not_called()
         backend.run.assert_not_called()
         self.assertEqual(app.selected_scope, previous)
         backend.notify_warning.assert_called_once()
@@ -423,6 +458,7 @@ class PickerGuiSourceTests(unittest.TestCase):
         namespace["jump_next_attention"](app)
         app.save_picker_state.assert_not_called()
         app.dismiss_window.assert_not_called()
+        app.show_workspace_label.assert_not_called()
         backend.notify_error.assert_called_once()
         backend.run.reset_mock()
         app.destructive_action_pending = True
