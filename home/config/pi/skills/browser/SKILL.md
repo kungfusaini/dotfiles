@@ -39,7 +39,7 @@ Use `--` before dash-prefixed positional text: `pi-browser fill e3 -- '--help'`.
 ## Browser modes
 
 ```bash
-# Default: temporary, headless Nix Chromium.
+# Default: temporary, headless Nix Vivaldi.
 pi-browser open https://example.com
 
 # Visible browser through the workspace launcher.
@@ -55,12 +55,29 @@ project-workspace-exec pi-browser open --headed --profile=/absolute/profile http
 pi-browser open --config=/absolute/config.json https://example.com
 ```
 
-`--persistent` uses the upstream profile beneath this Pi session's private cache.
+`--persistent` uses `profile/` beneath this Pi session's private directory, shared
+between headless and headed modes.
 `--profile` selects an explicit profile path. A profile can only be open in one
 browser process at a time. Neither option imports another browser's cookies.
-The default config selects Nix Chromium with its sandbox enabled; explicit configs
-replace that default and specify their own browser executable/launch settings.
-`--idle-timeout=<milliseconds>` controls inactivity shutdown (`0` disables it).
+The default config selects Nix Vivaldi with its Chromium sandbox enabled; explicit
+configs select their own browser/launch settings. Native headed Vivaldi is launched
+with its own temporary loopback debugging endpoint, then connected to the pinned
+official Playwright daemon/CLI. Headless mode uses the same Vivaldi executable with
+`--disable-vivaldi` to disable only its UI bootstrap; headed mode keeps the full
+Vivaldi UI. The adapter selects the exact task tab, not a restored unrelated tab.
+Vivaldi needs an initial rendered frame before native UI automation is ready; a
+completely hidden workspace can delay startup. This does not require focusing its
+window. Session diagnostics are private `vivaldi.log`/`daemon.log` files.
+Native launch fields are `executablePath`, `headless`, `chromiumSandbox` and `args`;
+other launch fields fail explicitly. Native custom configs use JSON; INI configs
+are forwarded unchanged to upstream without this native-launch adapter. Malformed
+JSON fails before launch. Native context/device emulation and init
+callbacks are not applied to existing CDP contexts, so those settings are rejected
+rather than silently ignored; headless mode retains upstream support. External
+endpoints retain upstream behavior.
+`--idle-timeout=<milliseconds>` controls CLI-session inactivity (`0` disables it).
+For native headed sessions it disconnects automation; `close` stops the owned
+Vivaldi process.
 Upstream defaults headless sessions to one hour; headed sessions do not idle-close.
 The workspace launcher verifies window mapping; daemon registration can follow a
 moment later. `pi-browser list` reports session readiness before page commands.
@@ -84,9 +101,12 @@ CDP requires an existing debugging endpoint. Extension mode requires the officia
 Playwright browser extension and a supported browser; its connection UI may need
 manual confirmation. These commands do not install an extension, enable debugging
 or copy profiles. Chrome/Edge extension support is documented upstream; Vivaldi
-compatibility is not established here. CDP/extension connections can access the
+extension compatibility is not established here. Vivaldi launch and CDP attachment
+are tested independently of extension mode. CDP/extension connections can access the
 attached browser's authenticated pages, not just a fresh isolated profile.
-`detach` releases an external attachment without closing its browser. Use a concrete
+`detach` releases an attachment without closing its browser. For a managed headed
+Vivaldi this explicitly hands process ownership back; later `close` does not kill
+that detached browser. Use a concrete
 endpoint rather than an upstream named-session attachment across private caches.
 
 ## Tabs, state and lifecycle
@@ -108,8 +128,9 @@ normal file/network permissions; this wrapper is not a sandbox.
 
 Pi supplies `PI_SESSION_ID` (or `PI_SESSION_FILE`) for browser ownership across shell
 calls and cwd changes. Different Pi sessions have separate default profiles and
-artifacts. `close` stops this session's browser; persistent profiles and artifacts
-remain. `delete-data` removes upstream data for this session. Global close/kill
+artifacts. `close` stops this session's owned browser and removes its temporary
+profile; persistent profiles and artifacts remain. `delete-data` also removes the
+wrapper's own default persistent profile after shutdown, but not explicit profiles. Global close/kill
 commands and runtime installation are unavailable: package installation is Nix-managed.
 
 Upstream reference: https://github.com/microsoft/playwright-cli

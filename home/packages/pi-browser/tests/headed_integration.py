@@ -3,7 +3,7 @@
 
 Usage: python3 headed_integration.py --harness /absolute/workspace_exec_integration.py
   --hyprland ... --hyprctl ... --labwc ... --kitty ... --chromium /nix/store/.../bin/pi-browser
-  --helper /nix/store/.../bin/project-workspace-exec
+  --browser-class vivaldi --keep-target-visible --helper /nix/store/.../bin/project-workspace-exec
 
 The harness's --chromium argument carries pi-browser here. Its launcher and focus
 assertions are reused unchanged. No host windows, input or real credentials.
@@ -17,6 +17,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.request
 
 PAGE = b'''<!doctype html><title>Manual handoff fixture</title>
 <input id="name" aria-label="Name"><button id="login" onclick="
@@ -54,12 +55,18 @@ def worker(arguments):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     environment = {**os.environ, "PI_SESSION_ID": f"headed-{root.parent.name}-{strip}",
                    "XDG_STATE_HOME": str(root / "state"), "NIXOS_OZONE_WL": "1"}
-    command = [browser, "open", "--headed", "--config=./custom-config.json", "--profile=../shared-profile",
+    command = [browser, "open", "--headed", "--json", "--config=./custom-config.json", "--profile=../shared-profile",
                f"http://127.0.0.1:{server.server_port}/"]
+    temporary_profile = os.environ.get("PI_BROWSER_TEST_TEMPORARY") == "1"
+    if temporary_profile:
+        command = [arg for arg in command if not arg.startswith("--profile=")]
     launcher = "import os,subprocess,time;"
     if strip == "yes":
         launcher += "os.environ.pop('HL_EXEC_RULE_TOKEN',None);os.environ.pop('HL_INITIAL_WORKSPACE_TOKEN',None);time.sleep(1.2);"
-    launcher += "raise SystemExit(subprocess.run(" + repr(command) + ").returncode)"
+    launcher += ("import pathlib;opened=subprocess.run(" + repr(command) + ",capture_output=True,text=True);"
+                 "pathlib.Path(" + repr(str(root / "open-output.json")) + ").write_text(opened.stdout);"
+                 "pathlib.Path(" + repr(str(root / "open-error.log")) + ").write_text(opened.stderr);"
+                 "raise SystemExit(opened.returncode)")
 
     def call(*args):
         result = subprocess.run([browser, *args], env=environment, capture_output=True, text=True, timeout=30)
@@ -68,7 +75,7 @@ def worker(arguments):
 
     result = None
     try:
-        call("--help")
+        call("open", "--headed", "--help")
         session = Path(json.loads(call("paths"))["session"])
         (root / "custom-config.json").write_text((session / "config.json").read_text())
         result = subprocess.run([helper, sys.executable, "-c", launcher], env=environment, cwd=root,
@@ -82,7 +89,17 @@ def worker(arguments):
                 break
             assert time.monotonic() < deadline, ready
             time.sleep(0.1)
-        if strip == "yes":
+        wait_for_file(root / "open-output.json")
+        json.loads((root / "open-output.json").read_text())  # Exactly one JSON document.
+        state = json.loads((session / "vivaldi-process.json").read_text())
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(state["endpoint"] + "/json/list", timeout=5) as response:
+            targets = json.load(response)
+        assert any(target["type"] == "app" and "chrome-extension://mpognobb" in target["url"]
+                   for target in targets), "native Vivaldi UI is not running"
+        ps = subprocess.check_output(["ps", "-p", str(state["pid"]), "-o", "args="], text=True)
+        assert "vivaldi-bin" in ps and "--disable-vivaldi" not in ps and "--no-sandbox" not in ps
+        if strip == "yes" and not temporary_profile:
             assert "synthetic-user" in call("localstorage-get", "login"), "profile login did not persist"
         else:
             # Simulated manual phase: local fixture only, no real login or input.
@@ -100,7 +117,17 @@ def worker(arguments):
                                                      "stderr": str(error)}))
         raise
     finally:
-        # Leave the window for the harness controller to verify and close.
+        # After verification/controller closure, also stop the owned Vivaldi
+        # background process so it releases the persistent profile lock.
+        call("close")
+        if 'state' in locals():
+            profile = Path(state["profile"])
+            assert profile.exists() is not temporary_profile
+            if not temporary_profile:
+                # The same native login profile is reusable headlessly too.
+                call("open", "--profile=" + str(profile), f"http://127.0.0.1:{server.server_port}/")
+                assert "synthetic-user" in call("localstorage-get", "login")
+                call("close")
         server.shutdown()
         server.server_close()
 
@@ -119,6 +146,8 @@ def main():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.__file__ = str(Path(__file__).resolve())
+    if "--check-transient-focus" not in sys.argv:
+        sys.argv.append("--check-transient-focus")
     module.main()
 
 

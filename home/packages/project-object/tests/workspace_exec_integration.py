@@ -10,9 +10,11 @@ import os
 from pathlib import Path
 import shlex
 import signal
+import socket as socket_module
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 
@@ -62,7 +64,17 @@ def run(args):
                 "PROJECT_OBJECT_WORKSPACE_NAME", "PROJECT_PICKER_HYPRCTL"]:
         env.pop(key, None)
     env["PROJECT_PICKER_HYPRCTL"] = args.hyprctl
-    processes = []
+    processes, events = [], []
+    event_ready = threading.Event()
+
+    def record_events(path):
+        with socket_module.socket(socket_module.AF_UNIX) as stream, (root / "events.log").open("w", buffering=1) as log:
+            stream.connect(str(path))
+            event_ready.set()
+            with stream.makefile() as lines:
+                for line in lines:
+                    events.append(line.rstrip())
+                    log.write(line)
 
     def start(command, name):
         process = subprocess.Popen(command, env=env, stdout=(root / (name + ".log")).open("w"),
@@ -85,9 +97,14 @@ def run(args):
         start([args.hyprland, "-c", str(config)], "hyprland")
         ipc = wait_for(lambda: next((runtime / "hypr").glob("*/.socket.sock"), None))
         env["HYPRLAND_INSTANCE_SIGNATURE"] = ipc.parent.name
+        threading.Thread(target=record_events, args=(ipc.parent / ".socket2.sock",), daemon=True).start()
+        assert event_ready.wait(5), "compositor event monitor did not connect"
         # The nested Wayland backend supplies the render allocator. Test windows
         # live on a separate headless output, never on a visible host surface.
         assert ctl("output", "create", "headless", "TEST").strip() == "ok"
+        if args.keep_target_visible:
+            assert ctl("output", "create", "headless", "TEST_FOCUS").strip() == "ok"
+            assert ctl("dispatch", "focusmonitor", "TEST").strip() == "ok"
         wait_for(lambda: json.loads(ctl("monitors", "-j")))
         inner_socket = wait_for(lambda: next((p for p in runtime.glob("wayland-*") if p.is_socket() and p != socket), None))
         env["WAYLAND_DISPLAY"] = inner_socket.name
@@ -102,18 +119,28 @@ def run(args):
             assert ctl("dispatch", "exec", shlex.join([args.kitty, "--class", "workspace-test", *terminal_command])).strip() == "ok"
             terminal = wait_for(lambda: next((c for c in clients() if c["class"] == "workspace-test"), None))
             assert terminal["workspace"]["name"] == "Agent · Target", terminal
+            if args.keep_target_visible:
+                # Extension-backed browser UI may need its first rendered frame.
+                # Keep Target visible while focus moves to a separate virtual output.
+                assert ctl("dispatch", "focusmonitor", "TEST_FOCUS").strip() == "ok"
             assert ctl("dispatch", "workspace", "name:Focused elsewhere").strip() == "ok"
+            (case / "before-launch.json").write_text(json.dumps({
+                "monitors": json.loads(ctl("monitors", "-j")), "clients": clients()}))
             (case / "go").touch()
             result_path = case / "result.json"
-            wait_for(result_path.exists)
+            wait_for(result_path.exists, timeout=60)
             result = json.loads(result_path.read_text())
             assert result["status"] == 0, result
-            windows = wait_for(lambda: [c for c in clients() if "chromium" in c["class"]])
+            windows = wait_for(lambda: [c for c in clients() if args.browser_class in c["class"]])
             assert len(windows) == 1, windows
             assert windows[0]["workspace"]["name"] == "Agent · Target", windows
             assert json.loads(ctl("activeworkspace", "-j"))["name"] == "Focused elsewhere"
             assert json.loads(ctl("activewindow", "-j")) == {}, "launch stole focus"
-            print(label + ": real Chromium window verified beside invoking Kitty; focused workspace unchanged", flush=True)
+            address = windows[0]["address"].removeprefix("0x")
+            if args.check_transient_focus:
+                assert "activewindowv2>>" + address not in events, "transient browser focus theft"
+                assert any(event.startswith("openwindow>>" + address + ",Agent · Target,") for event in events), "initial placement was wrong"
+            print(label + f": real {args.browser_class} window verified beside invoking Kitty; focused workspace unchanged", flush=True)
             (case / "done").touch()
             assert ctl("dispatch", "closewindow", "address:" + windows[0]["address"]).strip() == "ok"
             wait_for(lambda: not clients())
@@ -155,6 +182,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ["hyprland", "hyprctl", "labwc", "kitty", "chromium"]:
         parser.add_argument("--" + name, required=True)
+    parser.add_argument("--check-transient-focus", action="store_true")
+    parser.add_argument("--keep-target-visible", action="store_true")
+    parser.add_argument("--browser-class", default="chromium")
     parser.add_argument("--render-node", default="/dev/dri/renderD128")
     parser.add_argument("--helper", default=str(Path(__file__).resolve().parents[1] / "bin" / "project-workspace-exec"))
     args = parser.parse_args()

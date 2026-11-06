@@ -1,4 +1,4 @@
-{ lib, buildNpmPackage, python3, chromium, makeWrapper, nodejs }:
+{ lib, buildNpmPackage, python3, vivaldi, hyprland, makeWrapper, nodejs }:
 
 buildNpmPackage {
   pname = "pi-browser";
@@ -19,10 +19,13 @@ buildNpmPackage {
     install -m644 browser.py "$out/lib/pi-browser/browser.py"
     substituteInPlace "$out/lib/pi-browser/browser.py" \
       --replace-fail '@CLI@' "$out/lib/pi-browser/node_modules/.bin/playwright-cli" \
-      --replace-fail '@CHROMIUM@' '${chromium}/bin/chromium'
+      --replace-fail '@BROWSER_EXECUTABLE@' '${vivaldi}/bin/vivaldi' \
+      --replace-fail '@NODE@' '${nodejs}/bin/node' \
+      --replace-fail '@DAEMON@' "$out/lib/pi-browser/node_modules/playwright-core/lib/entry/cliDaemon.js" \
+      --replace-fail '@HYPRCTL@' '${hyprland}/bin/hyprctl'
     makeWrapper ${python3}/bin/python3 "$out/bin/pi-browser" \
       --add-flags "$out/lib/pi-browser/browser.py" \
-      --prefix PATH : ${lib.makeBinPath [ python3 chromium ]} \
+      --prefix PATH : ${lib.makeBinPath [ python3 vivaldi ]} \
       --set PYTHONDONTWRITEBYTECODE 1
     # Upstream's /usr/bin/env node shebang needs the build's exact Node runtime.
     wrapProgram "$out/lib/pi-browser/node_modules/@playwright/cli/playwright-cli.js" \
