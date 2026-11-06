@@ -350,7 +350,7 @@ class PickerGuiSourceTests(unittest.TestCase):
     def test_global_next_attention_jumps_from_active_workspace_without_showing_picker(self):
         tree = ast.parse(GUI_SOURCE.read_text())
         picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
-        names = {"scope_requires_attention", "attention_scopes", "jump_next_attention"}
+        names = {"scope_requires_attention", "attention_scopes", "jump_next_attention", "jump_previous_attention"}
         methods = [copy.deepcopy(node) for node in picker.body if isinstance(node, ast.FunctionDef) and node.name in names]
         backend = mock.Mock()
         backend.project_scope.side_effect = lambda p: {"kind": "project", "projectId": p["id"]}
@@ -386,13 +386,32 @@ class PickerGuiSourceTests(unittest.TestCase):
                 backend.active_workspace_name.return_value = active
                 self.assertTrue(namespace["jump_next_attention"](app))
                 backend.run.assert_called_with([backend.HYPRCTL, "dispatch", "workspace", "name:" + expected])
+        app.jump_next_attention = lambda **kwargs: namespace["jump_next_attention"](app, **kwargs)
+        for active, expected in [("a", "b"), ("b", "a/settled"),
+                                 ("a/settled", "a"), ("a/mixed", "a"),
+                                 ("a/closed", "a/settled"), ("unmanaged", "b")]:
+            with self.subTest(reverse_from=active):
+                backend.active_workspace_name.return_value = active
+                self.assertTrue(namespace["jump_previous_attention"](app))
+                backend.run.assert_called_with([backend.HYPRCTL, "dispatch", "workspace", "name:" + expected])
+        # A single target wraps to itself; an empty registry never dispatches.
+        app.context_targets = lambda: [(project, None)]
+        backend.active_workspace_name.return_value = "a"
+        namespace["jump_previous_attention"](app)
+        backend.run.assert_called_with([backend.HYPRCTL, "dispatch", "workspace", "name:a"])
+        app.context_targets = lambda: []
+        backend.run.reset_mock()
+        namespace["jump_previous_attention"](app)
+        backend.run.assert_not_called()
+        backend.notify_warning.reset_mock()
+        app.context_targets = lambda: targets
         app.show_window.assert_not_called()
         self.assertEqual(activity[("a", None)], {"idle"})
         # No qualifying scopes: notify, do not dispatch or change selection.
         activity.clear()
         backend.run.reset_mock()
         previous = app.selected_scope
-        namespace["jump_next_attention"](app)
+        namespace["jump_previous_attention"](app)
         backend.run.assert_not_called()
         self.assertEqual(app.selected_scope, previous)
         backend.notify_warning.assert_called_once()

@@ -887,8 +887,11 @@ class PickerApplication(Adw.Application):
                 scopes.append({"kind": "project", "projectId": project["id"]})
         return scopes
 
-    def jump_next_attention(self):
-        """Global Super+n: focus an existing settled scope, without showing the picker."""
+    def jump_previous_attention(self):
+        return self.jump_next_attention(direction=-1)
+
+    def jump_next_attention(self, direction=1):
+        """Global Super+[Shift+]n: focus a settled scope without showing the picker."""
         if self.destructive_action_pending:
             return GLib.SOURCE_CONTINUE
         try:
@@ -904,14 +907,14 @@ class PickerApplication(Adw.Application):
                 workspace = backend.stream_workspace_name(project, stream) if stream else backend.workspace_name(project)
                 ordered.append((scope, workspace))
             anchor = next((index for index, (_, workspace) in enumerate(ordered)
-                           if workspace == self.current_workspace), -1)
+                           if workspace == self.current_workspace), -1 if direction == 1 else 0)
             for offset in range(1, len(ordered) + 1):
-                scope, workspace = ordered[(anchor + offset) % len(ordered)]
+                scope, workspace = ordered[(anchor + direction * offset) % len(ordered)]
                 if scope not in scopes:
                     continue
                 result = backend.run([backend.HYPRCTL, "dispatch", "workspace", f"name:{workspace}"])
                 if result.returncode != 0:
-                    raise RuntimeError("Could not switch to the next green-dot workspace")
+                    raise RuntimeError("Could not switch to the green-dot workspace")
                 self.selected_scope = scope
                 self.expanded_project_ids.add(scope["projectId"])
                 self.save_picker_state()
@@ -1964,7 +1967,7 @@ class PickerApplication(Adw.Application):
         return False
 
 
-def run_daemon(show_initially, close_active_workspace=False, next_attention=False):
+def run_daemon(show_initially, close_active_workspace=False, next_attention=False, previous_attention=False):
     backend.ensure_directory(backend.RUNTIME_ROOT)
     pid_path = backend.RUNTIME_ROOT / "picker-gui.json"
     application = PickerApplication(persistent=True, start_hidden=not show_initially)
@@ -1979,12 +1982,16 @@ def run_daemon(show_initially, close_active_workspace=False, next_attention=Fals
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, application.show_window)
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR2, application.request_close_active_workspace)
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGHUP, application.jump_next_attention)
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, application.jump_previous_attention)
     GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, stop)
     pid_path.write_text(json.dumps({"pid": os.getpid(), "command": str(Path(sys.argv[0]).resolve())}) + "\n")
     pid_path.chmod(0o600)
-    if next_attention:
+    if next_attention or previous_attention:
         def jump_once():
-            application.jump_next_attention()
+            if previous_attention:
+                application.jump_previous_attention()
+            else:
+                application.jump_next_attention()
             return GLib.SOURCE_REMOVE
 
         GLib.idle_add(jump_once)
@@ -2006,6 +2013,7 @@ def main():
             show_initially="--show" in sys.argv,
             close_active_workspace="--close-active-workspace" in sys.argv,
             next_attention="--next-attention" in sys.argv,
+            previous_attention="--previous-attention" in sys.argv,
         )
         return
     application = PickerApplication()

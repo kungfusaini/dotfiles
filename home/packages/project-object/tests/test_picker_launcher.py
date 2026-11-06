@@ -99,6 +99,30 @@ class PickerLauncherTests(unittest.TestCase):
         self.assertIn('signal.SIGHUP, application.jump_next_attention', gui)
         self.assertIn('GLib.idle_add(jump_once)', gui)
 
+    def test_previous_attention_signals_without_toggling_picker(self):
+        with mock.patch.object(sys, "argv", ["project-picker", "--previous-attention"]), \
+             mock.patch.object(self.launcher, "running_daemon", return_value=42), \
+             mock.patch.object(self.launcher, "dismiss_existing_picker") as dismiss, \
+             mock.patch.object(self.launcher.os, "kill") as kill:
+            self.launcher.main()
+        dismiss.assert_not_called()
+        kill.assert_called_once_with(42, signal.SIGINT)
+
+    def test_previous_attention_starts_hidden_daemon_with_action(self):
+        with mock.patch.object(sys, "argv", ["project-picker", "--previous-attention"]), \
+             mock.patch.object(self.launcher, "running_daemon", return_value=None), \
+             mock.patch.object(self.launcher, "start_daemon") as start:
+            self.launcher.main()
+        start.assert_called_once_with(show=False, previous_attention=True)
+        with mock.patch.object(self.launcher.subprocess, "Popen") as popen, \
+             mock.patch.object(self.launcher, "wait_for_daemon"):
+            self.launcher.start_daemon(show=False, previous_attention=True)
+        self.assertEqual(popen.call_args.args[0], [str(self.launcher.GUI), "--daemon", "--previous-attention"])
+        module = (ROOT / "nix" / "home-manager-module.nix").read_text()
+        self.assertIn('$mod SHIFT, n, exec, ${package}/bin/project-picker --previous-attention', module)
+        gui = (ROOT / "bin" / "project-picker-gui").read_text()
+        self.assertIn('signal.SIGINT, application.jump_previous_attention', gui)
+
     def test_hidden_picker_is_woken_when_no_window_can_be_dismissed(self):
         with mock.patch.object(sys, "argv", ["project-picker"]), \
              mock.patch.object(self.launcher, "running_daemon", return_value=42), \
