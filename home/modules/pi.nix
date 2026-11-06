@@ -28,7 +28,7 @@ let
   };
 in
 {
-  home.packages = [ modelDiscovery browserAutomation ];
+  home.packages = [ modelDiscovery browserAutomation pkgs.python3 pkgs.curl ];
 
   systemd.user.services.pi-model-discovery = {
     Unit.Description = "Check the authenticated Codex model catalog without invoking models";
@@ -82,6 +82,14 @@ in
   xdg.configFile."pi/agent/skills/nanogpt/SKILL.md".source = ../config/pi/skills/nanogpt/SKILL.md;
   xdg.configFile."pi/agent/skills/workstream/SKILL.md".source = ../config/pi/skills/workstream/SKILL.md;
   xdg.configFile."pi/agent/skills/browser/SKILL.md".source = ../config/pi/skills/browser/SKILL.md;
+  xdg.configFile."pi/agent/skills/gemini-share-capture/SKILL.md" = {
+    source = ../config/pi/skills/gemini-share-capture/SKILL.md;
+    force = true; # Replace the pre-existing unmanaged skill during migration.
+  };
+  xdg.configFile."pi/agent/skills/gemini-share-capture/scripts/extract-gemini-share.py" = {
+    source = ../config/pi/skills/gemini-share-capture/scripts/extract-gemini-share.py;
+    force = true;
+  };
   xdg.configFile."pi/agent/model-modes.json".source = ../config/pi/model-modes.json;
 
   xdg.configFile."pi/agent/settings.json".text = builtins.toJSON {
