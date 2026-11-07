@@ -34,6 +34,12 @@ buildNpmPackage {
   '';
   installPhase = ''
     mkdir -p "$out/lib/pi-browser"
+    # Runtime-consent attachment must not auto-snapshot restored credential or
+    # inbox pages. The pinned CLI hardcodes full automatic snapshots; override
+    # only for our private runtime daemon. Explicit snapshot commands still work.
+    substituteInPlace node_modules/playwright-core/lib/coreBundle.js \
+      --replace-fail 'snapshotMode: "full"' \
+        'snapshotMode: process.env.PI_BROWSER_METADATA_ONLY === "1" ? "none" : "full"'
     cp -r node_modules "$out/lib/pi-browser/"
     install -m644 browser.py "$out/lib/pi-browser/browser.py"
     substituteInPlace "$out/lib/pi-browser/browser.py" \

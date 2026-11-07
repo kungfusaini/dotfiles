@@ -14,6 +14,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -83,7 +84,7 @@ def boolean_option(args, name, default=False):
 # the pinned CLI's open options (not a workflow/capability policy).
 OPEN_FLAGS = {"browser": "string", "headed": "boolean", "mobile": "boolean",
               "device": "string", "persistent": "boolean", "profile": "string",
-              "config": "string", "idle-timeout": "string",
+              "config": "string", "idle-timeout": "string", "manual": "boolean",
               "json": "boolean", "raw": "boolean", "help": "boolean", "version": "boolean"}
 
 
@@ -150,6 +151,22 @@ def replace_config(args, path):
     return result
 
 
+def without_manual_option(args):
+    result = []
+    index = 0
+    while index < len(args):
+        if args[index] == "--":
+            return result + args[index:]
+        if args[index] in ("--manual", "--no-manual"):
+            index += 1
+            if index < len(args) and args[index] in ("true", "false"):
+                index += 1
+            continue
+        result.append(args[index])
+        index += 1
+    return result
+
+
 def launch_options(browser_executable, args):
     options = {"executablePath": browser_executable, "headless": not headed_requested(args),
                "chromiumSandbox": True}
@@ -195,6 +212,7 @@ def child_env(env, root):
     # so headed launches can use the verified project workspace launcher.
     result = {k: v for k, v in env.items()
               if not k.startswith(("PLAYWRIGHT_", "PWTEST_"))}
+    result.pop("PI_BROWSER_METADATA_ONLY", None)
     result.update({
         "NO_UPDATE_NOTIFIER": "1",
         "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
@@ -300,6 +318,8 @@ def remove_temporary_profile(root, state):
 
 def stop_managed(root):
     state = read_state(root)
+    if state and state.get("bound", True):
+        stop_runtime_daemon(state)
     if state and state.get("bound", True) and process_start(state["pid"]) == state["start"]:
         # Only the exact process session we launched; never a reused PID or the
         # everyday Vivaldi process. SIGTERM allows profile data to flush.
@@ -394,8 +414,32 @@ def provision_bitwarden_host(profile, template="@BITWARDEN_HOST@"):
         temporary.unlink(missing_ok=True)
 
 
+def open_manual_tab(process, state, executable, target, root, env):
+    """Use ordinary Vivaldi URL handoff after its native UI has mapped."""
+    deadline = time.monotonic() + 20
+    hyprctl = state.get("hyprctl", "@HYPRCTL@")
+    while True:
+        result = subprocess.run([hyprctl, "clients", "-j"], env=env,
+                                capture_output=True, text=True, timeout=5, check=True)
+        clients = json.loads(result.stdout)
+        if any(c.get("mapped") and c.get("pid") == process.pid for c in clients):
+            break
+        if process.poll() is not None or time.monotonic() >= deadline:
+            raise ValueError("Manual Vivaldi window did not map")
+        time.sleep(0.05)
+    # A fresh Vivaldi profile initially selects its own welcome tab. Hand the
+    # task URL to that already-running instance, rather than inspecting pages
+    # or controlling it through a debugger during the manual phase.
+    with (root / "vivaldi.log").open("a") as log:
+        subprocess.run([executable, "--user-data-dir=" + state["profile"], "--new-tab", target],
+                       cwd=root, env=env, stdout=log, stderr=log, timeout=15, check=True)
+    if process.poll() is not None:
+        raise ValueError("Manual Vivaldi exited during URL handoff")
+
+
 def start_headed(root, config, args, env):
     target = validate_native_settings(config, args)
+    manual = boolean_option(args, "manual")
     browser = config["browser"]
     launch = browser["launchOptions"]
     extra = launch.get("args", [])
@@ -415,7 +459,8 @@ def start_headed(root, config, args, env):
     # Leave stale-lock recovery to Vivaldi itself, never unlink a live lock.
     port_file = profile / "DevToolsActivePort"
     port_file.unlink(missing_ok=True)
-    state = {"profile": str(profile), "temporary": temporary, "bound": True}
+    state = {"profile": str(profile), "temporary": temporary, "bound": True,
+             "manual": manual, "url": target}
     try:
         provision_bitwarden_host(profile)
         state.update(placement_rule(root, env))
@@ -424,7 +469,7 @@ def start_headed(root, config, args, env):
             process = subprocess.Popen([
                 launch["executablePath"], "--no-first-run", "--no-default-browser-check",
                 "--disable-dev-shm-usage",
-                "--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0",
+                *([] if manual else ["--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"]),
                 "--user-data-dir=" + str(profile), *extra, *window_class, "about:blank"],
                 cwd=root, env=env, stdout=log, stderr=log, start_new_session=True)
     except BaseException:
@@ -438,6 +483,15 @@ def start_headed(root, config, args, env):
         state.update({"pid": process.pid, "start": start})
         write_json(root / "vivaldi-process.json", state)
         deadline = time.monotonic() + 30
+        if manual:
+            # No CDP endpoint, daemon, page observation or automation connection.
+            # The workspace launcher separately verifies the actual mapped UI.
+            while not profile_locked(profile):
+                if process.poll() is not None or time.monotonic() >= deadline:
+                    raise ValueError("Manual Vivaldi did not acquire its profile; see vivaldi.log")
+                time.sleep(0.05)
+            open_manual_tab(process, state, launch["executablePath"], target, root, env)
+            return process, None
         while not port_file.exists():
             if process.poll() is not None or time.monotonic() >= deadline:
                 raise ValueError("Vivaldi did not publish its owned endpoint; see vivaldi.log")
@@ -548,6 +602,139 @@ throw new Error('Owned Vivaldi target not found');}"""
     return subprocess.run(navigation, cwd=root, env=env, check=False).returncode
 
 
+def stop_runtime_daemon(state):
+    daemon = state.get("runtime_daemon", {})
+    if (isinstance(daemon, dict) and isinstance(daemon.get("pid"), int)
+            and daemon["pid"] > 1 and daemon["pid"] != state.get("pid")
+            and daemon.get("start") and process_start(daemon["pid"]) == daemon["start"]):
+        try:
+            os.kill(daemon["pid"], signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+
+def runtime_endpoint(profile):
+    path = profile / "DevToolsActivePort"
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except FileNotFoundError:
+        return None
+    with os.fdopen(fd) as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_size > 256:
+            raise ValueError("Invalid owned runtime debugging marker")
+        lines = stream.read().splitlines()
+    if (len(lines) != 2 or not lines[0].isdigit() or not 0 < int(lines[0]) < 65536
+            or not re.fullmatch(r"/devtools/browser/[a-f0-9-]{36}", lines[1])):
+        raise ValueError("Invalid owned runtime debugging marker")
+    return "ws://127.0.0.1:" + lines[0] + lines[1]
+
+
+def private_cli_result(cli, root, env, *args):
+    try:
+        response = subprocess.run([cli, "-s=agent", *args, "--json"], cwd=root, env=env,
+                                  text=True, capture_output=True, timeout=20, check=False)
+        envelope = json.loads(response.stdout)
+        if response.returncode or not isinstance(envelope, dict) or envelope.get("isError"):
+            raise ValueError
+        value = envelope.get("result")
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+            except ValueError:
+                pass
+        return value
+    except (OSError, ValueError, subprocess.SubprocessError):
+        # Never forward CLI code/page/tab/error metadata, which may contain
+        # private authentication URLs or credentials, to the transcript.
+        raise ValueError("Runtime browser command failed; private output was suppressed") from None
+
+
+def connect_manual(cli, root, env, browser_executable):
+    state = managed_state(root)
+    if not state or not state.get("manual") or not state.get("bound", True):
+        raise ValueError("No owned manual Vivaldi is running; open --headed --manual first")
+    profile = Path(state["profile"])
+    try:
+        host, pid = os.readlink(profile / "SingletonLock").rsplit("-", 1)
+    except (OSError, ValueError):
+        raise ValueError("Owned manual profile lock is unavailable") from None
+    if host != os.uname().nodename or pid != str(state["pid"]):
+        raise ValueError("Manual profile is not owned by the recorded browser")
+    config = state.get("manual_config") or json.loads((root / "config.json").read_text())
+    if (config.get("browser", {}).get("launchOptions", {}).get("executablePath") != browser_executable
+            or config.get("browser", {}).get("remoteEndpoint")):
+        raise ValueError("Manual browser configuration changed; reopen explicitly")
+    validate_native_settings(config, ["open", "--headed", "--", state["url"]])
+    url = urllib.parse.urlsplit(state["url"])
+    if url.scheme not in ("http", "https") or not url.hostname:
+        raise ValueError("Runtime connection requires an HTTP(S) task URL")
+    host_name = "[" + url.hostname + "]" if ":" in url.hostname else url.hostname
+    port = url.port
+    origin = url.scheme + "://" + host_name + ((":" + str(port)) if port and
+             (url.scheme, port) not in (("http", 80), ("https", 443)) else "")
+    endpoint = runtime_endpoint(profile)
+    if not endpoint:
+        # Merely show the native setting. Only Sumeet may enable it.
+        with (root / "vivaldi.log").open("a") as log:
+            subprocess.run([browser_executable, "--user-data-dir=" + str(profile), "--new-tab",
+                            "vivaldi://inspect/#remote-debugging"], env=env, cwd=root,
+                           stdout=log, stderr=log, timeout=15, check=True)
+        print(json.dumps({"status": "enable-debugging", "connected": False}))
+        return 0
+    daemon = state.get("runtime_daemon")
+    if not daemon:
+        state["manual_config"] = config
+        attached = json.loads(json.dumps(config))
+        attached["browser"].update(cdpEndpoint=endpoint, cdpTimeout=0, isolated=False, userDataDir=str(profile))
+        attached["saveSession"] = False
+        write_json(root / "runtime-config.json", attached)
+        with (root / "runtime-daemon.log").open("ab") as log:
+            offset = log.tell()
+            process = subprocess.Popen(["@NODE@", "@DAEMON@", "agent",
+                                        "--config=" + str(root / "runtime-config.json"), "--cdp=" + endpoint, "--headed"],
+                                       cwd=root, env={**env, "PI_BROWSER_METADATA_ONLY": "1"},
+                                       stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
+        start = process_start(process.pid)
+        if not start:
+            raise ValueError("Runtime connection could not start; browser remains manual")
+        state["runtime_daemon"] = {"pid": process.pid, "start": start, "offset": offset, "endpoint": endpoint}
+        write_json(root / "vivaldi-process.json", state)
+        print(json.dumps({"status": "approve-connection", "connected": False}))
+        return 0
+    if daemon.get("endpoint") != endpoint:
+        raise ValueError("Runtime endpoint changed; close or detach the prior connection first")
+    if process_start(daemon["pid"]) != daemon["start"]:
+        state.pop("runtime_daemon", None)
+        write_json(root / "vivaldi-process.json", state)
+        raise ValueError("Runtime connection ended or was declined; browser remains manual")
+    with (root / "runtime-daemon.log").open("rb") as log:
+        log.seek(daemon["offset"])
+        ready = b"Daemon listening on" in log.read(65536)
+    if not ready:
+        print(json.dumps({"status": "awaiting-approval", "connected": False}))
+        return 0
+    # No navigation, new tab, cookie copy or restart: select the existing task.
+    script = ("async(page)=>{const pages=page.context().pages();const found=[];"
+              "for(let i=0;i<pages.length;i++){try{if(new URL(pages[i].url()).origin==="
+              + json.dumps(origin) + ")found.push(i);}catch{}}"
+              "if(found.length!==1)throw Error('Task origin is missing or ambiguous');return found[0];}")
+    index = private_cli_result(cli, root, env, "run-code", script)
+    if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+        raise ValueError("Could not identify one task tab")
+    private_cli_result(cli, root, env, "tab-select", str(index))
+    value = private_cli_result(cli, root, env, "run-code",
+                               "async(page)=>({origin:new URL(page.url()).origin})")
+    if not isinstance(value, dict) or value.get("origin") != origin:
+        raise ValueError("Task origin changed; no page content was inspected")
+    state["manual"] = False
+    state["runtime"] = True
+    state.pop("manual_config", None)
+    write_json(root / "vivaldi-process.json", state)
+    print(json.dumps({"connected": True, "origin": origin}))
+    return 0
+
+
 def run(args, *, cli, browser_executable):
     validate_args(args)
     args = absolute_inputs(args, Path.cwd())
@@ -592,6 +779,9 @@ def run(args, *, cli, browser_executable):
         configured = settings.get("browser", {})
         launch = configured.get("launchOptions", {})
         help_only = has_option(args, "--help") or has_option(args, "--version") or "-h" in args
+        if help_only and args and args[0] == "open" and has_option(args, "--manual"):
+            print("--manual: normal headed Vivaldi; after handback connect requests native runtime debugging permission without restarting")
+            return 0
         if args and args[0] == "open" and not help_only:
             open_target(args)  # Validate before any native process/profile side effect.
         native = bool(args and args[0] == "open" and not help_only
@@ -602,6 +792,38 @@ def run(args, *, cli, browser_executable):
         if native:
             validate_native_settings(settings, args)
         env = child_env(os.environ, root)
+        operation = args[0] if args else ""
+        if operation == "connect":
+            if args[1:] in (["--help"], ["-h"]):
+                print("pi-browser connect: after manual handback, request Vivaldi's native runtime permission and connect to the same live task browser")
+                return 0
+            if args[1:]:
+                raise ValueError("connect takes no options or URL")
+            return connect_manual(cli, root, env, browser_executable)
+        manual = bool(operation == "open" and boolean_option(args, "manual"))
+        if manual and not help_only:
+            if not native:
+                raise ValueError("--manual requires native Vivaldi with --headed")
+            if any(arg.startswith(("--enable-automation", "--headless")) for arg in launch.get("args", [])):
+                raise ValueError("Manual mode does not accept automation/headless launch flags")
+        current = managed_state(root)
+        if current and current.get("manual") and operation == "list" and not help_only:
+            print(json.dumps({"mode": "awaiting-consent" if current.get("runtime_daemon") else "manual", "running": True, "connected": False}))
+            return 0
+        if current and current.get("manual") and operation == "detach" and not help_only:
+            # Upstream may retain a stale non-attached headless session entry.
+            # Ownership handback must not depend on that unrelated CLI status.
+            stop_runtime_daemon(current)
+            current.pop("runtime_daemon", None)
+            release_rule(current)
+            current.pop("rule", None)
+            current["bound"] = False
+            write_json(root / "vivaldi-process.json", current)
+            print(json.dumps({"status": "detached"}))
+            return 0
+        if (current and current.get("manual") and not help_only
+                and operation not in {"", "open", "close", "detach", "delete-data", "list"}):
+            raise ValueError("Manual browser has no agent connection; use connect after explicit handback")
         if args and args[0] == "attach" and not help_only and managed_state(root):
             raise ValueError("Close or detach the managed Vivaldi before attaching another browser")
         if args and args[0] == "open" and not help_only and (native or managed_state(root)):
@@ -620,14 +842,28 @@ def run(args, *, cli, browser_executable):
         if native:
             process, target_id = start_headed(root, settings, args, env)
         try:
-            write_json(config, settings)
+            if not (current and current.get("manual") and (operation != "open" or help_only)):
+                write_json(config, settings)
             command = [cli, "-s=agent"]
             if args and args[0] in ("open", "attach") and (native or not custom):
                 command += [f"--config={config}"]
-            command += (replace_config(args, config) if native else args) or ["--help"]
+            command += (replace_config(args, config) if native else without_manual_option(args)) or ["--help"]
             print(f"pi-browser artifacts: {root / 'artifacts'}", file=sys.stderr, flush=True)
+            if native and manual:
+                # Keep a readable parent for the sandboxed browser until exit.
+                # The workspace helper verifies exact launch ancestry; Chromium
+                # may hide /proc/<pid>/environ, and an early-exiting launcher
+                # would discard that proof before the native window maps.
+                threading.Thread(target=process.wait, daemon=False).start()
+                if boolean_option(args, "json"):
+                    print(json.dumps({"mode": "manual", "connected": False}))
+                else:
+                    print("Manual Vivaldi opened without agent control. After sign-in and explicit handback, connect requests native runtime debugging consent in this same browser.")
+                return 0
             result = (connect_headed(cli, root, config, args, env, target_id) if native else
                       subprocess.run(command, cwd=root, env=env, check=False).returncode)
+            if (not args or has_option(args, "--help")) and operation in ("", "open"):
+                print("Wrapper option: open --headed --manual [--persistent|--profile=PATH] URL; connect after handback requests native runtime debugging consent")
             if args and args[0] in ("close", "delete-data"):
                 stop_managed(root)
                 if args[0] == "delete-data" and result == 0:
@@ -639,8 +875,10 @@ def run(args, *, cli, browser_executable):
                     if profile.exists():
                         shutil.rmtree(profile)
             elif args and args[0] == "detach" and result == 0:
-                state = managed_state(root)
+                state = read_state(root)
                 if state:
+                    stop_runtime_daemon(state)
+                    state.pop("runtime_daemon", None)
                     release_rule(state)
                     state.pop("rule", None)
                     state["bound"] = False  # Explicitly handed back; no later close may kill it.

@@ -83,6 +83,64 @@ established. Attachment retains the external
 browser's own scope and ownership and may expose authenticated pages. Detach leaves
 the external browser alive. No profile/cookie copying or implicit connection target.
 
+## Human-first sign-in with native runtime consent
+
+```sh
+project-workspace-exec pi-browser open --headed --manual --persistent https://mail.google.com/
+# After explicit human handback, request the next permission stage:
+pi-browser connect
+```
+
+Manual mode launches ordinary Vivaldi without debugger/automation flags or an
+agent connection. It never toggles the browser's native debugging preference.
+Owned-window metadata determines UI readiness; ordinary singleton URL handoff
+opens the task. A readable waiting parent preserves sandboxed-process ancestry
+for verified workspace placement. Existing modes remain available.
+
+The native runtime feature is available in the pinned Vivaldi, despite third-party
+channel lists naming Chrome/Edge only. `connect` verifies the exact live owned
+PID/start identity and profile-lock owner. Without a marker, it opens
+`vivaldi://inspect/#remote-debugging` and returns `enable-debugging`; Sumeet enables
+**Allow remote debugging for this browser instance**. A later `connect` requests
+Vivaldi's native **Allow remote debugging?** consent and returns
+`approve-connection`. This private daemon waits without timing out or capturing
+pages. After explicit handback, `connect` finalizes attachment, selecting the single
+existing HTTP(S) task-origin tab. Missing/ambiguous tabs fail closed.
+
+There is **no restart, new task page, navigation, cookie copying, state export or
+profile import**. The browser, page and login remain live. The native UI writes a
+strictly validated direct WebSocket endpoint in the owned profile's
+`DevToolsActivePort`; HTTP `/json/version` is not served by this on-demand endpoint.
+Raw CLI stdout/stderr, code, page/title and tab metadata are captured and filtered,
+not forwarded. Only status and validated origin are emitted. A version-pinned,
+fail-closed CLI patch disables its hardcoded automatic snapshots only in the
+private consent daemon. Explicit snapshots still work. Normal modes are unchanged.
+
+Native permission grants full browser debugging capability; origin selection is
+not a security sandbox. AGENTS.md authorization, manual-entry pause, explicit
+handback, task scope and password-manager restrictions remain authoritative.
+Declining a request leaves the same manual browser/profile intact, with no automatic
+retry. `close` or `detach` also terminates the exact owned pending daemon by
+PID/start identity; detach releases browser/profile ownership. Existing temporary
+cleanup and explicit/persistent-profile retention are unchanged.
+
+Tests use only a private compositor/DBus and synthetic local login. They prove
+startup has no debugger flags, normal `navigator.webdriver` behavior is unmodified,
+native permission approval/denial, same PID/profile/login, real interaction after
+attachment and metadata-only output. A synthetic Local State seed models the
+checkbox; test-human permission input is bounded to the private compositor and
+excluded only during explicit consent markers. Browser placement and all agent
+focus events outside that interval remain checked. Address reuse no longer causes
+false focus failures; all browser classes/lifetimes are checked.
+
+A restart prototype and Playwright-extension experiment were not shipped. The
+built-in route follows [Chrome's runtime-consent mechanism](https://developer.chrome.com/blog/chrome-devtools-mcp-debug-your-browser-session).
+See also [Google's browser guidance](https://support.google.com/accounts/answer/7675428?hl=en)
+and [MDN's webdriver documentation](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/webdriver).
+**Real Google sign-in acceptance still requires Sumeet's manual check**; synthetic
+login cannot prove it. There is no stealth override, account-security downgrade or
+provider-login retry loop. The everyday Vivaldi/profile is unchanged.
+
 ## Bitwarden availability
 
 Managed Vivaldi packages the official Bitwarden `dist-chrome-2026.10.2.zip` release

@@ -88,6 +88,47 @@ manual actions take effect in the same page/context. No cookie export is needed.
 After manual interaction, `pi-browser snapshot` observes the resulting page and
 the usual click/fill commands operate in that same browser.
 
+## Human-first sign-in and native consent
+
+```bash
+# Normal native Vivaldi; the launcher does not enable debugging or attach an agent.
+project-workspace-exec pi-browser open --headed --manual --persistent https://mail.google.com/
+
+# After explicit handback, request the next native permission stage.
+pi-browser connect
+```
+
+`--manual` is an optional mode on this Hyprland desktop; existing modes remain
+available. Its readable process parent retains workspace-verification ancestry.
+`list` reports manual/not connected; page commands refuse to run until handoff.
+Previously user-enabled native debugging settings are not disabled or overwritten.
+
+`connect` returns JSON status, without restarting or navigating the task page:
+
+- `enable-debugging`: the native `vivaldi://inspect/#remote-debugging` page is open.
+  Its **Allow remote debugging for this browser instance** checkbox belongs to the
+  human, not the agent.
+- `approve-connection`: a background connection request is pending. Vivaldi's native
+  **Allow remote debugging?** dialog requires human confirmation.
+- `awaiting-approval`: that request is still pending. It has no automatic expiry;
+  there is no need to poll while the human uses the browser.
+- `connected: true`: a later `connect`, after explicit handback, selects the single
+  HTTP(S) tab matching the original task origin. Missing/ambiguous task tabs fail
+  closed. Output contains only the origin, never page content or raw CLI metadata.
+
+The browser PID, profile, page and login stay unchanged. No cookies are copied,
+exported or imported. Automatic snapshots are disabled in this consent connection;
+explicit `snapshot` remains available for authorized tasks. Native permission grants
+browser-wide debugging capability, not a hard tab-only sandbox; task scope and
+password-manager rules still apply. `close` stops only the owned browser/daemon;
+`detach` releases them without deleting profiles or closing the browser.
+
+Vivaldi's direct on-demand WebSocket comes from the owned profile's
+`DevToolsActivePort`; its HTTP `/json/version` route is not available. This uses the
+built-in permission UI, not a Playwright extension or changed automation signals.
+Google/provider acceptance still needs a real manual check; synthetic login tests
+do not establish it. The normal Vivaldi profile is untouched.
+
 ## Bitwarden in native Vivaldi
 
 The managed native browser includes the official Bitwarden extension, pinned by

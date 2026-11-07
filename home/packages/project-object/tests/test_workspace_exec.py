@@ -15,6 +15,9 @@ LOADER = importlib.machinery.SourceFileLoader("workspace_exec", str(ROOT / "bin"
 SPEC = importlib.util.spec_from_loader(LOADER.name, LOADER)
 workspace_exec = importlib.util.module_from_spec(SPEC)
 LOADER.exec_module(workspace_exec)
+HARNESS_SPEC = importlib.util.spec_from_file_location("workspace_exec_harness", ROOT / "tests" / "workspace_exec_integration.py")
+workspace_harness = importlib.util.module_from_spec(HARNESS_SPEC)
+HARNESS_SPEC.loader.exec_module(workspace_harness)
 
 
 def client(workspace="Command Center · Agents", pid=123, address="0xabc", **extra):
@@ -26,6 +29,40 @@ class WorkspaceExecTests(unittest.TestCase):
         self.environment = mock.patch.dict(os.environ, {}, clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
+
+    def test_harness_focus_checks_ignore_reused_pointer_but_cover_all_browsers(self):
+        events = ["openwindow>>abc,Target,kitty,terminal", "activewindow>>kitty,terminal",
+                  "activewindowv2>>abc", "closewindow>>abc",
+                  "openwindow>>abc,Target,pi-vivaldi-owned,fixture"]
+        workspace_harness.assert_browser_events(events, "vivaldi", "Target", "abc")
+        with self.assertRaisesRegex(AssertionError, "focus theft"):
+            workspace_harness.assert_browser_events(events + ["activewindow>>pi-vivaldi-owned,fixture"],
+                                                    "vivaldi", "Target", "abc")
+        # A transient focus on an earlier browser instance must also fail, even
+        # if the final replacement window has a different address.
+        with self.assertRaisesRegex(AssertionError, "focus theft"):
+            workspace_harness.assert_browser_events([
+                "openwindow>>old,Target,pi-vivaldi-owned,fixture",
+                "activewindow>>pi-vivaldi-owned,fixture", "closewindow>>old",
+                "openwindow>>new,Target,pi-vivaldi-owned,fixture"], "vivaldi", "Target", "new")
+        with self.assertRaisesRegex(AssertionError, "initial placement"):
+            workspace_harness.assert_browser_events([
+                "openwindow>>abc,Wrong,vivaldi,fixture"], "vivaldi", "Target", "abc")
+
+    def test_harness_human_consent_focus_is_explicit_and_bounded(self):
+        native = "pi-vivaldi-" + "a" * 32
+        events = ["openwindow>>abc,Target," + native + ",fixture",
+                  "custom>>pi-consent-begin:" + native,
+                  "activewindow>>" + native + ",native permission",
+                  "custom>>pi-consent-end:" + native]
+        workspace_harness.assert_browser_events(events,"vivaldi","Target","abc",human_consent=True)
+        with self.assertRaisesRegex(AssertionError,"unexpected human-input"):
+            workspace_harness.assert_browser_events(events,"vivaldi","Target","abc")
+        with self.assertRaisesRegex(AssertionError,"focus theft"):
+            workspace_harness.assert_browser_events(events+["activewindow>>"+native+",fixture"],
+                                                    "vivaldi","Target","abc",human_consent=True)
+        with self.assertRaisesRegex(AssertionError,"not closed"):
+            workspace_harness.assert_browser_events(events[:-1],"vivaldi","Target","abc",human_consent=True)
 
     def test_uses_ancestry_before_recorded_workspace(self):
         with mock.patch.object(workspace_exec, "ancestor_pids", return_value=[3, 2]), \

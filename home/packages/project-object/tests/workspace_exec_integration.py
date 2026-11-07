@@ -28,6 +28,30 @@ def wait_for(predicate, timeout=20):
     raise AssertionError("timed out waiting for isolated test state")
 
 
+def assert_browser_events(events, browser_class, workspace, address, *, human_consent=False):
+    """Check all browser lifetimes; optionally bound explicit hidden human input."""
+    opened = []
+    human_class = None
+    for event in events:
+        if event.startswith("custom>>pi-consent-begin:"):
+            assert human_consent and human_class is None, "unexpected human-input interval"
+            human_class = event.split(":", 1)[1]
+            assert human_class.startswith("pi-vivaldi-"), "unbounded human-input target"
+        elif event.startswith("custom>>pi-consent-end:"):
+            assert human_class == event.split(":", 1)[1], "mismatched human-input interval"
+            human_class = None
+        if event.startswith("activewindow>>"):
+            active_class = event.split(">>", 1)[1].split(",", 1)[0]
+            assert browser_class not in active_class or active_class == human_class, "transient browser focus theft"
+        if event.startswith("openwindow>>"):
+            fields = event.split(">>", 1)[1].split(",", 3)
+            if len(fields) == 4 and browser_class in fields[2]:
+                opened.append(fields)
+    assert human_class is None, "human-input interval was not closed"
+    assert any(fields[0] == address for fields in opened), "browser mapping event missing"
+    assert all(fields[1] == workspace for fields in opened), "initial placement was wrong"
+
+
 def worker(arguments):
     root, helper, browser, strip = arguments
     root = Path(root)
@@ -138,8 +162,8 @@ def run(args):
             assert json.loads(ctl("activewindow", "-j")) == {}, "launch stole focus"
             address = windows[0]["address"].removeprefix("0x")
             if args.check_transient_focus:
-                assert "activewindowv2>>" + address not in events, "transient browser focus theft"
-                assert any(event.startswith("openwindow>>" + address + ",Agent · Target,") for event in events), "initial placement was wrong"
+                assert_browser_events(events, args.browser_class, "Agent · Target", address,
+                                      human_consent=args.simulate_human_consent)
             print(label + f": real {args.browser_class} window verified beside invoking Kitty; focused workspace unchanged", flush=True)
             (case / "done").touch()
             assert ctl("dispatch", "closewindow", "address:" + windows[0]["address"]).strip() == "ok"
@@ -183,6 +207,8 @@ def main():
     for name in ["hyprland", "hyprctl", "labwc", "kitty", "chromium"]:
         parser.add_argument("--" + name, required=True)
     parser.add_argument("--check-transient-focus", action="store_true")
+    parser.add_argument("--simulate-human-consent", action="store_true",
+                        help="Allow only explicitly bounded private test-human consent focus events")
     parser.add_argument("--keep-target-visible", action="store_true")
     parser.add_argument("--browser-class", default="chromium")
     parser.add_argument("--render-node", default="/dev/dri/renderD128")
