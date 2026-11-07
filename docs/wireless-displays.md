@@ -1,4 +1,4 @@
-# Wireless displays: initial client setup
+# Wireless displays: client and discovery
 
 `home/modules/display.nix` installs the existing Nixpkgs
 `gnome-network-displays` package. It brings the client, desktop launcher,
@@ -17,21 +17,29 @@ proof of working end-to-end casting. A receiver and a real permission-selection
 session are still needed for that test. In particular, do not promise wireless
 extended desktops simply because the application requests virtual sources.
 
-This change does **not** alter wired clamshell mode, folded-keyboard mode, lid
-policy, Wi-Fi backend, firewall rules, DNS resolution, or Avahi configuration.
-A wireless stream does not count as a physical external DRM display for the
-existing clamshell policy. Keep the lid open until a separately approved wireless
-keep-awake policy is implemented.
+This setup does **not** alter wired clamshell mode, folded-keyboard mode, lid
+policy, Wi-Fi backend or DNS resolution. A wireless stream does not count as a
+physical external DRM display for the existing clamshell policy. Keep the lid open
+until a separately approved wireless keep-awake policy is implemented.
 
-## Discovery prerequisites still requiring approval
+## Wi-Fi-only discovery
 
-Chromecast discovery uses Avahi/mDNS (`_googlecast._tcp`). Avahi is currently not
-enabled, so this client-only change is **not a completed Chromecast setup**.
+Chromecast discovery uses Avahi/mDNS (`_googlecast._tcp`). Host-level discovery is
+configured in `hosts/kirax1/modules/core/networking.nix`:
 
-The suggested next host-level change is to enable discovery on the actual Wi-Fi
-interface only, permit mDNS UDP 5353 only there, disable Avahi publishing, and
-leave `.local` name-resolution integration unchanged. That is a separate network
-service/firewall change and must be explicitly approved before implementation.
+- Avahi listens only on `wlp0s20f3`, not VPN, Docker or other interfaces.
+- UDP 5353 is allowed only on that Wi-Fi interface. Avahi's global firewall
+  opening is disabled, and no broad streaming ports are opened.
+- Publishing, multicast reflection, wide-area discovery and Avahi `.local`
+  name-resolution integration remain disabled.
+- Automatic printer discovery (`cups-browsed`), which NixOS otherwise enables
+  alongside Avahi, stays disabled as it was before this setup.
+
+This discovers receivers on the connected Wi-Fi network, including public Wi-Fi;
+there is no trusted-SSID filter. It does not publish the laptop's services, create
+an automatic cast connection, or bypass VPN routing/client isolation. The receiver
+and laptop normally need a mutually reachable LAN. Discovery does not prove
+successful streaming or receiver compatibility.
 
 Miracast requires a compatible Wi-Fi Direct device managed by NetworkManager
 using `wpa_supplicant`; the client upstream does not support `iwd`. Finding a P2P

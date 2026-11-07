@@ -72,6 +72,23 @@ in
 
   services.resolved.enable = true;
 
+  # Casting receiver discovery only: do not advertise this laptop, bridge
+  # multicast between networks, or change .local name resolution.
+  services.avahi = {
+    enable = true;
+    allowInterfaces = [ "wlp0s20f3" ];
+    openFirewall = false;
+    publish.enable = false;
+    nssmdns4 = false;
+    nssmdns6 = false;
+    reflector = false;
+    wideArea = false;
+  };
+  networking.firewall.interfaces.wlp0s20f3.allowedUDPPorts = [ 5353 ];
+  # NixOS otherwise enables unrelated printer discovery when Avahi is enabled.
+  # Preserve the previous effective printing policy.
+  services.printing.browsed.enable = false;
+
   services.nordvpn = {
     enable = true;
     package = unstable.nordvpn;
