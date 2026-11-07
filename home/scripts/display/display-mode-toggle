@@ -1,5 +1,21 @@
 set -euo pipefail
 
+# Folded entry and mirror->extended conversion may already own this lock.
+# Propagate ownership only to our synchronous nested display helper calls.
+if [[ ${DISPLAY_TRANSITION_LOCKED:-0} != 1 ]]; then
+  mkdir -p "${XDG_RUNTIME_DIR:-/tmp}/headless-mode"
+  exec 8>"${XDG_RUNTIME_DIR:-/tmp}/headless-mode/lock"
+  flock 8
+  export DISPLAY_TRANSITION_LOCKED=1
+fi
+
+# Clamshell owns the layout while the lid is closed. Do not mirror an
+# external screen onto the disabled laptop panel through F7.
+if [[ -e "${XDG_RUNTIME_DIR:-/tmp}/clamshell-mode/state.json" ]]; then
+  hyprctl notify -1 3000 'rgb(ff5555)' 'Open the lid before changing mirror/extended mode' >/dev/null || true
+  exit 0
+fi
+
 monitors=$(hyprctl monitors all -j)
 mapfile -t state < <(
   printf '%s' "$monitors" | python3 -c '

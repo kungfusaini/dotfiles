@@ -8,6 +8,31 @@ mkdir -p "$runtime/headless-mode"
 printf '%s\n' "$$" > "$runtime/headless-mode/watcher.pid"
 trap 'rm -f "$runtime/headless-mode/watcher.pid"' EXIT
 
+known_outputs=()
+refresh_outputs() {
+  local outputs
+  outputs=$(hyprctl monitors all -j | python3 -c '
+import json, sys
+print("\n".join(m["name"] for m in json.load(sys.stdin)))
+') || return 0
+  mapfile -t known_outputs <<< "$outputs"
+}
+
+monitor_added() {
+  local name=$1 known is_new=1
+  for known in "${known_outputs[@]}"; do
+    [[ $known != "$name" ]] || is_new=0
+  done
+  check_recovery
+  # Enabling an existing panel or unmirroring an existing external screen also
+  # emits monitoradded. Only a genuinely new physical output should reapply
+  # Shift-F7's saved layout, even if events queued until restoration completed.
+  if (( is_new )) && [[ $name != eDP-1 && $name != clamshell-recovery-* ]]; then
+    apply_saved_layout
+  fi
+  refresh_outputs
+}
+
 external_active() {
   hyprctl monitors all -j | python3 -c '
 import json, sys
@@ -16,6 +41,8 @@ raise SystemExit(not any(m.get("name") != "eDP-1" and not m.get("disabled", Fals
 }
 
 apply_saved_layout() {
+  # The lid controller owns its saved layout until reopening/recovery.
+  [[ ! -e "$runtime/clamshell-mode/state.json" ]] || return 0
   local state_file=${XDG_STATE_HOME:-$HOME/.local/state}/external-display-position
   [[ -r "$state_file" && -r /run/headless-mode/state ]] || return 0
   [[ $(</run/headless-mode/state) == off ]] || return 0
@@ -36,6 +63,9 @@ raise SystemExit(not (i and e and e.get("mirrorOf","none")=="none"))
 }
 
 check_recovery() {
+  if [[ -e "$runtime/clamshell-mode/state.json" ]]; then
+    clamshell-mode check >>"$runtime/clamshell-mode/recovery.log" 2>&1 || true
+  fi
   local state
   state=off
   if [[ -r /run/headless-mode/state ]]; then
@@ -52,8 +82,23 @@ check_recovery() {
   fi
 }
 
-# Restore the Shift-F7 layout on session startup as well as future hotplugs.
-apply_saved_layout
+# Track connected outputs (including disabled/mirrored ones) before recovery
+# generates any compositor enable events.
+refresh_outputs
+# Recover stale/open-lid clamshell state before applying any saved layout.
+# A current-session recovery already owns the startup layout; it may remove its
+# journal, so remember that ownership before calling it.
+startup_clamshell=$(python3 -c '
+import json, pathlib, sys
+try:
+    state=json.loads(pathlib.Path(sys.argv[1]).read_text())
+    print(int(state.get("instance") == sys.argv[2]))
+except (OSError, ValueError):
+    print(0)
+' "$runtime/clamshell-mode/state.json" "$HYPRLAND_INSTANCE_SIGNATURE")
+check_recovery
+# Restore the Shift-F7 layout only for a normal session startup.
+if [[ $startup_clamshell != 1 ]]; then apply_saved_layout; fi
 
 # Socket events provide immediate restoration. While active, a bounded DRM
 # detect probe also catches a disconnected sink whose Type-C adapter remains
@@ -62,8 +107,8 @@ while true; do
   if [[ -S "$socket" ]]; then
     while IFS= read -r event; do
       case "$event" in
-        monitorremoved*) check_recovery ;;
-        monitoradded*) check_recovery; apply_saved_layout ;;
+        monitorremoved\>\>*) check_recovery; refresh_outputs ;;
+        monitoradded\>\>*) monitor_added "${event#*>>}" ;;
       esac
     done < <(socat -T 2 -u "UNIX-CONNECT:$socket" - 2>/dev/null)
   fi

@@ -26,6 +26,7 @@
     ./modules/services/credential-store.nix
     ./modules/services/pi-secrets.nix
 
+    ./modules/hardware/clamshell-mode.nix
     ./modules/hardware/headless-mode.nix
     ./modules/hardware/input.nix
     ./modules/hardware/peripherals.nix

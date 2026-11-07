@@ -142,6 +142,12 @@ raise SystemExit(not (i and e and ((i.get("x"),i.get("y"))!=(ix,iy) or (e.get("x
 }
 
 prime_mode() {
+  # Clamshell owns the saved layout until reopening. It is not a normal
+  # two-screen desktop from which folded mode can safely save state.
+  if [[ -e "${XDG_RUNTIME_DIR:-/tmp}/clamshell-mode/state.json" ]]; then
+    hyprctl notify -1 4000 'rgb(ff5555)' 'Open the lid before enabling folded keyboard mode' >/dev/null || true
+    return 1
+  fi
   local -a ext
   local watcher_pid="" expected_watcher=""
   [[ -r "$runtime/watcher.pid" ]] && read -r watcher_pid < "$runtime/watcher.pid" || true
@@ -249,6 +255,7 @@ esac
 log_timing "${1:-toggle}: requesting controller lock"
 exec 9>"$lock_file"
 flock 9
+export DISPLAY_TRANSITION_LOCKED=1
 log_timing "${1:-toggle}: controller lock acquired"
 case "${1:-toggle}" in
   toggle)

@@ -1,4 +1,4 @@
-{ displayKeyHandler, displayLayoutOpen, headlessMonitorWatch, lib, micMuteButton, pkgs, ... }:
+{ clamshellMode, displayKeyHandler, displayLayoutOpen, headlessMonitorWatch, lib, micMuteButton, pkgs, ... }:
 
 let
   # Keep this pinned to the same Hyprland-compatible hyprgrass build used by
@@ -278,6 +278,10 @@ in
       ];
 
       bindl = [
+        # Display-only clamshell transitions also work while locked. logind
+        # still suspends on a normal (no external display) lid close.
+        ", switch:on:Lid Switch, exec, ${clamshellMode}/bin/clamshell-mode close"
+        ", switch:off:Lid Switch, exec, ${clamshellMode}/bin/clamshell-mode open"
         # Single press toggles mute; double press switches laptop/headset source.
         ", XF86AudioMicMute, exec, ${micMuteButton}/bin/mic-mute-button"
         ", XF86AudioNext, exec, playerctl next"

@@ -13,6 +13,7 @@ let
       coreutils
       hyprland
       python3
+      util-linux
       wlr-randr
     ];
     text = builtins.readFile ../scripts/display/display-layout-apply;
@@ -35,8 +36,17 @@ let
       displayLayoutApply
       hyprland
       python3
+      util-linux
     ];
     text = builtins.readFile ../scripts/display/display-mode-toggle;
+  };
+
+  clamshellMode = pkgs.writeShellApplication {
+    name = "clamshell-mode";
+    runtimeInputs = with pkgs; [ hyprland python3 ];
+    text = ''
+      exec python3 ${../scripts/display/clamshell-mode.py} "$@"
+    '';
   };
 
   headlessMode = pkgs.writeShellApplication {
@@ -61,19 +71,19 @@ let
 
   headlessMonitorWatch = pkgs.writeShellApplication {
     name = "headless-monitor-watch";
-    runtimeInputs = with pkgs; [ coreutils displayLayoutApply headlessMode hyprland python3 socat util-linux ];
+    runtimeInputs = with pkgs; [ clamshellMode coreutils displayLayoutApply headlessMode hyprland python3 socat util-linux ];
     text = builtins.readFile ../scripts/display/headless-monitor-watch;
   };
 in
 {
   _module.args = {
-    inherit displayKeyHandler displayLayoutOpen headlessMonitorWatch;
+    inherit clamshellMode displayKeyHandler displayLayoutOpen headlessMonitorWatch;
   };
 
   # Keep an explicit recovery command available from a terminal on the external
   # display, independently of whether the F7 binding is receiving events.
   # Keep wallpaper restart as a manual fallback, never a normal transition.
-  home.packages = [ headlessMode displayWallpaperRefresh ];
+  home.packages = [ clamshellMode headlessMode displayWallpaperRefresh ];
 
   xdg.configFile = {
     "quickshell/display-layout/shell.qml".source =
