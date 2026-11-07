@@ -1,0 +1,73 @@
+/* Keyboard-only resource overlay, never a global GTK theme. */
+@import url("resource:///sm/puri/squeekboard/common.css");
+
+sq_view {
+    background: #151922;
+    color: #e9edf2;
+    box-shadow: inset 0 1px 0 #343c48;
+    font-family: "Noto Sans", sans-serif;
+    font-size: 18px;
+}
+
+sq_button {
+    background: #303640;
+    color: #edf0f5;
+    border: 1px solid #3b434f;
+    border-radius: 8px;
+    margin: 4px;
+    box-shadow: 0 2px 0 #0e1117;
+}
+
+/* Keep wide-mode overrides geometry-only so state colours can still win. */
+sq_view.wide sq_button {
+    margin: 4px;
+}
+
+sq_button:active {
+    background: #526371;
+    color: #ffffff;
+    box-shadow: none;
+}
+
+sq_button.altline,
+sq_button.wide,
+sq_button.special {
+    background: #232a33;
+    color: #c7d0db;
+    font-size: 15px;
+}
+
+sq_button.altline:active,
+sq_button.wide:active,
+sq_button.special:active {
+    background: #42515e;
+    color: #ffffff;
+}
+
+sq_button.latched,
+sq_button.locked {
+    background: #68cdbb;
+    color: #10231e;
+}
+
+#space {
+    background: #303640;
+    color: #aeb9c7;
+    font-size: 12px;
+}
+
+#space:active {
+    background: #526371;
+    color: #ffffff;
+}
+
+#Return {
+    background: #68cdbb;
+    color: #10231e;
+    border-color: #82ddcb;
+}
+
+#Return:active {
+    background: #9be3d5;
+    color: #10231e;
+}

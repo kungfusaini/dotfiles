@@ -47,7 +47,7 @@ def foreground():
     return hypr("activeworkspace", "-j", json_output=True)["name"] == WORKSPACE
 
 
-def enter(automatic=False):
+def enter(automatic=False, panel=True):
     state = load_state()
     previous_state = dict(state) if state else None
     if state and state.get("exit_pending"):
@@ -79,6 +79,8 @@ def enter(automatic=False):
     with log_path.open("a") as output:
         subprocess.Popen(["tablet-orientation", "daemon"], stdout=output,
                          stderr=subprocess.STDOUT, start_new_session=True)
+    if not panel:
+        return
     # No user-manager environment imports, no compositor restarts. The panel
     # stays hidden while disabled; --no-duplicate handles rapid repeated entry.
     subprocess.Popen([
@@ -139,9 +141,12 @@ def action(command):
 class FoldWatcher:
     """Consume fold edges, not level-triggered entry that fights manual exits."""
 
-    def __init__(self):
+    def __init__(self, enter_mode=None, leave_mode=None, mode_active=None):
         self.folded = None
         self.headless = False
+        self.enter_mode = enter_mode or (lambda: enter(automatic=True))
+        self.leave_mode = leave_mode or (lambda: leave(automatic=True))
+        self.mode_active = mode_active
 
     def tick(self):
         try:
@@ -168,7 +173,7 @@ class FoldWatcher:
         if not folded:
             if state and (state.get("enabled") or state.get("exit_pending")) and (
                     self.folded is True or state.get("automatic") or state.get("exit_pending")):
-                leave(automatic=True)
+                self.leave_mode()
             self.folded = False
         elif self.folded is not True:
             monitors = hypr("monitors", "-j", json_output=True)
@@ -184,8 +189,9 @@ class FoldWatcher:
             destination = next((w for w in workspaces if w["name"] == WORKSPACE), None)
             if destination and destination.get("monitor") != "eDP-1":
                 return
-            if not state or not state.get("enabled") or current.get("name") != WORKSPACE:
-                enter(automatic=True)
+            if (not state or not state.get("enabled") or current.get("name") != WORKSPACE
+                    or (self.mode_active is not None and not self.mode_active())):
+                self.enter_mode()
             self.folded = True
 
 
@@ -214,7 +220,7 @@ def watch():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["enter", "leave", "toggle", "status", "browser", "keyboard", "next", "watch"])
+    parser.add_argument("command", choices=["enter", "leave", "toggle", "status", "browser", "keyboard", "next", "watch", "leave-automatic", "enter-iteration", "enter-fold", "adopt-fold"])
     args = parser.parse_args()
     try:
         if args.command == "watch":
@@ -228,8 +234,18 @@ def main():
                 status()
             elif args.command == "enter":
                 enter()
+            elif args.command in ("enter-iteration", "enter-fold"):
+                enter(automatic=args.command == "enter-fold", panel=False)
+            elif args.command == "adopt-fold":
+                state = load_state()
+                if not state or not state.get("enabled") or state.get("exit_pending") or not foreground():
+                    raise RuntimeError("Cannot adopt an inactive tablet workspace")
+                state["automatic"] = True
+                save_state(state)
             elif args.command == "leave":
                 leave()
+            elif args.command == "leave-automatic":
+                leave(automatic=True)
             elif args.command == "toggle":
                 state = load_state()
                 leave() if state and (state.get("exit_pending") or (state.get("enabled") and foreground())) else enter()

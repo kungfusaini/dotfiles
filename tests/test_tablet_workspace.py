@@ -183,6 +183,14 @@ class TabletWorkspaceTests(unittest.TestCase):
             trial.status()
         self.assertTrue(json.loads(output.call_args.args[0])["visible"])
 
+    def test_iteration_entry_never_starts_the_normal_panel(self):
+        with patch.object(trial, "hypr", side_effect=[{"name": "work"}, []]), \
+                patch.object(trial, "dispatch"), patch.object(trial.subprocess, "Popen") as launch:
+            trial.enter(panel=False)
+        self.assertEqual(len(launch.call_args_list), 1)
+        self.assertEqual(launch.call_args.args[0], ["tablet-orientation", "daemon"])
+        self.assertTrue(trial.load_state()["enabled"])
+
     def test_explicit_entry_starts_rotation_daemon_without_rotation_commands(self):
         with patch.object(trial, "hypr", side_effect=[{"name": "work"}, []]), \
                 patch.object(trial, "dispatch"), patch.object(trial.subprocess, "Popen") as launch:

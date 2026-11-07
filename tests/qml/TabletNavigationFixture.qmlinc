@@ -1,0 +1,57 @@
+    // Test-only IPC, inserted exclusively into private fake-backend bundles.
+    IpcHandler {
+        target: "testNavigation"
+        function state(): string { return root.navigationSnapshot() }
+        function inputState(): string {
+            const win = nativeChatView.Window.window
+            return JSON.stringify({inputActive: nativeChatView.inputActive, windowActive: !!win && win.active,
+                cursor: nativeChatView.cursorPosition, draftHash: Qt.md5(nativeChatView.draft)})
+        }
+        function editorPoint(): string {
+            function find(item) {
+                if (item.objectName === "chatComposer") return item
+                for (const child of item.children) { const found = find(child); if (found) return found }
+                return null
+            }
+            const editor = find(nativeChatView)
+            const point = editor.mapToGlobal(40, 24)
+            return JSON.stringify({x: point.x, y: point.y})
+        }
+        function debug(): string { return JSON.stringify({view: root.state.view, home: homeView.switcherOpen, pi: piNavigator.overview, homeBlocked: homeView.navigationBlocked, piBlocked: piNavigator.blocked, voice: root.voicePending, question: !!nativeAgent.question, updating: root.updating, dismissPiPending: root.dismissPiPending}) }
+        function openOverview(): string {
+            if (root.state.view === "external") externalView.showSwitcher()
+            else if (root.state.view === "pi") { piNavigator.gestureBegan(); piNavigator.showSwitcher() }
+            else homeView.openSwitcher()
+            return root.navigationSnapshot()
+        }
+        function choose(id: string): void {
+            const app = root.apps.find(app => app.id === id)
+            if (!app) return
+            if (root.state.view === "external") externalView.resume(id, app.label)
+            else if (root.state.view === "pi") piNavigator.resume(id, app.label)
+            else homeView.openApp(id, app.label)
+        }
+        function home(): void {
+            if (root.state.view === "external") externalView.requestHome()
+            else if (root.state.view === "pi") { piNavigator.overview = false; root.goHome() }
+            else homeView.requestHome()
+        }
+        function dismiss(id: string): void {
+            if (root.state.view === "external") externalView.dismissApp(id)
+            else if (root.state.view === "pi") piNavigator.dismissCard(id)
+            else homeView.dismissApp(id)
+        }
+        function pauseStatus(): void { statusPoll.stop() }
+        function resumeStatus(): void { statusPoll.start() }
+        function statusIdle(): bool { return !statusRunner.running }
+        function actionIdle(): bool { return !actionRunner.running }
+        function external(): string {
+            return JSON.stringify({ready: externalView.contentReady, overview: externalView.overview, inset: root.state.keyboardInset || 0,
+                rendered: externalView.rendered, mask: [externalView.mask.x, externalView.mask.y, externalView.mask.width, externalView.mask.height], source: externalView.toplevel ? externalView.toplevel.address : ""})
+        }
+        function previews(): string {
+            const result = {}
+            for (const id of Object.keys(appHistory.previews)) result[id] = String(appHistory.previews[id].url)
+            return JSON.stringify({capturing: appHistory.capturing, images: result})
+        }
+    }

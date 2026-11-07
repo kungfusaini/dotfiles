@@ -1,4 +1,10 @@
-# Reversible tablet workspace
+# Legacy tablet workspace controller
+
+The deployed physical fold path, app-menu entry and **Super+Ctrl+T** now open
+[new Tablet Home](tablet-home-preview.md), not this legacy button panel.
+This page documents the underlying workspace/orientation controller and its
+explicit `tablet-workspace enter` diagnostic interface. Its old `watch` command
+must not run alongside the new `tablet-fold-watch`; they share a singleton lock.
 
 This is one Hyprland session, not GNOME, Plasma, a second login or a suspended
 session. Existing apps continue running. Entering creates/selects the dedicated

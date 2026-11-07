@@ -1,0 +1,7 @@
+[
+  {"id":"tablet-improve","label":"Pi","icon":"internet-chat","kind":"native"},
+  {"id":"browser","label":"Vivaldi","icon":"vivaldi","kind":"window","warmOnly":true,"processPrefix":"vivaldi","requiredProcessFlags":["--enable-wayland-ime","--wayland-text-input-version=3"],"minimumHeight":400,"command":["vivaldi","--ozone-platform=wayland","--enable-wayland-ime","--wayland-text-input-version=3"],"openArguments":["--new-window"],"classes":["vivaldi-stable","Vivaldi-stable","vivaldi"]},
+  {"id":"music","label":"Spotify","icon":"spotify","kind":"preview"},
+  {"id":"games","label":"Pegasus","icon":"org.pegasus_frontend.Pegasus","kind":"preview"},
+  {"id":"art","label":"Krita","icon":"krita","kind":"preview"}
+]

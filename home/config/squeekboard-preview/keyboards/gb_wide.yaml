@@ -1,0 +1,91 @@
+---
+# Tablet landscape preview. UK punctuation/currency, not a physical 105-key map.
+# Wider outlines avoid Squeekboard's wide-layout stretch-limit fallback, which
+# otherwise centres a phone-width keyboard inside a full-width layer surface.
+margins: { top: 6, bottom: 6, side: 60 }
+outlines:
+  default: { width: 100, height: 52 }
+  altline: { width: 150, height: 52 }
+  wide: { width: 150, height: 52 }
+  special: { width: 100, height: 52 }
+  punctuation: { width: 75, height: 52 }
+  spaceline: { width: 450, height: 52 }
+
+views:
+  base:
+    - "q w e r t y u i o p"
+    - "a s d f g h j k l apostrophe"
+    - "Shift_L z x c v b n m BackSpace"
+    - "show_numbers preferences comma space period Return"
+  upper:
+    - "Q W E R T Y U I O P"
+    - "A S D F G H J K L apostrophe"
+    - "Shift_L Z X C V B N M BackSpace"
+    - "show_numbers preferences comma space period Return"
+  numbers:
+    - "1 2 3 4 5 6 7 8 9 0"
+    - "! quote £ $ % ^ & * ( )"
+    - "show_symbols @ # - _ + = / BackSpace"
+    - "show_letters preferences comma space period Return"
+  symbols:
+    - "[ ] { } < > € ¥ ¢ °"
+    - "~ grave | backslash colon ; ? ! @ #"
+    - "show_numbers_from_symbols © ® × ÷ √ • … BackSpace"
+    - "show_letters preferences comma space period Return"
+
+buttons:
+  Shift_L:
+    action:
+      locking:
+        lock_view: upper
+        unlock_view: base
+    outline: altline
+    icon: key-shift
+  BackSpace:
+    outline: altline
+    icon: edit-clear-symbolic
+    action: erase
+  preferences:
+    action: show_prefs
+    outline: special
+    label: UK
+  show_numbers:
+    action: { set_view: numbers }
+    outline: wide
+    label: "123"
+  show_numbers_from_symbols:
+    action: { set_view: numbers }
+    outline: altline
+    label: "123"
+  show_letters:
+    action: { set_view: base }
+    outline: wide
+    label: ABC
+  show_symbols:
+    action: { set_view: symbols }
+    outline: altline
+    label: "#+="
+  comma:
+    outline: punctuation
+    text: ","
+  period:
+    outline: punctuation
+    text: "."
+  apostrophe:
+    text: "'"
+  quote:
+    text: '"'
+  backslash:
+    text: '\'
+  grave:
+    text: "`"
+  colon:
+    text: ":"
+  space:
+    outline: spaceline
+    text: " "
+    label: English (UK)
+  Return:
+    outline: wide
+    icon: key-enter
+    keysym: Return
