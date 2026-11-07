@@ -115,6 +115,17 @@ let
     "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/242550/611e0af21dd4b8a6941010088043ba816a79077d/ss_611e0af21dd4b8a6941010088043ba816a79077d.1920x1080.jpg"
     "1s5xylizl4nqcm16lmn99pay6yfcp9b3b63c99j1l60idj4vl14m";
 
+  # Official Steam library assets, pinned independently of the running client.
+  persona5Cover = fetch "persona-5-royal-cover.jpg"
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1687950/library_600x900.jpg"
+    "0py3i095amjnr23ahyhhn61451d66gnjd0d8an8p881kjif26ijr";
+  persona5Background = fetch "persona-5-royal-background.jpg"
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1687950/library_hero.jpg"
+    "0i1nfm5gpwl31gpldaxxhpfjkyj4s56fhpvamdgf82dd416jmkqd";
+  persona5Logo = fetch "persona-5-royal-logo.png"
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1687950/logo.png"
+    "1ipc23zx7g6n016xbw3jv6n63skifr65mi78p98nqy268zc7x7fg";
+
   civilizationCover = fetch "civilization-vi-cover.jpg"
     "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/289070/library_600x900.jpg"
     "0d7sni1a10h4wcy4k0k36d4a6k9a7chcl154j94pmkvi3i429969";
@@ -144,6 +155,7 @@ pkgs.runCommand "pegasus-curated-artwork" {
     "$out/ps2/crazy-taxi" \
     "$out/pc/symphony-of-the-night" \
     "$out/steam/rayman-legends" \
+    "$out/steam/persona-5-royal" \
     "$out/steam/civilization-vi"
 
   make_box() {
@@ -207,6 +219,10 @@ pkgs.runCommand "pegasus-curated-artwork" {
   make_screenshot ${raymanScreenshot1} "$out/steam/rayman-legends/screenshot-1.jpg"
   make_screenshot ${raymanScreenshot2} "$out/steam/rayman-legends/screenshot-2.jpg"
   make_screenshot ${raymanScreenshot3} "$out/steam/rayman-legends/screenshot-3.jpg"
+
+  make_box ${persona5Cover} "$out/steam/persona-5-royal/boxFront.jpg"
+  make_background ${persona5Background} "$out/steam/persona-5-royal/background.jpg"
+  make_logo ${persona5Logo} "$out/steam/persona-5-royal/logo.png"
 
   make_box ${civilizationCover} "$out/steam/civilization-vi/boxFront.jpg"
   make_background ${civilizationBackground} "$out/steam/civilization-vi/background.jpg"

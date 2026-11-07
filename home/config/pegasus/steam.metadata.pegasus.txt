@@ -3,6 +3,20 @@
 collection: Steam
 shortname: steam
 
+game: Persona 5 Royal
+file: steam:1687950
+launch: steam steam://rungameid/1687950
+developer: ATLUS
+publisher: SEGA
+genre: RPG
+players: 1
+release: 2022-10-20
+rating: 95%
+summary: Lead the Phantom Thieves through turn-based battles and hidden palaces, explore Tokyo, build friendships, and fuse Personas in the expanded Royal edition of Persona 5.
+assets.box_front: /home/sumeet/.config/pegasus-frontend/media/steam/persona-5-royal/boxFront.jpg
+assets.background: /home/sumeet/.config/pegasus-frontend/media/steam/persona-5-royal/background.jpg
+assets.logo: /home/sumeet/.config/pegasus-frontend/media/steam/persona-5-royal/logo.png
+
 game: Rayman Legends
 file: steam:242550
 launch: steam steam://rungameid/242550
