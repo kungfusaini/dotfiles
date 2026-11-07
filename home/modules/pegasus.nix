@@ -45,6 +45,7 @@ in
     pegasus-frontend
     ryubing
     symphonyRecomp
+    (pkgs.callPackage ../packages/voyee-controller { })
   ];
 
   # Pegasus reads these as its native configuration. Keep the UI behavior and
