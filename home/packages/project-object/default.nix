@@ -7,6 +7,7 @@
 , gtk4
 , libadwaita
 , kitty
+, neovim
 , hyprland
 , libnotify
 , vivaldi
@@ -37,11 +38,11 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     mkdir -p "$out/bin" "$out/lib" "$out/share/project-object/pi/skills"
-    cp bin/project-picker bin/project-picker-gui bin/project-picker-tui bin/project-snapshot bin/project-terminal bin/project-workspace-exec bin/project-api bin/project-browser bin/project-browser-host "$out/bin/"
+    cp bin/project-picker bin/project-picker-gui bin/project-picker-tui bin/project-snapshot bin/project-terminal bin/project-workspace-exec bin/project-api bin/project-browser bin/project-browser-host bin/project-file-open "$out/bin/"
     cp lib/project_object.py lib/api_access.py lib/oauth2.py lib/freeagent_oauth.py lib/agent_browser.py lib/browser_protocol.py lib/browser_restore.py "$out/lib/"
     cp integrations/pi/project-object.ts "$out/share/project-object/pi/"
     cp -R integrations/pi/skills/init "$out/share/project-object/pi/skills/"
-    chmod 0555 "$out/bin/project-picker" "$out/bin/project-picker-gui" "$out/bin/project-picker-tui" "$out/bin/project-snapshot" "$out/bin/project-terminal" "$out/bin/project-workspace-exec" "$out/bin/project-api" "$out/bin/project-browser" "$out/bin/project-browser-host" "$out/share/project-object/pi/skills/init/scripts/mark.py"
+    chmod 0555 "$out/bin/project-picker" "$out/bin/project-picker-gui" "$out/bin/project-picker-tui" "$out/bin/project-snapshot" "$out/bin/project-terminal" "$out/bin/project-workspace-exec" "$out/bin/project-api" "$out/bin/project-browser" "$out/bin/project-browser-host" "$out/bin/project-file-open" "$out/share/project-object/pi/skills/init/scripts/mark.py"
     patchShebangs "$out/bin"
     runHook postInstall
   '';
@@ -63,6 +64,8 @@ stdenvNoCC.mkDerivation {
       --prefix PATH : ${lib.makeBinPath [ hyprland ]}
     wrapProgram "$out/bin/project-browser" \
       --prefix PATH : ${lib.makeBinPath [ hyprland libnotify vivaldi ]}
+    wrapProgram "$out/bin/project-file-open" \
+      --prefix PATH : ${lib.makeBinPath [ hyprland libnotify vivaldi kitty neovim ]}
   '';
 
   meta = {

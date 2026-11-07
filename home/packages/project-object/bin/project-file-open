@@ -1,0 +1,201 @@
+#!/usr/bin/env python3
+"""Open clicked local files with desktop MIME defaults on the invoking workspace."""
+import fcntl
+import html
+import json
+import os
+from pathlib import Path
+import re
+import runpy
+import secrets
+import shlex
+import stat
+import subprocess
+import sys
+import tempfile
+import time
+from urllib.parse import unquote, urlsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "lib"))
+from agent_browser import browser_environment, command  # noqa: E402
+
+HYPRCTL = os.environ.get("PROJECT_PICKER_HYPRCTL", "hyprctl")
+RULE = "windowrule[project-object-file-launch]"
+TIMEOUT = 15
+
+
+def local_file(value):
+    if any(ord(c) < 32 or ord(c) == 127 for c in value):
+        raise ValueError("File links must not contain control characters")
+    parsed = urlsplit(value)
+    if parsed.scheme != "file" or parsed.netloc not in ("", "localhost") or parsed.query:
+        raise ValueError("Only local file links without a query are supported")
+    if re.search(r"%(?![0-9a-fA-F]{2})", parsed.path):
+        raise ValueError("Malformed file-link escaping")
+    path = unquote(parsed.path, errors="strict")
+    if not path.startswith("/") or any(ord(c) < 32 or ord(c) == 127 for c in path):
+        raise ValueError("File links require an absolute path without control characters")
+    path = Path(path)
+    info = path.stat()
+    if not (stat.S_ISREG(info.st_mode) or stat.S_ISDIR(info.st_mode)):
+        raise ValueError("Only ordinary files and directories can be opened")
+    return path, parsed.fragment
+
+
+def desktop_app(path):
+    # GIO owns MIME/default-app resolution and desktop Exec field expansion;
+    # never interpret a filename as a command or execute a clicked .desktop file.
+    from gi.repository import Gio
+    file = Gio.File.new_for_path(str(path))
+    info = file.query_info("standard::content-type", Gio.FileQueryInfoFlags.NONE, None)
+    app = Gio.AppInfo.get_default_for_type(info.get_content_type(), False)
+    if app is None:
+        raise ValueError("No default application is configured for this file type")
+    return app
+
+
+def validate_app(app, path):
+    # A generic desktop launch can activate an unrelated singleton before the
+    # verifier sees it. Only audited new-instance commands are safe here; do not
+    # try an unknown app and discover lost placement/focus after the side effect.
+    if app.get_boolean("DBusActivatable"):
+        raise ValueError("This default application uses unsupported DBus activation")
+    args = shlex.split(app.get_commandline())
+    executable = Path(args[0]).name if args else ""
+    if executable in ("vivaldi", "vivaldi-stable") and args[1:] == ["%U"]:
+        return "vivaldi"
+    if executable == "zathura" and args[1:] in (["%U"], ["%f"], ["%F"]):
+        if app.get_boolean("Terminal"):
+            raise ValueError("This default application requires an unsupported terminal fallback")
+        return "desktop"
+    if executable == "nvim" and args[1:] == ["%F"]:
+        return "editor"
+    if executable == "kitty" and args[1:] == ["+open", "%U"] and path.is_dir():
+        if app.get_boolean("Terminal"):
+            raise ValueError("This default application requires an unsupported terminal fallback")
+        return "desktop"
+    raise ValueError("The default application has no verified safe file-opening route: " + app.get_name())
+
+
+def runtime_root():
+    root = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}")) / "project-object-file-opens"
+    root.mkdir(mode=0o700, exist_ok=True)
+    info = root.lstat()
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+        raise ValueError("Unsafe file-opener runtime directory")
+    return root
+
+
+def open_vivaldi(path, fragment, workspace, before):
+    # HTTP -> file redirects are blocked by Chromium. A private local bootstrap
+    # can navigate to a local document and gives singleton handoffs a unique app
+    # identity, without debugger access or a copied/dedicated user profile.
+    root = runtime_root()
+    lock = os.open(root / "launch.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        directory = Path(tempfile.mkdtemp(prefix="open-", dir=root))
+        bootstrap = directory / "open.html"
+        target = path.as_uri() + ("#" + fragment if fragment else "")
+        bootstrap.write_text('<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="0;url='
+                             + html.escape(target, quote=True) + '"><title>Opening local file</title>')
+        # Chromium app names are host + '_' + path, with '/' replaced by '_'.
+        pattern = "^vivaldi-" + re.escape("_" + str(bootstrap).replace("/", "_")) + r"-.+$"
+        def keyword(key, value):
+            if command(HYPRCTL, "keyword", RULE + ":" + key, value).strip() != "ok":
+                raise RuntimeError("Hyprland refused the file-opening rule")
+        keyword("enable", "0")
+        try:
+            for key, value in (("match:class", pattern), ("no_initial_focus", "on"),
+                               ("suppress_event", "activate activatefocus"),
+                               ("workspace", "name:" + workspace + " silent"), ("enable", "1")):
+                keyword(key, value)
+            subprocess.Popen([os.environ.get("PROJECT_FILE_VIVALDI", "vivaldi"), "--no-activate",
+                              "--app=" + bootstrap.as_uri()], env=browser_environment(),
+                             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            deadline = time.monotonic() + TIMEOUT
+            while time.monotonic() < deadline:
+                clients = json.loads(command(HYPRCTL, "clients", "-j"))
+                matches = [c for c in clients if c.get("mapped") and c.get("address") not in before
+                           and re.fullmatch(pattern, str(c.get("class", "")))]
+                if len(matches) > 1:
+                    raise RuntimeError("Ambiguous local browser window; refusing to guess")
+                if matches:
+                    if matches[0].get("workspace", {}).get("name") != workspace:
+                        raise RuntimeError("Local browser did not open on the invoking workspace")
+                    return
+                time.sleep(0.05)
+            raise RuntimeError("Local browser launch timed out; a window may still be running")
+        finally:
+            keyword("enable", "0")
+    finally:
+        os.close(lock)
+    # Bootstrap files deliberately remain in the private runtime directory until
+    # logout: mapping can precede navigation, so immediate deletion is a race.
+
+
+def open_file(value):
+    path, fragment = local_file(value)
+    app = desktop_app(path)
+    route = validate_app(app, path)
+    helper = Path(__file__).resolve().with_name("project-workspace-exec")
+    implementation = helper.with_name(".project-workspace-exec-wrapped")
+    workspace_api = runpy.run_path(str(implementation if implementation.exists() else helper))
+    clients = workspace_api["hypr_clients"]()
+    workspace = workspace_api["invoking_workspace"](clients)
+    if not workspace:
+        raise RuntimeError("Could not identify the workspace containing the clicked terminal")
+    workspace_api["validate_workspace_rule"](workspace)
+    if route == "vivaldi":
+        open_vivaldi(path, fragment, workspace, {c.get("address") for c in clients})
+    else:
+        # Reuse the existing process/window verifier, but add launch-scoped
+        # focus suppression, including when clicking on the active workspace.
+        launch_id = secrets.token_hex(16)
+        context = [f"{name}={os.environ[name]}" for name in
+                   ("PI_SESSION_ID", "PI_SESSION_FILE", "XDG_STATE_HOME") if name in os.environ]
+        child = ["env", "--chdir=" + os.getcwd(),
+                 f"PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME={workspace}",
+                 f"PROJECT_OBJECT_LAUNCH_ID={launch_id}", *context,
+                 str(Path(__file__).resolve().with_name("project-file-open")), "--desktop-launch", path.as_uri()]
+        rules = f"workspace name:{workspace} silent; no_initial_focus on; suppress_event activate activatefocus"
+        if command(HYPRCTL, "dispatch", "exec", f"[{rules}] {shlex.join(child)}").strip() != "ok":
+            raise RuntimeError("Hyprland refused to launch the default application")
+        workspace_api["verify_window"](workspace, launch_id, {c.get("address") for c in clients})
+    print("project-file-open: verified file window on " + workspace)
+
+
+def main():
+    try:
+        if len(sys.argv) == 3 and sys.argv[1] == "--desktop-launch":
+            path, _ = local_file(sys.argv[2])
+            app = desktop_app(path)
+            route = validate_app(app, path)
+            if route == "editor":
+                # GIO's Terminal=true fallback can select a singleton terminal.
+                # Use this system's managed new-instance Kitty explicitly.
+                subprocess.run(["kitty", "--", "nvim", "--", str(path)], check=True)
+            elif route == "desktop":
+                from gi.repository import Gio
+                app.launch([Gio.File.new_for_path(str(path))], Gio.AppLaunchContext())
+                time.sleep(TIMEOUT + 1)
+            else:
+                raise ValueError("The default application changed to a route requiring a new verified launch")
+        elif len(sys.argv) == 2:
+            open_file(sys.argv[1])
+        else:
+            raise ValueError("usage: project-file-open file:///absolute/path")
+    except Exception as error:
+        message = "Could not open file: " + str(error)
+        print("project-file-open: " + message, file=sys.stderr)
+        try:
+            subprocess.run(["notify-send", "File opening failed", message], check=False, timeout=5)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

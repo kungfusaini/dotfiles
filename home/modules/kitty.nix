@@ -25,6 +25,9 @@
   xdg.configFile."kitty/open-actions.conf".text = ''
     protocol http,https
     action launch --type=background project-browser open --mode adjacent -- ''${URL}
+
+    protocol file
+    action launch --type=background project-file-open ''${URL}
   '';
 
   # Keep generated Dank Material files as raw files until/unless we decide to
