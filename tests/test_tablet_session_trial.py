@@ -139,6 +139,23 @@ class SessionTrialTests(unittest.TestCase):
             result = trial.sample(1)
         self.assertFalse(result['batteryDataUsable'])
 
+    def test_readiness_rejects_bus_owner_with_failed_mobile_qml(self):
+        with patch.object(trial,'trial_bus',side_effect=["('1',)",'(uint32 42,)']), \
+                patch.object(trial.time,'sleep'), patch.object(trial,'run',return_value='Error loading QML file. module org.kde.bluezqt is not installed') as run:
+            with self.assertRaises(trial.HomeRenderFailure): trial.verify_mobile_home(1001)
+        self.assertIn('_UID=1001',run.call_args.args)
+        self.assertIn('_PID=42',run.call_args.args)
+
+    def test_readiness_accepts_loaded_desktop_without_qml_errors(self):
+        with patch.object(trial,'trial_bus',side_effect=["('1',)",'(uint32 42,)']), \
+                patch.object(trial.time,'sleep'), patch.object(trial,'run',return_value='Reloading folio app list...'):
+            trial.verify_mobile_home(1001)
+
+    def test_readiness_waits_when_no_desktop_is_loaded(self):
+        with patch.object(trial,'trial_bus',return_value="('0',)"), patch.object(trial,'run') as run:
+            with self.assertRaises(RuntimeError): trial.verify_mobile_home(1001)
+        run.assert_not_called()
+
     def test_module_is_opt_in_no_freeze_or_default_desktop_change(self):
         module=(ROOT/'hosts/kirax1/modules/desktop/tablet-session-trial.nix').read_text()
         self.assertNotIn('wantedBy',module)

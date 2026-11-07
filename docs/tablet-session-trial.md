@@ -66,8 +66,11 @@ unresponsive. No helper guesses or unlocks another session. The original session
 record is revalidated at every return. Trial exit also requests return rather
 than launching another mobile session in a loop.
 
-Cold readiness checks that the trial has a logind seat/VT session and that its
-separate bus owns KWin and Plasma Shell. Warm `activationAckSeconds` measures
+Cold readiness checks that the trial has a logind seat/VT session, that its
+separate bus owns KWin and Plasma Shell, and that a desktop containment exists.
+It also checks the exact trial shell PID's journal for fatal QML/import errors
+before acknowledging startup: a live process alone can leave a blank display.
+Warm `activationAckSeconds` measures
 logind command acknowledgment only, **not** first visible frame or perceived
 transition latency. Physical inspection is mandatory.
 
@@ -77,7 +80,10 @@ transition latency. Physical inspection is mandatory.
    VT rejection, no lock bypass/focus stealing, charging-data qualification.
 2. `tests/plasma-mobile-session.nix`: upstream mobile shell and KWin on a
    private software-rendered virtual output, temporary HOME and private D-Bus;
-   assert a desktop is loaded. No host display, global input or personal profile.
+   explicitly start the actual mobile shell, assert a desktop is loaded and
+   reject fatal QML/import errors from forced-stderr logs. Do not auto-activate
+   a default desktop shell through a readiness query. System bus access is
+   disconnected. No host display, global input or personal profile.
    This does not establish DRM switching, audio, battery or touch acceptance.
 3. Review and build the exact committed main snapshot non-privileged, then use
    `deploy-kirax1`. Verify the trial remains stopped after deployment.
@@ -94,6 +100,8 @@ transition latency. Physical inspection is mandatory.
    with laptop idle in background. Background useful work must be reported,
    not misattributed as shell overhead. AC measurements cannot prove battery life.
 
-No app/profile/session deletion is automatic cleanup. Folding should not be
+No app/profile/session deletion is automatic cleanup. The trial supplies the PowerDevil battery QML module without autostarting a
+second power-management daemon; brightness/idle-power controls are not yet a
+complete supported configuration. Folding should not be
 rewired to this design until session switching, real touch/media behavior and
 inactive power have passed physical acceptance.

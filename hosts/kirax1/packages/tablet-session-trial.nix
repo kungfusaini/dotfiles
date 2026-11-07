@@ -25,6 +25,13 @@ let
     exec = "${browser}/bin/tablet-trial-browser %U";
     categories = [ "Network" "WebBrowser" ];
   };
+  # The mobile quick-settings UI imports this QML module even when no power
+  # daemon is active. Do not autostart a second idle/suspend policy in this trial.
+  powerWidgets = pkgs.runCommand "tablet-trial-power-widgets" {} ''
+    mkdir -p "$out/lib/qt-6/qml/org/kde/plasma/private"
+    ln -s ${kde.powerdevil}/lib/qt-6/qml/org/kde/plasma/private/batterymonitor \
+      "$out/lib/qt-6/qml/org/kde/plasma/private/batterymonitor"
+  '';
   environment = pkgs.buildEnv {
     name = "tablet-trial-plasma-environment";
     paths = (with kde; [
@@ -32,11 +39,11 @@ let
       kded kglobalacceld kactivitymanagerd kscreen libkscreen kscreenlocker
       kde-cli-tools systemsettings plasma-settings kservice kio kio-extras
       kio-fuse kimageformats qtimageformats frameworkintegration plasma-integration
-      polkit-kde-agent-1 plasma-nm plasma-pa breeze breeze-icons
+      polkit-kde-agent-1 plasma-nm plasma-pa bluez-qt breeze breeze-icons
       qqc2-breeze-style qqc2-desktop-style kirigami kirigami-addons
       qtsvg qtsensors qtwayland
-    ]) ++ [ returnDesktop browserDesktop pkgs.hicolor-icon-theme ];
-    pathsToLink = [ "/bin" "/share" "/libexec" "/lib/qt-6/qml" "/lib/qt-6/plugins" ];
+    ]) ++ [ powerWidgets returnDesktop browserDesktop pkgs.hicolor-icon-theme ];
+    pathsToLink = [ "/bin" "/share" "/libexec" "/etc/xdg" "/lib/qt-6/qml" "/lib/qt-6/plugins" ];
     ignoreCollisions = true;
   };
   defaults = pkgs.runCommand "tablet-trial-defaults" {} ''
@@ -70,7 +77,9 @@ let
       export XDG_SESSION_TYPE=wayland XDG_CURRENT_DESKTOP=KDE XDG_SESSION_DESKTOP=KDE
       export QT_QPA_PLATFORM=wayland
       export XDG_DATA_DIRS=${environment}/share:/run/current-system/sw/share
-      export XDG_CONFIG_DIRS=${defaults}:/etc/xdg
+      export XDG_CONFIG_DIRS=${defaults}:${environment}/etc/xdg:/etc/xdg
+      export XDG_MENU_PREFIX=plasma-
+      export LD_LIBRARY_PATH=${lib.makeLibraryPath [ pkgs.pipewire ]}
       export QML_IMPORT_PATH=${environment}/lib/qt-6/qml
       export NIXPKGS_QT6_QML_IMPORT_PATH=${environment}/lib/qt-6/qml
       export QT_PLUGIN_PATH=${environment}/lib/qt-6/plugins

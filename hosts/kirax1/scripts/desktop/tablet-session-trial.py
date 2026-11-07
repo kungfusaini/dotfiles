@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import pwd
+import re
 import subprocess
 import sys
 import tempfile
@@ -99,6 +100,37 @@ def check_vt():
         raise RuntimeError("Use tablet-session-trial enter; no saved laptop session")
 
 
+class HomeRenderFailure(RuntimeError):
+    pass
+
+
+def trial_bus(uid, destination, path, method, *arguments):
+    return run("runuser", "-u", USER, "--", "env",
+               f"XDG_RUNTIME_DIR=/run/user/{uid}",
+               f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
+               "gdbus", "call", "--session", "--dest", destination,
+               "--object-path", path, "--method", method, *arguments)
+
+
+def verify_mobile_home(uid):
+    count = trial_bus(uid, "org.kde.plasmashell", "/PlasmaShell",
+                      "org.kde.PlasmaShell.evaluateScript", "print(desktops().length)")
+    if not re.fullmatch(r"\('([1-9][0-9]*)',\)", count):
+        raise RuntimeError("Waiting for a mobile desktop containment")
+    value = trial_bus(uid, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                      "org.freedesktop.DBus.GetConnectionUnixProcessID", "org.kde.plasmashell")
+    match = re.fullmatch(r"\(uint32 ([0-9]+),\)", value)
+    if not match:
+        raise RuntimeError("Cannot identify the trial shell for readiness checking")
+    # Qt routes its errors to journald by default, not its parent's stdout.
+    # A bus owner/desktop count can coexist with a completely failed QML root.
+    time.sleep(2)
+    log = run("journalctl", "-b", "--since=-2min", "--no-pager", "--output=cat",
+              f"_UID={uid}", f"_PID={match[1]}")
+    if re.search(r"Error loading QML file|QQmlComponent: Component is not ready|module .* is not installed|error when loading applet", log):
+        raise HomeRenderFailure("Mobile Home failed to load its QML; see the trial shell journal")
+
+
 def ready():
     uid = pwd.getpwnam(USER).pw_uid
     deadline = time.monotonic() + 60
@@ -108,15 +140,14 @@ def ready():
             session = trial_session()
             if session:
                 for name in ("org.kde.KWin", "org.kde.plasmashell"):
-                    result = run("runuser", "-u", USER, "--", "env",
-                                 f"XDG_RUNTIME_DIR=/run/user/{uid}",
-                                 f"DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/{uid}/bus",
-                                 "gdbus", "call", "--session", "--dest", "org.freedesktop.DBus",
-                                 "--object-path", "/org/freedesktop/DBus",
-                                 "--method", "org.freedesktop.DBus.NameHasOwner", name)
+                    result = trial_bus(uid, "org.freedesktop.DBus", "/org/freedesktop/DBus",
+                                       "org.freedesktop.DBus.NameHasOwner", name)
                     if result != "(true,)":
                         raise RuntimeError("Waiting for " + name)
+                verify_mobile_home(uid)
                 return {"session": session, "shell": "Plasma Mobile", "ready": True}
+        except HomeRenderFailure:
+            raise
         except (OSError, RuntimeError, subprocess.SubprocessError) as error:
             last_error = str(error)
         time.sleep(.5)
