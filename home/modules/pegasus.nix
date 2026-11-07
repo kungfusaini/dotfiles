@@ -38,6 +38,7 @@ let
   '';
   pegasusArtwork = import ../packages/pegasus-artwork.nix { inherit pkgs; };
   symphonyRecomp = pkgs.callPackage ../packages/symphony-recomp { };
+  steamSession = pkgs.callPackage ../packages/steam-session { };
 in
 {
   home.packages = with pkgs; [
@@ -46,13 +47,22 @@ in
     ryubing
     symphonyRecomp
     (pkgs.callPackage ../packages/voyee-controller { })
-    (pkgs.callPackage ../packages/steam-session { })
+    steamSession
   ];
 
   # Pegasus reads these as its native configuration. Keep the UI behavior and
   # manually registered games in the repository instead of changing them only
   # through the application settings menu.
   xdg.configFile = {
+    # This synchronous hook runs while Pegasus still owns its mapped window.
+    # The Steam launcher consumes its PID/start-time-bound context after teardown.
+    "pegasus-frontend/scripts/game-start/steam-workspace" = {
+      executable = true;
+      text = ''
+        #!${pkgs.runtimeShell}
+        exec ${steamSession}/bin/steam-session --capture-workspace
+      '';
+    };
     "pegasus-frontend/settings.txt".source = ../config/pegasus/settings.txt;
     "pegasus-frontend/sdl_controllers.txt".source = ../config/pegasus/sdl_controllers.txt;
     "pegasus-frontend/game_dirs.txt".source = ../config/pegasus/game_dirs.txt;

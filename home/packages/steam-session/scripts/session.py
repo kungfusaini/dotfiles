@@ -49,7 +49,65 @@ def parent_pid(pid):
         return 1
 
 
-def invoking_workspace():
+def process_start(pid):
+    text = Path(f"/proc/{pid}/stat").read_text()
+    return text[text.rfind(")") + 2:].split()[19]
+
+
+def context_path(pid):
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    return Path(runtime) / "steam-session" / f"pegasus-{pid}.json" if runtime else None
+
+
+def cached_workspace(pid):
+    """Consume a short-lived context captured by this exact Pegasus ancestor."""
+    path = context_path(pid)
+    if path is None:
+        return None
+    try:
+        record = json.loads(path.read_text())
+        path.unlink()
+        signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+        age = time.monotonic() - record["captured"]
+        if (signature and record["compositor"] == signature and
+                record["start"] == process_start(pid) and 0 <= age < 30 and
+                isinstance(record["workspace"], str)):
+            return record["workspace"]
+    except (OSError, ValueError, KeyError, TypeError, IndexError):
+        pass
+    return None
+
+
+def capture_workspace():
+    """Pegasus's synchronous game-start hook runs before frontend teardown."""
+    pid, seen = parent_pid(os.getpid()), set()
+    while pid > 1 and pid not in seen:
+        seen.add(pid)
+        try:
+            executable = Path(f"/proc/{pid}/exe").resolve(strict=True).name
+        except OSError:
+            executable = ""
+        if executable in {"pegasus-fe", ".pegasus-fe-wrapped"}:
+            break
+        pid = parent_pid(pid)
+    else:
+        raise steam.SteamError("Workspace capture requires an invoking Pegasus ancestor.")
+    path = context_path(pid)
+    signature = os.environ.get("HYPRLAND_INSTANCE_SIGNATURE")
+    if path is None or not signature:
+        raise steam.SteamError("Workspace capture requires compositor/runtime identity.")
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path.unlink(missing_ok=True)
+    workspace = invoking_workspace(allow_cached=False)
+    record = dict(workspace=workspace, start=process_start(pid), compositor=signature,
+                  captured=time.monotonic())
+    temporary = path.with_suffix(".tmp")
+    with temporary.open("w", opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
+        json.dump(record, output)
+    temporary.replace(path)
+
+
+def invoking_workspace(*, allow_cached=True):
     """Capture the invoking Pegasus/terminal workspace, never the active one."""
     result = subprocess.run(["hyprctl", "clients", "-j"], capture_output=True,
                             text=True, check=True, timeout=5)
@@ -59,8 +117,12 @@ def invoking_workspace():
         seen.add(pid)
         names = {c.get("workspace", {}).get("name") for c in clients if c.get("pid") == pid}
         names.discard(None)
+        cached = cached_workspace(pid) if allow_cached else None
         if len(names) == 1:
             name = next(iter(names))
+            break
+        if not names and cached:
+            name = cached
             break
         if names:
             raise steam.SteamError("Invoking process owns windows on multiple workspaces.")
@@ -167,11 +229,19 @@ def worker(appid):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--worker", action="store_true", help=argparse.SUPPRESS)
-    parser.add_argument("appid", type=int)
+    parser.add_argument("--capture-workspace", action="store_true",
+                        help="Capture Pegasus workspace before frontend teardown")
+    parser.add_argument("appid", type=int, nargs="?")
     args = parser.parse_args()
-    if args.appid <= 0:
+    if args.capture_workspace:
+        if args.worker or args.appid is not None:
+            parser.error("Workspace capture cannot launch a game")
+    elif args.appid is None or args.appid <= 0:
         parser.error("App ID must be positive")
     try:
+        if args.capture_workspace:
+            capture_workspace()
+            return 0
         return worker(args.appid) if args.worker else dispatch(args.appid)
     except (steam.SteamError, OSError, ValueError, subprocess.SubprocessError) as exc:
         print(f"steam-session: {exc}", file=sys.stderr)

@@ -120,6 +120,57 @@ class SessionTests(unittest.TestCase):
              patch.object(session.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(clients))):
             self.assertEqual(session.invoking_workspace(), 'Invoking game library')
 
+    def context_record(self, **updates):
+        record = dict(workspace='Captured library', start='123', compositor='test-compositor', captured=100)
+        record.update(updates)
+        path = self.root / 'pegasus-200.json'
+        path.write_text(json.dumps(record))
+        return path
+
+    def test_context_is_single_use_and_bound_to_process_compositor_and_time(self):
+        for updates, valid in [({}, True), ({'start': 'reused-pid'}, False),
+                               ({'compositor': 'other-compositor'}, False),
+                               ({'captured': 50}, False), ({'captured': 102}, False),
+                               ({'workspace': 42}, False)]:
+            with self.subTest(updates=updates), \
+                 patch.object(session, 'context_path', return_value=self.context_record(**updates)) as path, \
+                 patch.object(session, 'process_start', return_value='123'), \
+                 patch.object(session.time, 'monotonic', return_value=101), \
+                 patch.dict(session.os.environ, {'HYPRLAND_INSTANCE_SIGNATURE': 'test-compositor'}):
+                self.assertEqual(session.cached_workspace(200), 'Captured library' if valid else None)
+                self.assertIsNone(session.cached_workspace(200))
+                self.assertFalse(path.return_value.exists())
+
+    def test_unmapped_ancestor_uses_context_but_live_workspace_wins(self):
+        for clients, expected in [([], 'Captured library'),
+                                  ([dict(pid=200, workspace=dict(name='Moved library'))], 'Moved library')]:
+            with self.subTest(clients=clients), \
+                 patch.dict(session.os.environ, {}, clear=True), \
+                 patch.object(session.os, 'getpid', return_value=100), \
+                 patch.object(session, 'parent_pid', side_effect=lambda pid: {100: 200, 200: 1}[pid]), \
+                 patch.object(session, 'cached_workspace', side_effect=lambda pid: 'Captured library' if pid == 200 else None), \
+                 patch.object(session.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, json.dumps(clients))):
+                self.assertEqual(session.invoking_workspace(), expected)
+
+    def test_malformed_and_missing_context_fail_closed(self):
+        path = self.root / 'bad.json'
+        for content in ('not json', '{}', '[]'):
+            path.write_text(content)
+            with patch.object(session, 'context_path', return_value=path):
+                self.assertIsNone(session.cached_workspace(200))
+        with patch.object(session, 'context_path', return_value=None):
+            self.assertIsNone(session.cached_workspace(200))
+
+    def test_capture_never_accepts_cached_context(self):
+        with patch.dict(session.os.environ, {}, clear=True), \
+             patch.object(session.os, 'getpid', return_value=100), \
+             patch.object(session, 'parent_pid', return_value=1), \
+             patch.object(session, 'cached_workspace', return_value='stale') as cached, \
+             patch.object(session.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '[]')):
+            with self.assertRaises(session.steam.SteamError):
+                session.invoking_workspace(allow_cached=False)
+            cached.assert_not_called()
+
     def test_no_workspace_is_fail_closed(self):
         with patch.dict(session.os.environ, {}, clear=True), \
              patch.object(session.os, 'getpid', return_value=100), \

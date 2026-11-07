@@ -47,6 +47,28 @@ finishes on its explicit completion event. Current upload/download phases are
 tracked separately, and prior client process/session evidence is excluded.
 Steam logs, cloud metadata and saves are never deleted to clear activity status.
 
+## Pegasus frontend teardown
+
+The installed Pegasus destroys its mapped frontend immediately after launching a
+command. Resolving only live ancestor windows therefore races that teardown and
+can fail before Steam starts. Its native synchronous `scripts/game-start/` hook
+runs earlier, while the frontend still exists. Home Manager installs a hook that
+calls `steam-session --capture-workspace` (the game-file argument is deliberately
+not forwarded). No frontend patch, persistent watcher, or keep-visible setting is
+needed.
+
+The hook records the workspace under `$XDG_RUNTIME_DIR/steam-session/`, bound to
+the actual Pegasus ancestor PID, `/proc` start time, and Hyprland instance. The
+launcher consumes a matching ancestor's record once, within 30 seconds. A live
+ancestor window takes precedence if still mapped; invalid/missing/expired
+context fails closed without guessing the active workspace. These temporary
+records contain no account or save data. Non-Steam launches may leave an unused
+record until the next hook overwrites it; it cannot be reused after expiry or PID
+reuse. Steam startup, monitoring, and cleanup are unchanged.
+
+Source: Pegasus's [synchronous script runner](https://github.com/mmatyas/pegasus-frontend/blob/master/src/backend/ScriptRunner.cpp)
+and [pre-launch hook ordering](https://github.com/mmatyas/pegasus-frontend/blob/master/src/backend/ProcessLauncher.cpp).
+
 ## Sources and ownership
 
 `home/packages/steam-session/` is the canonical packaged implementation. It reuses
@@ -91,6 +113,13 @@ Opt-in integration checks also exist:
   It checks tray-only process verification, initial placement of delayed Steam UI
   on the hidden workspace, and exact-app game routing without focus theft. It
   never starts real Steam or reads any account/profile/save data.
+
+- `tests/pegasus_launch_workspace_integration.py` runs the installed Pegasus in
+  private headless labwc/Hyprland with an isolated home and non-activating DBus.
+  Pass `--hyprland`, `--hyprctl`, `--labwc`, `--pegasus`, and `--package` (the built
+  steam-session package root). It demonstrates workspace lookup failing after
+  default teardown and succeeding with the synchronous hook. The launched probe
+  only resolves workspace identity; it never starts Steam or a real game.
 
 These checks do not establish physical GPU, audio/controller performance, or a
 successful real desktop game launch. Do not surface test windows on the live
