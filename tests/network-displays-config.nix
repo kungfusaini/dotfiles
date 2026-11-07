@@ -4,6 +4,8 @@
 let
   home = config.home-manager.users.sumeet;
   packages = map (p: p.pname or p.name) home.home.packages;
+  displayBindings = builtins.filter (bind: builtins.match ".*XF86Display.*" bind != null)
+    home.wayland.windowManager.hyprland.settings.bind;
   avahi = config.services.avahi;
   firewall = config.networking.firewall;
   permitsMdns = rules:
@@ -17,6 +19,9 @@ assert config.networking.networkmanager.enable;
 assert config.networking.networkmanager.wifi.backend == "wpa_supplicant";
 assert config.services.pipewire.enable;
 assert config.xdg.portal.enable;
+assert builtins.length displayBindings == 2;
+assert builtins.any (bind: builtins.match ", XF86Display, exec, .*/bin/display-key-handler" bind != null) displayBindings;
+assert builtins.any (bind: builtins.match "SHIFT, XF86Display, exec, .*/bin/display-layout-open" bind != null) displayBindings;
 assert avahi.enable;
 assert avahi.allowInterfaces == [ "wlp0s20f3" ];
 assert !avahi.openFirewall;

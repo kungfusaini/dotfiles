@@ -5,7 +5,20 @@
 GStreamer plugins and on-demand streaming helpers without a custom sender,
 Flatpak runtime or global codec environment changes.
 
-After deployment, launch **Network Displays** from the application menu, or run
+## Using the display-button menu
+
+Press **Shift+F7** (Shift plus the display key), then choose **Wireless display…**.
+The display menu closes and opens the packaged Network Displays client. Select
+an available receiver and approve the screen-sharing prompt when it appears.
+Keep the laptop lid open for wireless casting.
+
+The menu also opens with only the laptop screen or in an external-only session;
+arrangement and Apply are disabled unless the laptop and an external output are
+both enabled. Wireless display… does not apply or save a wired layout. Single F7
+still toggles mirror/extended, and double F7 still controls folded-keyboard mode.
+Escape closes the menu, including when its wireless button has keyboard focus.
+
+You can also launch **Network Displays** from the application menu, or run
 `gnome-network-displays`. No autostart or automatic casting is configured.
 
 ## What this does and does not establish
@@ -50,7 +63,14 @@ streaming port ranges speculatively or make Wi-Fi/VPN changes just to find a TV.
 
 ## Headless verification
 
+The menu test runs real Quickshell using Qt's offscreen platform with fake launch
+commands. It tests laptop-only, disabled-panel and wired geometry handling,
+wireless launch without layout mutation, Apply behavior and Escape. It does not
+open a visible window or launch the real casting client.
+
 ```sh
+nix build --impure --no-link --print-build-logs --expr \
+  'let f = builtins.getFlake (toString ./.); in import ./tests/display-menu.nix { pkgs = f.nixosConfigurations.kirax1.pkgs; }'
 nix eval --impure --json .#nixosConfigurations.kirax1.config --apply \
   'config: import ./tests/network-displays-config.nix { inherit config; }'
 nix build --impure --no-link --print-build-logs --expr \

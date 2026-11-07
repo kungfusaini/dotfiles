@@ -6,7 +6,9 @@ import QtQuick.Controls
 ShellRoot {
     id: shell
 
-    readonly property real layoutFactor: Number(Quickshell.env("LAYOUT_FACTOR"))
+    readonly property real layoutFactor: Math.max(1, Number(Quickshell.env("LAYOUT_FACTOR")) || 1)
+    readonly property bool layoutAvailable: Quickshell.env("LAYOUT_AVAILABLE") === "1"
+    readonly property bool canApply: layoutAvailable && !displaysOverlap()
 
     function displaysOverlap() {
         return externalDisplay.x < laptopDisplay.x + laptopDisplay.width
@@ -49,6 +51,8 @@ ShellRoot {
     }
 
     function applyLayout() {
+        if (!layoutAvailable)
+            return
         snapDisplaysTogether()
         if (displaysOverlap())
             return
@@ -56,6 +60,14 @@ ShellRoot {
         const dy = externalDisplay.y - laptopDisplay.y
         runner.command = [Quickshell.env("DISPLAY_LAYOUT_APPLY"), "custom", dx.toString(), dy.toString(), layoutFactor.toString()]
         runner.running = true
+    }
+
+    function openWireless() {
+        const command = Quickshell.env("DISPLAY_WIRELESS_OPEN")
+        if (!command)
+            return
+        Quickshell.execDetached([command])
+        Qt.quit()
     }
 
     Process {
@@ -82,7 +94,7 @@ ShellRoot {
                 anchors.top: parent.top
                 anchors.topMargin: 25
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "Arrange displays"
+                text: shell.layoutAvailable ? "Arrange displays" : "Displays"
                 color: "#f4f4f5"
                 font.pixelSize: 27
                 font.weight: Font.DemiBold
@@ -92,7 +104,8 @@ ShellRoot {
                 anchors.top: heading.bottom
                 anchors.topMargin: 6
                 anchors.horizontalCenter: parent.horizontalCenter
-                text: "Drag the external display around the laptop"
+                text: shell.layoutAvailable ? "Drag the external display around the laptop"
+                                            : "Cast wirelessly, or enable two displays to arrange them"
                 color: "#9299a8"
                 font.pixelSize: 15
             }
@@ -131,6 +144,7 @@ ShellRoot {
 
                 Rectangle {
                     id: laptopDisplay
+                    visible: shell.layoutAvailable
                     x: Number(Quickshell.env("LAYOUT_INTERNAL_X"))
                     y: Number(Quickshell.env("LAYOUT_INTERNAL_Y"))
                     width: Number(Quickshell.env("LAYOUT_INTERNAL_W"))
@@ -150,6 +164,7 @@ ShellRoot {
 
                 Rectangle {
                     id: externalDisplay
+                    visible: shell.layoutAvailable
                     x: Number(Quickshell.env("LAYOUT_EXTERNAL_X"))
                     y: Number(Quickshell.env("LAYOUT_EXTERNAL_Y"))
                     width: Number(Quickshell.env("LAYOUT_EXTERNAL_W"))
@@ -182,6 +197,44 @@ ShellRoot {
                 }
             }
 
+            Text {
+                anchors.centerIn: canvas
+                visible: !shell.layoutAvailable
+                width: canvas.width - 70
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.WordWrap
+                text: "No display pair to arrange\n\nChoose Wireless display… to find a receiver.\nKeep the laptop lid open while casting."
+                color: "#b5bdcc"
+                font.pixelSize: 18
+            }
+
+            Button {
+                id: wirelessButton
+                objectName: "wirelessButton"
+                width: 210
+                height: 42
+                anchors.bottom: parent.bottom
+                anchors.bottomMargin: 20
+                anchors.left: parent.left
+                anchors.leftMargin: 35
+                text: "Wireless display…"
+                enabled: !!Quickshell.env("DISPLAY_WIRELESS_OPEN")
+                onClicked: shell.openWireless()
+                background: Rectangle {
+                    radius: 9
+                    color: wirelessButton.hovered || wirelessButton.activeFocus ? "#2a3d4b" : "#1d2b35"
+                    border.width: 1
+                    border.color: "#55c9a5"
+                }
+                contentItem: Text {
+                    text: wirelessButton.text
+                    color: "#d1fae5"
+                    font.pixelSize: 15
+                    horizontalAlignment: Text.AlignHCenter
+                    verticalAlignment: Text.AlignVCenter
+                }
+            }
+
             Rectangle {
                 id: cancelButton
                 width: 110
@@ -200,6 +253,8 @@ ShellRoot {
 
             Rectangle {
                 id: applyButton
+                objectName: "applyButton"
+                enabled: shell.canApply
                 width: 120
                 height: 42
                 anchors.bottom: parent.bottom
@@ -207,15 +262,15 @@ ShellRoot {
                 anchors.right: parent.right
                 anchors.rightMargin: 35
                 radius: 9
-                color: shell.displaysOverlap() ? "#3b4049" : (applyMouse.containsMouse ? "#20b98b" : "#14966f")
-                Text { anchors.centerIn: parent; text: shell.displaysOverlap() ? "Separate displays" : "Apply"; color: shell.displaysOverlap() ? "#9ca3af" : "white"; font.pixelSize: 15; font.weight: Font.DemiBold }
-                MouseArea { id: applyMouse; anchors.fill: parent; enabled: !shell.displaysOverlap(); hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: shell.applyLayout() }
+                color: !shell.canApply ? "#3b4049" : (applyMouse.containsMouse ? "#20b98b" : "#14966f")
+                Text { anchors.centerIn: parent; text: shell.layoutAvailable && shell.displaysOverlap() ? "Separate displays" : "Apply"; color: !shell.canApply ? "#9ca3af" : "white"; font.pixelSize: 15; font.weight: Font.DemiBold }
+                MouseArea { id: applyMouse; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: shell.applyLayout() }
             }
 
-            Item {
-                anchors.fill: parent
-                focus: true
-                Keys.onEscapePressed: Qt.quit()
+            Shortcut {
+                id: escapeShortcut
+                sequence: "Escape"
+                onActivated: Qt.quit()
             }
         }
     }

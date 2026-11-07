@@ -23,6 +23,7 @@ let
     name = "display-layout-open";
     runtimeInputs = with pkgs; [
       displayLayoutApply
+      gnome-network-displays
       hyprland
       python3
       quickshell
