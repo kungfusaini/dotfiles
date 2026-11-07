@@ -1,5 +1,24 @@
-{ lib, buildNpmPackage, python3, vivaldi, hyprland, makeWrapper, nodejs }:
+{ lib, buildNpmPackage, callPackage, writeText, python3, vivaldi, bitwarden-desktop, hyprland, makeWrapper, nodejs }:
 
+let
+  bitwardenExtension = callPackage ./bitwarden-extension.nix { };
+  managedVivaldi = vivaldi.override (args: let
+    existing = args.commandLineArgs or "";
+  in {
+    # Preserve the canonical Project Object extension (and any existing load
+    # list) rather than replacing it with a second --load-extension switch.
+    commandLineArgs = if lib.hasInfix "--load-extension=" existing then
+      lib.replaceStrings [ "--load-extension=" ] [ "--load-extension=${bitwardenExtension}," ] existing
+    else existing + " --load-extension=${bitwardenExtension}";
+  });
+  bitwardenHost = writeText "pi-browser-bitwarden-native-host.json" (builtins.toJSON {
+    name = "com.8bit.bitwarden";
+    description = "Bitwarden desktop <-> browser bridge";
+    path = "${bitwarden-desktop}/libexec/desktop_proxy";
+    type = "stdio";
+    allowed_origins = [ "chrome-extension://nngceckbapebfimnlniiiahkandclblb/" ];
+  });
+in
 buildNpmPackage {
   pname = "pi-browser";
   version = "1.0.0";
@@ -19,13 +38,14 @@ buildNpmPackage {
     install -m644 browser.py "$out/lib/pi-browser/browser.py"
     substituteInPlace "$out/lib/pi-browser/browser.py" \
       --replace-fail '@CLI@' "$out/lib/pi-browser/node_modules/.bin/playwright-cli" \
-      --replace-fail '@BROWSER_EXECUTABLE@' '${vivaldi}/bin/vivaldi' \
+      --replace-fail '@BROWSER_EXECUTABLE@' '${managedVivaldi}/bin/vivaldi' \
+      --replace-fail '@BITWARDEN_HOST@' '${bitwardenHost}' \
       --replace-fail '@NODE@' '${nodejs}/bin/node' \
       --replace-fail '@DAEMON@' "$out/lib/pi-browser/node_modules/playwright-core/lib/entry/cliDaemon.js" \
       --replace-fail '@HYPRCTL@' '${hyprland}/bin/hyprctl'
     makeWrapper ${python3}/bin/python3 "$out/bin/pi-browser" \
       --add-flags "$out/lib/pi-browser/browser.py" \
-      --prefix PATH : ${lib.makeBinPath [ python3 vivaldi ]} \
+      --prefix PATH : ${lib.makeBinPath [ python3 managedVivaldi ]} \
       --set PYTHONDONTWRITEBYTECODE 1
     # Upstream's /usr/bin/env node shebang needs the build's exact Node runtime.
     wrapProgram "$out/lib/pi-browser/node_modules/@playwright/cli/playwright-cli.js" \

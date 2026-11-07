@@ -97,8 +97,40 @@ def worker(arguments):
             targets = json.load(response)
         assert any(target["type"] == "app" and "chrome-extension://mpognobb" in target["url"]
                    for target in targets), "native Vivaldi UI is not running"
+        bitwarden = "chrome-extension://nngceckbapebfimnlniiiahkandclblb/"
+        deadline = time.monotonic() + 10
+        while True:
+            worker_target = next((target for target in targets
+                                  if target["type"] == "service_worker" and target["url"].startswith(bitwarden)), None)
+            if worker_target:
+                break
+            assert time.monotonic() < deadline, "packaged Bitwarden extension did not load"
+            time.sleep(0.1)
+            with opener.open(state["endpoint"] + "/json/list", timeout=5) as response:
+                targets = json.load(response)
+        # Public extension identity/permission metadata only. No vault storage,
+        # native messages, credentials or real Desktop account are accessed.
+        script = """let input='';process.stdin.on('data',b=>input+=b);process.stdin.on('end',()=>{
+const ws=new WebSocket(JSON.parse(input));const timer=setTimeout(()=>process.exit(1),7000);
+ws.onopen=()=>ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{awaitPromise:true,returnByValue:true,
+expression:`(async()=>({id:chrome.runtime.id,version:chrome.runtime.getManifest().version,
+nativePermission:await chrome.permissions.contains({permissions:['nativeMessaging']})}))()`}}));
+ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id===1){clearTimeout(timer);console.log(JSON.stringify(m.result?.result?.value));ws.close();}};
+ws.onerror=()=>process.exit(1);});"""
+        metadata = subprocess.run(["node", "-e", script], input=json.dumps(worker_target["webSocketDebuggerUrl"]),
+                                  env=environment, text=True, capture_output=True, timeout=10, check=True)
+        installed = json.loads(metadata.stdout)
+        assert installed == {"id": "nngceckbapebfimnlniiiahkandclblb", "version": "2026.10.2", "nativePermission": False}, installed
+        host = Path(state["profile"]) / "NativeMessagingHosts" / "com.8bit.bitwarden.json"
+        manifest = json.loads(host.read_text())
+        assert host.is_symlink() and str(host.resolve()).startswith("/nix/store/")
+        assert manifest["allowed_origins"] == [bitwarden]
+        assert Path(manifest["path"]).is_file() and os.access(manifest["path"], os.X_OK)
         ps = subprocess.check_output(["ps", "-p", str(state["pid"]), "-o", "args="], text=True)
         assert "vivaldi-bin" in ps and "--disable-vivaldi" not in ps and "--no-sandbox" not in ps
+        extensions = [arg for arg in ps.split() if arg.startswith("--load-extension=")]
+        assert len(extensions) == 1 and "pi-browser-bitwarden-extension" in extensions[0], extensions
+        assert "project-object-browser-extension" in extensions[0], "existing browser bridge was replaced"
         if strip == "yes" and not temporary_profile:
             assert "synthetic-user" in call("localstorage-get", "login"), "profile login did not persist"
         else:

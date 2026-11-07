@@ -83,6 +83,38 @@ established. Attachment retains the external
 browser's own scope and ownership and may expose authenticated pages. Detach leaves
 the external browser alive. No profile/cookie copying or implicit connection target.
 
+## Bitwarden availability
+
+Managed Vivaldi packages the official Bitwarden `dist-chrome-2026.10.2.zip` release
+from [Bitwarden's releases](https://github.com/bitwarden/clients/releases/tag/browser-v2026.10.2),
+with a fixed SHA-256 hash. The public Chrome Web Store key in
+`bitwarden-public-key.txt` preserves the normal extension ID
+`nngceckbapebfimnlniiiahkandclblb`; its SHA-256-derived ID, release version and MV3
+manifest are checked during the build. This is public identity metadata, not a
+private key or any copied user/vault data. See Chrome's
+[consistent extension ID documentation](https://developer.chrome.com/docs/extensions/reference/manifest/key).
+The compiled official client is unchanged except for this manifest identity.
+
+The managed browser's load list includes both Bitwarden and the pre-existing
+Project Object bridge. The ordinary Vivaldi package and everyday profile are not
+changed. No vault/account state is copied, unlocked or exported. Persistent
+profiles retain their own extension state; fresh profiles require their own login.
+The extension cannot obtain Desktop credentials simply because Desktop is running.
+
+Before native startup, `NativeMessagingHosts/com.8bit.bitwarden.json` receives an
+immutable link to a Nix-generated manifest pointing at Bitwarden Desktop's packaged
+`libexec/desktop_proxy`. Only Bitwarden's exact extension origin is allowed. Old
+links owned by this package are updated; existing user/app-owned files or links
+are not overwritten. Redirected host directories fail closed. No generated Desktop
+manifest or proxy in the normal browser is edited. Optional nativeMessaging and
+integration/unlock consent remain under Bitwarden's normal UI; no permission or
+real vault connection is exercised by acceptance tests.
+
+Tests inspect only extension ID/version and permission metadata in fresh synthetic
+profiles, prove both extensions remain in the load list, and check host wiring
+without launching the Desktop proxy. Runtime login/unlock still requires Sumeet.
+For manual use, follow [Bitwarden's browser extension guide](https://bitwarden.com/help/getting-started-browserext/).
+
 ## Session mechanics
 
 `PI_SESSION_ID` (or `PI_SESSION_FILE` fallback) selects a private folder beneath

@@ -367,6 +367,33 @@ def validate_native_settings(config, args):
     return target
 
 
+def provision_bitwarden_host(profile, template="@BITWARDEN_HOST@"):
+    """Install only our immutable host link; preserve app/user-owned manifests."""
+    template = Path(template)
+    if not template.is_absolute() or not template.is_file():
+        raise ValueError("Packaged Bitwarden native host manifest is unavailable")
+    directory = profile / "NativeMessagingHosts"
+    private_dir(directory)
+    destination = directory / "com.8bit.bitwarden.json"
+    if destination.is_symlink():
+        previous = os.readlink(destination)
+        if previous == str(template):
+            return
+        if not (previous.startswith("/nix/store/") and previous.endswith("-pi-browser-bitwarden-native-host.json")):
+            return
+    elif destination.exists():
+        return
+    fd, name = tempfile.mkstemp(prefix=".bitwarden-host-", dir=directory)
+    os.close(fd)
+    temporary = Path(name)
+    try:
+        temporary.unlink()
+        temporary.symlink_to(template)
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def start_headed(root, config, args, env):
     target = validate_native_settings(config, args)
     browser = config["browser"]
@@ -390,6 +417,7 @@ def start_headed(root, config, args, env):
     port_file.unlink(missing_ok=True)
     state = {"profile": str(profile), "temporary": temporary, "bound": True}
     try:
+        provision_bitwarden_host(profile)
         state.update(placement_rule(root, env))
         window_class = ["--class=" + state["class"]] if state.get("class") else []
         with (root / "vivaldi.log").open("a") as log:

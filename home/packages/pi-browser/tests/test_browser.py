@@ -167,8 +167,10 @@ class BrowserTests(unittest.TestCase):
             with patch.object(browser.subprocess, "Popen", side_effect=spawn), \
                     patch.object(browser, "process_start", return_value="start"), \
                     patch.object(browser.urllib.request, "build_opener", return_value=opener), \
-                    patch.object(browser, "runtime_root", return_value=runtime):
+                    patch.object(browser, "runtime_root", return_value=runtime), \
+                    patch.object(browser, "provision_bitwarden_host") as host:
                 actual, target = browser.start_headed(root, config, ["open", "--headed", "data:text/html,<title>fixture</title>"], {})
+            host.assert_called_once_with(root / "relative-profile")
             self.assertIs(actual, process)
             self.assertEqual(target, "owned-target")
             self.assertEqual(config["browser"]["cdpEndpoint"], "http://127.0.0.1:45678")
@@ -182,11 +184,51 @@ class BrowserTests(unittest.TestCase):
             runtime = root / "runtime"
             runtime.mkdir()
             with patch.object(browser, "runtime_root", return_value=runtime), \
-                    patch.object(browser.subprocess, "Popen", side_effect=OSError("fixture failure")):
+                    patch.object(browser.subprocess, "Popen", side_effect=OSError("fixture failure")), \
+                    patch.object(browser, "provision_bitwarden_host"):
                 with self.assertRaises(OSError):
                     browser.start_headed(root, {"browser": {"launchOptions": {"executablePath": "vivaldi"}}},
                                          ["open", "--headed"], {})
             self.assertEqual(list(runtime.iterdir()), [])
+
+    def test_bitwarden_host_is_linked_updated_and_custom_hosts_preserved(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            profile = root / "profile"
+            profile.mkdir()
+            template = root / "packaged-host.json"
+            template.write_text('{"name":"com.8bit.bitwarden"}')
+            browser.provision_bitwarden_host(profile, str(template))
+            host = profile / "NativeMessagingHosts" / "com.8bit.bitwarden.json"
+            self.assertEqual(host.resolve(), template)
+            browser.provision_bitwarden_host(profile, str(template))
+            self.assertTrue(host.is_symlink())
+            host.unlink()
+            host.symlink_to("/nix/store/old-pi-browser-bitwarden-native-host.json")
+            browser.provision_bitwarden_host(profile, str(template))
+            self.assertEqual(host.resolve(), template)
+            host.unlink()
+            host.write_text("custom app-owned manifest")
+            browser.provision_bitwarden_host(profile, str(template))
+            self.assertEqual(host.read_text(), "custom app-owned manifest")
+            host.unlink()
+            host.symlink_to("/custom/host.json")
+            browser.provision_bitwarden_host(profile, str(template))
+            self.assertEqual(os.readlink(host), "/custom/host.json")
+
+    def test_bitwarden_host_refuses_redirected_host_directory(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            profile = root / "profile"
+            profile.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            (profile / "NativeMessagingHosts").symlink_to(outside, target_is_directory=True)
+            template = root / "template.json"
+            template.write_text("{}")
+            with self.assertRaises(OSError):
+                browser.provision_bitwarden_host(profile, str(template))
+            self.assertEqual(list(outside.iterdir()), [])
 
     def test_native_file_url_uses_upstream_file_permission(self):
         with tempfile.TemporaryDirectory() as temp, patch.object(browser.subprocess, "Popen") as spawn:

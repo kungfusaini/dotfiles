@@ -88,6 +88,24 @@ manual actions take effect in the same page/context. No cookie export is needed.
 After manual interaction, `pi-browser snapshot` observes the resulting page and
 the usual click/fill commands operate in that same browser.
 
+## Bitwarden in native Vivaldi
+
+The managed native browser includes the official Bitwarden extension, pinned by
+Nix, under its normal Chrome extension ID `nngceckbapebfimnlniiiahkandclblb`.
+It is available from Vivaldi's Extensions menu; the popup entry is
+`chrome-extension://nngceckbapebfimnlniiiahkandclblb/popup/index.html`.
+
+The extension starts with that profile's own account state. A persistent profile
+retains its Bitwarden sign-in/settings; a fresh temporary profile does not inherit
+the everyday browser's vault or login. Bitwarden Desktop being logged in does not
+automatically sign in the browser extension.
+
+A per-profile native-messaging manifest points to the packaged Bitwarden Desktop
+proxy. Desktop integration/unlock features still require Bitwarden's own settings
+and permission prompts; nativeMessaging is not granted automatically. Existing
+user/app-owned native-host manifests are preserved. Extension updates are Nix
+package updates, not profile copying or runtime installation.
+
 ## Existing-browser attachment
 
 ```bash
