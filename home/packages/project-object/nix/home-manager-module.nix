@@ -74,6 +74,11 @@ in
       "ignore-timeout" = true;
     };
 
+    # Sorts after the general DND criterion; navigation feedback is not an alert.
+    services.mako.settings."mode=do-not-disturb app-name=\"Project Workspace\"" = {
+      invisible = false;
+    };
+
     wayland.windowManager.hyprland.settings = lib.mkIf cfg.enableHyprlandBinding {
       "$terminal" = lib.mkForce "${package}/bin/project-terminal";
       bind = lib.mkAfter [
