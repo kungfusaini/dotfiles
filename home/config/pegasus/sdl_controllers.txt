@@ -1,0 +1,5 @@
+# Bluetooth VOYEE/Pro Controller: bottom confirms, right goes back in Pegasus.
+# SDL2 HIDAPI reports Nintendo labels (b0=east, b1=south). Swap only A/B;
+# retain X/Y, sticks, triggers, shoulders, d-pad and system buttons unchanged.
+# App-local mapping: does not affect Steam Input or emulator controls.
+0500d71f7e0500000920000000006803,Pro Controller,a:b1,b:b0,back:b4,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,dpup:h0.1,guide:b5,leftshoulder:b9,leftstick:b7,lefttrigger:a4,leftx:a0,lefty:a1,rightshoulder:b10,rightstick:b8,righttrigger:a5,rightx:a2,righty:a3,start:b6,x:b2,y:b3,misc1:b11,crc:1fd7,platform:Linux,

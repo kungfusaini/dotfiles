@@ -53,6 +53,7 @@ in
   # through the application settings menu.
   xdg.configFile = {
     "pegasus-frontend/settings.txt".source = ../config/pegasus/settings.txt;
+    "pegasus-frontend/sdl_controllers.txt".source = ../config/pegasus/sdl_controllers.txt;
     "pegasus-frontend/game_dirs.txt".source = ../config/pegasus/game_dirs.txt;
     "pegasus-frontend/metafiles/custom.metadata.pegasus.txt".source =
       ../config/pegasus/custom.metadata.pegasus.txt;
