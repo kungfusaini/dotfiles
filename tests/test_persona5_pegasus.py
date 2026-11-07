@@ -24,7 +24,14 @@ class Persona5PegasusTests(unittest.TestCase):
         self.assertIn("collection: Steam\nshortname: steam\n", self.text)
         self.assertEqual(self.text.count("game: Persona 5 Royal\n"), 1)
         self.assertEqual(self.fields["file"], ["steam:1687950"])
-        self.assertEqual(self.fields["launch"], ["steam steam://rungameid/1687950"])
+        self.assertEqual(self.fields["launch"], ["steam-session 1687950"])
+        self.assertNotIn("launch: steam steam://", self.text)
+        for appid in (1687950, 242550, 289070):
+            self.assertIn(f"launch: steam-session {appid}\n", self.text)
+        module = (ROOT / "home/modules/pegasus.nix").read_text()
+        self.assertIn("(pkgs.callPackage ../packages/steam-session { })", module)
+        self.assertIn("workspace special:steam-hidden silent", module)
+        self.assertIn("no_initial_focus on", module)
         self.assertEqual(self.fields["players"], ["1"])
         self.assertEqual(self.fields["release"], ["2022-10-20"])
 

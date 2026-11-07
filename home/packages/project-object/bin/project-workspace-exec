@@ -158,6 +158,115 @@ def verify_window(workspace, launch_id, before):
     )
 
 
+def steam_backend_pids(launch_id):
+    """Verify a new real client, not its updater UI or an unrelated process."""
+    found = []
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            if entry.stat().st_uid != os.getuid():
+                continue
+            argv = (entry / "cmdline").read_bytes().split(b"\0")
+            if not argv[0].endswith(b"/ubuntu12_32/steam") or b"-child-update-ui" in argv:
+                continue
+            marker = f"{LAUNCH_ID_ENV}={launch_id}".encode()
+            if marker in (entry / "environ").read_bytes().split(b"\0"):
+                found.append(int(entry.name))
+        except OSError:
+            pass
+    return found
+
+
+def steam_hide_rule():
+    # Named Steam-only policy stays enabled for delayed updater/login windows.
+    # Disable while configuring so an incomplete rule can never match all apps.
+    rule = "windowrule[project-object-steam-hidden]"
+    effects = (("enable", "0"), ("match:class", "^([Ss]team)$"),
+               ("workspace", "special:steam-hidden silent"),
+               ("no_initial_focus", "on"), ("suppress_event", "activate activatefocus"),
+               ("enable", "1"))
+    for key, value in effects:
+        result = subprocess.run([HYPRCTL, "keyword", rule + ":" + key, value],
+                                capture_output=True, text=True, check=False)
+        if result.returncode or result.stdout.strip() != "ok":
+            raise RuntimeError("could not install the Steam-only hidden-window policy")
+
+
+def verify_steam_backend(launch_id):
+    deadline = time.monotonic() + WINDOW_TIMEOUT
+    while time.monotonic() < deadline:
+        if steam_backend_pids(launch_id):
+            for client in hypr_clients():
+                if (isinstance(client, dict) and client.get("mapped")
+                        and str(client.get("class", "")).lower() == "steam"
+                        and process_has_launch_id(client.get("pid"), launch_id)
+                        and client_workspace(client) != "special:steam-hidden"):
+                    raise RuntimeError("Steam created a window outside its hidden workspace")
+            return  # A tray-only client is expected to have no mapped window.
+        time.sleep(0.05)
+    raise RuntimeError("no newly launched Steam client process could be verified")
+
+
+def steam_game_process(pid, appid):
+    """Match the requested game through live process ancestry, not its title."""
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    markers = {f"SteamAppId={appid}".encode(), f"SteamGameId={appid}".encode()}
+    seen = set()
+    while pid > 1 and pid not in seen:
+        seen.add(pid)
+        try:
+            values = set((Path("/proc") / str(pid) / "environ").read_bytes().split(b"\0"))
+            if markers & values:
+                return True
+        except OSError:
+            pass
+        pid = parent_pid(pid)
+        if pid is None:
+            break
+    return False
+
+
+def verify_steam_game(workspace, appid, before):
+    deadline = time.monotonic() + 180
+    selected = None
+    while time.monotonic() < deadline:
+        clients = hypr_clients()
+        if selected is not None:
+            current = next((c for c in clients if isinstance(c, dict)
+                            and c.get("address") == selected and c.get("mapped")), None)
+            if (current is None or str(current.get("class", "")).lower() == "steam"
+                    or not steam_game_process(current.get("pid"), appid)):
+                # Splash/launcher windows may vanish before revalidation. A
+                # replacement still needs exact live app identity; never guess.
+                selected = None
+        for client in clients:
+            if not isinstance(client, dict) or not client.get("mapped"):
+                continue
+            address = client.get("address")
+            if not isinstance(address, str) or not ADDRESS_PATTERN.fullmatch(address) or address in before:
+                continue
+            if str(client.get("class", "")).lower() == "steam":
+                continue  # Login, settings and confirmation dialogs stay hidden.
+            if selected is not None and address != selected:
+                continue
+            # Revalidate process identity even after selecting the exact window.
+            if not steam_game_process(client.get("pid"), appid):
+                continue
+            selected = address
+            if client_workspace(client) != workspace:
+                result = subprocess.run(
+                    [HYPRCTL, "dispatch", "movetoworkspacesilent", f"name:{workspace},address:{address}"],
+                    capture_output=True, text=True, check=False)
+                if result.returncode or result.stdout.strip() != "ok":
+                    raise RuntimeError("could not silently place the verified Steam game window")
+                break
+            return
+        time.sleep(0.05)
+    raise RuntimeError("no new window belonging to the requested Steam game could be verified")
+
+
 def raw_browser_urls(command):
     """Accept only URL opens; never pass arbitrary flags to the shared browser."""
     arguments = command[1:]
@@ -189,6 +298,11 @@ def main():
         before = {client.get("address") for client in clients if isinstance(client, dict)}
         launch_id = secrets.token_hex(16)
         browser_executable = None
+        steam_background = Path(command[0]).name == "steam" and command[1:] == ["-silent"]
+        steam_game = (re.fullmatch(r"steam://rungameid/([1-9][0-9]*)", command[1])
+                      if Path(command[0]).name == "steam" and len(command) == 2 else None)
+        if steam_background or steam_game:
+            steam_hide_rule()
         if Path(command[0]).name in ("vivaldi", "vivaldi-stable"):
             urls = raw_browser_urls(command)
             validate_browser_launch(workspace, urls, launch_id)
@@ -221,12 +335,22 @@ def main():
         contextual_command = ["env", "--chdir=" + os.getcwd(),
                               f"{LAUNCH_WORKSPACE_ENV}={workspace}", f"{LAUNCH_ID_ENV}={launch_id}",
                               *context, *command]
-        payload = f"[workspace name:{workspace} silent] {shlex.join(contextual_command)}"
+        # Steam's client and descendants begin hidden. The game URI branch below
+        # promotes only a window whose live process belongs to the exact app ID.
+        target = "special:steam-hidden" if steam_background else "name:" + workspace
+        payload = f"[workspace {target} silent] {shlex.join(contextual_command)}"
         result = subprocess.run([HYPRCTL, "dispatch", "exec", payload], capture_output=True, text=True, check=False)
         if result.returncode != 0 or result.stdout.strip() != "ok":
             raise RuntimeError("Hyprland refused to launch the command")
-        verify_window(workspace, launch_id, before)
-        print(f"project-workspace-exec: verified new window on {workspace}")
+        if steam_background:
+            verify_steam_backend(launch_id)
+            print("project-workspace-exec: verified silent Steam process; client windows stay hidden")
+        elif steam_game:
+            verify_steam_game(workspace, int(steam_game[1]), before)
+            print(f"project-workspace-exec: verified Steam game {steam_game[1]} on {workspace}")
+        else:
+            verify_window(workspace, launch_id, before)
+            print(f"project-workspace-exec: verified new window on {workspace}")
     except (OSError, RuntimeError, ValueError) as error:
         raise SystemExit(f"project-workspace-exec: {error}") from error
 

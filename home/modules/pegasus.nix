@@ -46,6 +46,7 @@ in
     ryubing
     symphonyRecomp
     (pkgs.callPackage ../packages/voyee-controller { })
+    (pkgs.callPackage ../packages/steam-session { })
   ];
 
   # Pegasus reads these as its native configuration. Keep the UI behavior and
@@ -103,6 +104,11 @@ in
   wayland.windowManager.hyprland.settings = {
     windowrule = [
       "match:class ^(pegasus-fe|org\\.pegasus-frontend\\.)$, fullscreen on"
+      # Steam is a background backend; the verified game window is routed
+      # separately. Never reveal updater/login/settings windows at launch.
+      "match:class ^([Ss]team)$, workspace special:steam-hidden silent"
+      "match:class ^([Ss]team)$, no_initial_focus on"
+      "match:class ^([Ss]team)$, suppress_event activate activatefocus"
     ];
   };
 }
