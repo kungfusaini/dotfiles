@@ -226,6 +226,7 @@ in
         "$mod, F23, exec, $terminal -e pi"
 
         "$mod, J, layoutmsg, togglesplit"
+        "$mod, L, workspace, previous"
 
         "$mod, left, movefocus, l"
         "$mod, right, movefocus, r"
