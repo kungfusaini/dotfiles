@@ -1,6 +1,8 @@
 { pkgs, ... }:
 
 let
+  networkDisplays = pkgs.callPackage ../packages/gnome-network-displays { };
+
   displayWallpaperRefresh = pkgs.writeShellApplication {
     name = "display-wallpaper-refresh";
     runtimeInputs = with pkgs; [ coreutils procps ];
@@ -23,7 +25,7 @@ let
     name = "display-layout-open";
     runtimeInputs = with pkgs; [
       displayLayoutApply
-      gnome-network-displays
+      networkDisplays
       hyprland
       python3
       quickshell
@@ -86,7 +88,7 @@ in
   # Keep wallpaper restart as a manual fallback, never a normal transition.
   # Use the packaged casting client and its bundled GStreamer dependencies.
   # Network discovery and wireless lid policy are separate host-level choices.
-  home.packages = [ clamshellMode headlessMode displayWallpaperRefresh pkgs.gnome-network-displays ];
+  home.packages = [ clamshellMode headlessMode displayWallpaperRefresh networkDisplays ];
 
   xdg.configFile = {
     "quickshell/display-layout/shell.qml".source =

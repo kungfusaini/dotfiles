@@ -1,15 +1,18 @@
 # Wireless displays: client and discovery
 
 `home/modules/display.nix` installs the existing Nixpkgs
-`gnome-network-displays` package. It brings the client, desktop launcher,
+`gnome-network-displays` package with a small receiver-first override in
+`home/packages/gnome-network-displays/`. It brings the client, desktop launcher,
 GStreamer plugins and on-demand streaming helpers without a custom sender,
 Flatpak runtime or global codec environment changes.
 
 ## Using the display-button menu
 
 Press **Shift+F7** (Shift plus the display key), then choose **Wireless display…**.
-The display menu closes and opens the packaged Network Displays client. Select
-an available receiver and approve the screen-sharing prompt when it appears.
+The display menu closes and opens the packaged Network Displays client. Browse
+receivers first, select one, then choose the screen/window in the sharing prompt.
+Browsing alone requests no screen access. Canceling the prompt returns to receiver
+selection; a portal error does not silently fall back to X11 capture.
 Keep the laptop lid open for wireless casting.
 
 The menu also opens with only the laptop screen or in an external-only session;
@@ -61,7 +64,16 @@ DHCP/RTSP/firewall issues may still need investigation. The package's firewalld
 zone is not a substitute for configuring the NixOS firewall. Do not open broad
 streaming port ranges speculatively or make Wi-Fi/VPN changes just to find a TV.
 
+For an LG TV, check the model's Screen Share/Wireless Display receiver mode; a TV
+being powered on is not proof it is advertising a compatible receiver. Google
+Cast support is model-dependent. Follow the [LG wireless-PC guidance](https://www.lg.com/us/support/help-library/lg-tv-connection-connecting-a-pc-wirelessly--20154629490990)
+and check the specific model rather than opening more firewall ports speculatively.
+
 ## Headless verification
+
+The receiver-first package has compiled callback/lifetime tests and a real GTK
+startup check on private headless Wayland/D-Bus; its fake portal records requests
+but cannot share media. See `home/packages/gnome-network-displays/README.md`.
 
 The menu test runs real Quickshell using Qt's offscreen platform with fake launch
 commands. It tests laptop-only, disabled-panel and wired geometry handling,
@@ -69,6 +81,8 @@ wireless launch without layout mutation, Apply behavior and Escape. It does not
 open a visible window or launch the real casting client.
 
 ```sh
+nix build --impure --no-link --print-build-logs --expr \
+  'let f = builtins.getFlake (toString ./.); in import ./tests/network-displays-startup.nix { pkgs = f.nixosConfigurations.kirax1.pkgs; }'
 nix build --impure --no-link --print-build-logs --expr \
   'let f = builtins.getFlake (toString ./.); in import ./tests/display-menu.nix { pkgs = f.nixosConfigurations.kirax1.pkgs; }'
 nix eval --impure --json .#nixosConfigurations.kirax1.config --apply \
