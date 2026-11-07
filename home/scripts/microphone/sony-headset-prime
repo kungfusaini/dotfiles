@@ -6,7 +6,6 @@ readonly sony_card='bluez_card.58_18_62_B5_3F_E4'
 readonly sony_input_pattern='bluez_input\.58_18_62_B5_3F_E4\.[0-9]'
 readonly msbc_profile=196865
 readonly lc3_profile=196866
-readonly ldac_profile=131080
 readonly settle_seconds=3
 readonly minimum_capture_bytes=4096
 readonly minimum_capture_peak=1
@@ -82,10 +81,12 @@ wait_for_transport_input() {
   return 1
 }
 
-restore_ldac() {
+restore_playback() {
   local card_id=${1:-}
   if [[ -n "$card_id" ]] && is_connected; then
-    wpctl set-profile "$card_id" "$ldac_profile" 2>/dev/null || true
+    # One selector runs after priming and in steady state. It defers to active
+    # recording, preserving the preferred LC3-SWB call profile.
+    sony-headset-playback --restore-playback || true
   fi
 }
 
@@ -100,7 +101,7 @@ controller_rejected_sco_since() {
 prime_failure() {
   local message=${1:?} started=${2:?} card_id=${3:-}
   log "$message"
-  restore_ldac "$card_id"
+  restore_playback "$card_id"
 
   if controller_rejected_sco_since "$started"; then
     log 'Intel controller rejected the SCO connection; reset required'
@@ -148,6 +149,14 @@ prime_connection() {
   if ! wait_for_stable_connection; then
     prime_failure 'headset disconnected while settling' "$started" "$card_id"
     return $?
+  fi
+
+  # Bind deferred restoration to this exact PipeWire connection before HFP.
+  # An unavailable graph or existing recording is a deferral, not SCO failure
+  # and never a reason to reset the adapter.
+  if ! sony-headset-playback --begin-priming; then
+    log 'playback graph or recording busy; deferring priming'
+    return 3
   fi
 
   log 'opening one mSBC microphone cycle'
@@ -214,13 +223,13 @@ prime_connection() {
     return $?
   fi
 
-  restore_ldac "$card_id"
+  restore_playback "$card_id"
   sleep 1
   if controller_rejected_sco_since "$started"; then
-    prime_failure 'LDAC restore left a stale SCO transport' "$started" "$card_id"
+    prime_failure 'playback restore left a stale SCO transport' "$started" "$card_id"
     return $?
   fi
-  log 'connection primed and restored to LDAC'
+  log 'connection primed; playback policy restored (or deferred for recording)'
 }
 
 state_dir="${XDG_RUNTIME_DIR:-/tmp}/sony-headset-prime"
@@ -242,6 +251,9 @@ while true; do
           : > "$primed_marker"
           connection_seen=1
           recovery_attempts=0
+        elif [[ "$prime_rc" -eq 3 ]]; then
+          # Retry registration after the graph/capture settles, without reset.
+          connection_seen=0
         elif [[ "$prime_rc" -eq 2 && "$recovery_attempts" -lt 2 ]]; then
           recovery_attempts=$((recovery_attempts + 1))
           rm -f "$primed_marker"
@@ -252,6 +264,11 @@ while true; do
           connection_seen=1
         fi
       fi
+    fi
+    # No second service races priming. Reconcile only once the existing
+    # per-connection sequence is complete, and leave call profiles alone.
+    if [[ -e "$primed_marker" ]]; then
+      sony-headset-playback || true
     fi
   else
     if [[ "$connection_seen" -eq 1 || -e "$primed_marker" ]]; then

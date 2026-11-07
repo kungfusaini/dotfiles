@@ -1,6 +1,8 @@
 { pkgs, ... }:
 
 let
+  sonyPlaybackPolicy = pkgs.callPackage ../packages/sony-headset-policy { };
+
   # One press toggles mute after a 400 ms double-press window. A second press
   # within that window cancels the mute toggle and switches microphone source.
   micMuteButton = pkgs.writeShellApplication {
@@ -27,10 +29,13 @@ let
 
   # The Sony/Intel pair currently needs one successful mSBC eSCO cycle on each
   # new ACL before LC3-SWB can establish. Prime that per-connection state, put
-  # LC3-SWB back as WirePlumber's preferred call profile, then restore LDAC.
+  # LC3-SWB back as WirePlumber's preferred call profile, then restore the
+  # coordinated playback choice (gaming AAC or normal LDAC). This service is
+  # the only automatic playback-policy coordinator; do not add a competing daemon.
   sonyHeadsetPrime = pkgs.writeShellApplication {
     name = "sony-headset-prime";
     runtimeInputs = with pkgs; [
+      sonyPlaybackPolicy
       bluez
       coreutils
       gawk
