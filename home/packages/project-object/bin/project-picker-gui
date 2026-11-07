@@ -874,7 +874,7 @@ class PickerApplication(Adw.Application):
         if self.current_workspace != workspace and not backend.scope_is_open(self.session, scope):
             return False
         states = self.agent_activity.get(self.context_key(project, stream), set())
-        return "idle" in states and "working" not in states
+        return "idle" in states
 
     def attention_scopes(self):
         scopes = []
@@ -1114,7 +1114,7 @@ class PickerApplication(Adw.Application):
                 states = self.agent_activity.get(self.context_key(project, scope_stream), set())
                 if "working" in states:
                     project_agent_states.add("working")
-                elif "idle" in states:
+                if "idle" in states:
                     project_agent_states.add("idle")
             values.append(ProjectRow(
                 project,

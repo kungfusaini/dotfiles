@@ -167,7 +167,7 @@ class PickerGuiSourceTests(unittest.TestCase):
         app.reveal_row(row)
         adjustment.clamp_page.assert_called_once_with(1960, 2000)
 
-    def test_project_header_aggregates_only_open_scopes_with_working_priority(self):
+    def test_project_header_preserves_mixed_activity_from_open_scopes(self):
         tree = ast.parse(GUI_SOURCE.read_text())
         picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
         method = copy.deepcopy(next(node for node in picker.body if isinstance(node, ast.FunctionDef) and node.name == "list_rows"))
@@ -188,11 +188,11 @@ class PickerGuiSourceTests(unittest.TestCase):
         cases = [
             (True, set(), "open", set(), set()),
             (True, {"idle"}, "closed", set(), {"idle"}),
-            (True, {"idle", "working"}, "open", {"working"}, {"working"}),
+            (True, {"idle", "working"}, "open", {"working"}, {"idle", "working"}),
             (True, {"working"}, "open", {"idle"}, {"idle", "working"}),
             (False, {"idle"}, "closed", {"idle"}, set()),
             (False, {"working"}, "open", {"idle"}, {"idle"}),
-            (True, set(), "open", {"idle", "working"}, {"working"}),
+            (True, set(), "open", {"idle", "working"}, {"idle", "working"}),
         ]
         for main_open, main_states, stream_state, stream_states, expected in cases:
             with self.subTest(main_open=main_open, main=main_states, stream=stream_states, stream_state=stream_state):
@@ -421,8 +421,9 @@ class PickerGuiSourceTests(unittest.TestCase):
         )
         app.scope_requires_attention = lambda *args: namespace["scope_requires_attention"](app, *args)
         app.attention_scopes = lambda: namespace["attention_scopes"](app)
-        for active, expected in [("a", "a/settled"), ("a/working", "a/settled"),
-                                 ("a/settled", "b"), ("b", "a"), ("unmanaged", "a")]:
+        for active, expected in [("a", "a/mixed"), ("a/working", "a/mixed"),
+                                 ("a/mixed", "a/settled"), ("a/settled", "b"),
+                                 ("b", "a"), ("unmanaged", "a")]:
             with self.subTest(active=active):
                 backend.active_workspace_name.return_value = active
                 self.assertTrue(namespace["jump_next_attention"](app))
@@ -430,7 +431,7 @@ class PickerGuiSourceTests(unittest.TestCase):
                 app.show_workspace_label.assert_called_with(expected)
         app.jump_next_attention = lambda **kwargs: namespace["jump_next_attention"](app, **kwargs)
         for active, expected in [("a", "b"), ("b", "a/settled"),
-                                 ("a/settled", "a"), ("a/mixed", "a"),
+                                 ("a/settled", "a/mixed"), ("a/mixed", "a"),
                                  ("a/closed", "a/settled"), ("unmanaged", "b")]:
             with self.subTest(reverse_from=active):
                 backend.active_workspace_name.return_value = active
@@ -510,11 +511,11 @@ class PickerGuiSourceTests(unittest.TestCase):
         app.search.get_text.return_value = "hidden by search"
         app.scope_requires_attention = lambda *args: namespace["scope_requires_attention"](app, *args)
         app.attention_scopes = lambda: namespace["attention_scopes"](app)
-        self.assertEqual(app.attention_scopes(), [scopes[0], scopes[3], scopes[6], scopes[7]])
+        self.assertEqual(app.attention_scopes(), [scopes[0], scopes[2], scopes[3], scopes[6], scopes[7]])
         # Main scope with briefAttention=none still qualifies; action-only empty
         # scope and stale idle activity on a closed workspace do not.
         for anchor, expected in [
-            (scopes[1], scopes[3]), (scopes[2], scopes[3]),
+            (scopes[1], scopes[2]), (scopes[2], scopes[3]),
             (scopes[3], scopes[6]), (scopes[6], scopes[7]), (scopes[7], scopes[0]),
             ({"kind": "project-header", "projectId": "a"}, scopes[0]),
             (None, scopes[0]),
