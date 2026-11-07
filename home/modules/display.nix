@@ -83,7 +83,9 @@ in
   # Keep an explicit recovery command available from a terminal on the external
   # display, independently of whether the F7 binding is receiving events.
   # Keep wallpaper restart as a manual fallback, never a normal transition.
-  home.packages = [ clamshellMode headlessMode displayWallpaperRefresh ];
+  # Use the packaged casting client and its bundled GStreamer dependencies.
+  # Network discovery and wireless lid policy are separate host-level choices.
+  home.packages = [ clamshellMode headlessMode displayWallpaperRefresh pkgs.gnome-network-displays ];
 
   xdg.configFile = {
     "quickshell/display-layout/shell.qml".source =
