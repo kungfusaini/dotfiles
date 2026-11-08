@@ -188,8 +188,18 @@ def main():
             wait_for(lambda: active("eDP-1"))
             assert not any(m["name"].startswith("clamshell-recovery-") for m in mode.monitors())
             assert not controller.path.exists()
+            # Deferred sleep with no external output: keep the render output
+            # enabled, blank only its panel, and wake it on lid reopen.
+            entry("close")
+            wait_for(lambda: not next(m for m in mode.monitors() if m["name"] == "eDP-1")["dpmsStatus"])
+            assert active("eDP-1")
+            assert controller.load()["panelOnly"]
+            lid_file.write_text("open")
+            entry("open")
+            wait_for(lambda: next(m for m in mode.monitors() if m["name"] == "eDP-1")["dpmsStatus"])
+            assert not controller.path.exists()
         assert ctl("configerrors").strip() == "", ctl("configerrors")
-        print("PASS: extended, mirrored, reopen and external-loss transitions through real IPC")
+        print("PASS: extended, mirrored, reopen, external loss and panel-only blanking through real IPC")
     finally:
         if "HYPRLAND_INSTANCE_SIGNATURE" in env:
             try:

@@ -166,20 +166,35 @@ class Clamshell:
         if headless_busy():
             return
         closed = lid_closed()
+        if state and state.get("panelOnly"):
+            if not closed:
+                hypr("dispatch", "dpms", f"on {PANEL}")
+                self.path.unlink()
+            elif any(m["name"] == PANEL and enabled(m) and m.get("dpmsStatus", True)
+                     for m in monitors()):
+                # Retry an interrupted/failed close without replaying layouts.
+                hypr("dispatch", "dpms", f"off {PANEL}")
+            return
         if state:
             if state.get("restoring") or not closed or not any(m["name"] not in (PANEL, state.get("recoveryOutput"))
                                      and enabled(m) for m in monitors()):
                 self.restore(state)
             return
         # Hotplug/startup checks recover only: they never enter clamshell.
-        # Only an actual close event with an active external screen can enter.
+        # Only an actual close event can blank the panel or enter clamshell.
         if action != "close" or not closed:
             return
         outputs = [m for m in monitors() if enabled(m)]
         panel = next((m for m in outputs if m["name"] == PANEL), None)
         externals = [m for m in outputs if m["name"] != PANEL]
-        if not panel or not externals:
-            return  # logind suspends normally when no external display exists
+        if not panel:
+            return
+        if not externals:
+            # Agents can now defer logind's suspend. Blank without disabling the
+            # sole render output, and journal so reopen/recovery wakes it again.
+            self.store({"instance": self.instance, "panelOnly": True})
+            hypr("dispatch", "dpms", f"off {PANEL}")
+            return
         self.save(outputs)
         try:
             for index, m in enumerate(externals):

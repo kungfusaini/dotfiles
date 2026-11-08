@@ -84,10 +84,34 @@ class ClamshellTests(unittest.TestCase):
         self.assertIn(("dispatch", "moveworkspacetomonitor", "name:notes eDP-1"), self.commands)
         self.assertEqual(self.commands[-1], ("dispatch", "focusmonitor", "eDP-1"))
 
-    def test_no_external_does_not_disable_panel(self):
+    def test_no_external_blanks_without_disabling_and_reopen_wakes_panel(self):
         self.outputs = [self.panel]
         self.close()
-        self.assertEqual(self.commands, [])
+        self.assertEqual(self.commands, [("dispatch", "dpms", "off eDP-1")])
+        self.assertFalse(self.panel["disabled"])
+        self.assertFalse(self.panel["dpmsStatus"])
+        self.assertTrue(self.controller.load()["panelOnly"])
+        self.controller.handle("check")
+        self.assertEqual(len(self.commands), 1)
+        self.closed = False
+        self.controller.handle("open")
+        self.assertTrue(self.panel["dpmsStatus"])
+        self.assertFalse(self.controller.path.exists())
+
+    def test_panel_blank_failure_keeps_recovery_journal(self):
+        self.outputs = [self.panel]
+        self.fail = lambda args: args == ("dispatch", "dpms", "off eDP-1")
+        with self.assertRaises(subprocess.TimeoutExpired):
+            self.close()
+        self.assertTrue(self.controller.path.exists())
+        self.fail = None
+        self.controller.handle("check")
+        self.assertEqual(self.commands[-1], ("dispatch", "dpms", "off eDP-1"))
+        self.assertFalse(self.panel["dpmsStatus"])
+        self.assertTrue(self.controller.path.exists())
+        self.closed = False
+        self.controller.handle("check")
+        self.assertEqual(self.commands[-1], ("dispatch", "dpms", "on eDP-1"))
         self.assertFalse(self.controller.path.exists())
 
     def test_folded_mode_all_states_are_untouched(self):
@@ -207,7 +231,8 @@ class ClamshellTests(unittest.TestCase):
     def test_disabled_external_not_eligible(self):
         self.external["disabled"] = True
         self.close()
-        self.assertEqual(self.commands, [])
+        self.assertEqual(self.commands, [("dispatch", "dpms", "off eDP-1")])
+        self.assertFalse(self.panel["disabled"])
 
     def test_rules_preserve_scale_refresh_rotation_and_reject_unsafe_name(self):
         self.panel.update(width=1920, height=1200, transform=1, scale=1.5)

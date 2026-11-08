@@ -33,6 +33,7 @@ in
     ./modules/pi.nix
     ./packages/project-object/nix/home-manager-module.nix
     ./modules/power-status.nix
+    ./modules/agent-lid-sleep.nix
     ./modules/tablet-workspace.nix
     ./modules/vim.nix
     ./modules/voxtype.nix
