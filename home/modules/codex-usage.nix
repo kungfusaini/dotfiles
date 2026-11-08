@@ -1,10 +1,21 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, osConfig, ... }:
 
 let
   tracker = pkgs.callPackage ../packages/codex-usage-tracker { };
+  policy = builtins.fromJSON (builtins.readFile ../config/pi/model-modes.json);
+  mode = lib.findFirst (m: m.id == policy.default && m.provider == "openai-codex")
+    (throw "One-shot sessions require a Codex default model mode") policy.modes;
+  pi = lib.findFirst (p: (p.pname or "") == "pi-coding-agent")
+    (throw "One-shot sessions require the managed Pi package")
+    osConfig.users.users.sumeet.packages;
 in
 {
   home.packages = [ tracker ];
+  xdg.configFile."command-center/oneshot.json".text = builtins.toJSON {
+    piBin = "${pi}/bin/pi";
+    model = mode.model;
+    thinking = mode.thinkingLevel;
+  };
 
   systemd.user.services.codex-usage = {
     Unit.Description = "Record Codex quota and incrementally import Pi usage metadata";
@@ -35,6 +46,7 @@ in
     };
   };
 
+  # Fresh collections also deliver deduplicated 24h/4h reset reminders.
   # No persistent process, high-frequency wakeups, or waking the laptop from sleep.
   systemd.user.timers.codex-usage = {
     Unit.Description = "Measure Codex subscription usage hourly";

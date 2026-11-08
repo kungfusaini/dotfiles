@@ -28,8 +28,67 @@ It refreshes measurements, not OAuth credentials.
 The hourly systemd user timer makes one GET to `https://chatgpt.com/backend-api/wham/usage`
 (timeout 15 seconds, no retries) and imports newly appended local records. Missed
 timer events coalesce into one collection after login/resume; the laptop is not
-woken from suspend. There is no automatic weekly notification: run `codex-usage`
-or `history` whenever useful.
+woken from suspend. Fresh successful collections also deliver reset reminders within 24 hours and
+again within 4 hours, when at least 10% of the weekly allowance remains. Delivery
+is deduplicated per account/window/stage, including one-second reset jitter.
+The existing hourly schedule means a reminder can arrive up to about an hour
+after its threshold, or after resume; it does not wake the laptop. A first sample
+inside 4 hours sends only the 4-hour reminder. Failed delivery is retried on the
+next fresh collection. Stale/offline reports and local-only imports never notify.
+These are normal desktop notifications and respect Do Not Disturb. Notification
+bodies contain allowance/reset metadata only, not prompts or account identities.
+
+## One dedicated Pi session, stopped at reset
+
+In an interactive project/stream terminal:
+
+```sh
+pi-oneshot                    # or: pi-oneshot start
+pi-oneshot status             # inspect owned sessions and deadline timers
+pi-oneshot stop SESSION_ID    # optional early stop; exact ID printed at launch
+```
+
+The launcher fetches fresh Codex quota without refreshing shared credentials,
+then opens **one ordinary named, persisted Pi session** in the invoking terminal.
+Enter one large task in Pi; there is no queue/batch system and no automatic task
+selection or authorization bypass. Project/stream attachment and session storage
+are inherited from that terminal. Outside a project, normal Pi session storage
+applies. Startup explicitly selects the Codex model/thinking level from the
+managed default model mode, regardless of other saved provider/model defaults.
+
+Before Pi can start, a separate systemd user calendar timer is armed for the
+**reported reset timestamp itself**, with no early-stop margin. At that deadline
+it sends SIGKILL to every process in this session's systemd service cgroup,
+including ordinary subprocesses, detached shells, and nested Pi processes.
+This is an abrupt stop: do not rely on a final model summary or shutdown hooks;
+write/checkpoint useful progress during the task. Existing session entries and
+files survive, but an interrupted write/tool action may be incomplete. Other Pi
+sessions are not targeted. This is a scheduling deadline, not a hard-real-time
+promise: system load and manager scheduling can add a small delay.
+
+The deadline is pinned to the original allowance window and is never extended
+into the next one. Pi is never automatically resumed or restarted. The timer
+survives a launcher crash and catches up after suspend (without waking the
+machine); a monotonic service runtime limit is a second bound. The worker checks
+that its timer is active and fetches quota again immediately before launching Pi,
+rejecting account/window changes, unavailable quota, restrictions, and expired
+windows. Starts with five seconds or less remaining are rejected, not run early.
+No credentials or prompts are put in systemd arguments/configuration. Only a
+hashed account discriminator and window/session IDs are passed internally.
+
+Do not start separate systemd services, Project Object workers, cloud agents, or
+other work outside the owned cgroup from this session: those are **unsupported**
+and cannot be stopped by its deadline. The appended session instructions prohibit
+these and provider/account changes, paid-credit fallbacks, and automatic
+continuation, but this wrapper is not a security sandbox against arbitrary code.
+A local kill also cannot establish how the provider accounts for an already
+in-flight request. An explicit manual resume later is a new user decision, not
+an automated continuation of this run.
+
+The managed Pi path and Codex model/thinking selection are deployed in
+`~/.config/command-center/oneshot.json`.
+`pi-oneshot` opens no windows and takes no global input; invoke it from the desired
+terminal. It does not change Pi defaults or launch any model work on deployment.
 
 ## Measurements and limits
 
@@ -112,5 +171,18 @@ incomplete-token-data warning. Deleted logs already imported remain accounted fo
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v
 ```
 
-Tests use temporary directories and mocked HTTP; no real credentials, quota, or
-live session files are required.
+Unit tests use temporary directories and mocked HTTP/notifications/systemd; no
+real credentials, quota, or live session files are required.
+
+An opt-in integration test exercises the real user manager with a real Pi RPC
+process and a detached child, isolated temporary Pi configuration, no prompts or
+model requests, and an unrelated control service:
+
+```sh
+PYTHONDONTWRITEBYTECODE=1 python3 tests/deadline_integration.py --pi /absolute/path/to/managed/pi
+```
+
+It verifies continued execution up to the reset, group termination near the
+absolute deadline, and survival of the unrelated service. It creates only its own
+uniquely named transient user units and cleans those up; no windows/global input,
+live quota, credentials, or system suspend is used.

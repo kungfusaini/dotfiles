@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import sqlite3
 import stat
+import subprocess
 import sys
 import time
 import urllib.error
@@ -26,6 +27,10 @@ CREATE TABLE IF NOT EXISTS snapshots (
  used REAL NOT NULL, allowed INTEGER NOT NULL, reached INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS snapshot_window ON snapshots(account, plan, reset_at, sampled_at);
+CREATE TABLE IF NOT EXISTS reminders (
+ account TEXT NOT NULL, reset_at INTEGER NOT NULL, stage INTEGER NOT NULL,
+ sent_at INTEGER NOT NULL, PRIMARY KEY(account, reset_at, stage)
+);
 CREATE TABLE IF NOT EXISTS runs (
  id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, finished_at INTEGER, quota_status TEXT,
  files INTEGER NOT NULL DEFAULT 0, bytes INTEGER NOT NULL DEFAULT 0,
@@ -281,6 +286,33 @@ def ingest(db, paths, budget=BYTE_BUDGET):
     return counts
 
 
+def remind(db, quota, now=None):
+    """At most one reminder per stage/window; only called with a fresh quota."""
+    now = int(time.time()) if now is None else now
+    account, _plan, reset, _duration, used, _allowed, _reached = quota
+    left = reset - now
+    if not 0 < left <= 86400 or 100 - used < 10:
+        return False
+    stage = 4 if left <= 14400 else 24
+    # Upstream reset timestamps can jitter by one second. A 4h reminder also
+    # suppresses the earlier 24h stage if the clock subsequently moves backward.
+    if db.execute("SELECT 1 FROM reminders WHERE account=? AND ABS(reset_at-?)<=2 AND stage<=?",
+                  (account, reset, stage)).fetchone():
+        return False
+    body = (f"{100-used:g}% of weekly Codex allowance remains. Reset: {iso(reset)}. "
+            "Run pi-oneshot in a project terminal to start one Pi session that stops at reset.")
+    try:
+        subprocess.run(["notify-send", "--app-name=Codex One-shot", "--urgency=normal",
+                        "--expire-time=0", "--", f"Codex reset within {stage} hours", body],
+                       check=True, timeout=10, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
+        print("WARNING: reset reminder delivery failed; will retry at the next collection.", file=sys.stderr)
+        return False
+    with db:
+        db.execute("INSERT OR REPLACE INTO reminders VALUES (?,?,?,?)", (account, reset, stage, now))
+    return True
+
+
 def collect(directory, local_only=False):
     started = int(time.time())
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -309,6 +341,8 @@ def collect(directory, local_only=False):
             print(f"Quota: {status}; imported {counts['imported']} records; "
                   f"read {counts['bytes']} bytes in {counts['files']} files; "
                   f"issues {counts['issues']}; backlog {counts['backlog']} files.")
+            if quota:
+                remind(db, quota)
             if status not in ("ok", "local_only") or counts["issues"]:
                 return 1
     return 0

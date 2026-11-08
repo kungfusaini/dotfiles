@@ -1,4 +1,4 @@
-{ lib, stdenvNoCC, python3, makeWrapper }:
+{ lib, stdenvNoCC, python3, makeWrapper, systemd, libnotify }:
 
 stdenvNoCC.mkDerivation {
   pname = "codex-usage-tracker";
@@ -15,8 +15,14 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
     install -Dm644 codex_usage.py "$out/lib/codex-usage/codex_usage.py"
+    install -Dm644 codex_oneshot.py "$out/lib/codex-usage/codex_oneshot.py"
     makeWrapper ${python3}/bin/python3 "$out/bin/codex-usage" \
       --add-flags "$out/lib/codex-usage/codex_usage.py" \
+      --prefix PATH : ${lib.makeBinPath [ libnotify ]} \
+      --set PYTHONDONTWRITEBYTECODE 1
+    makeWrapper ${python3}/bin/python3 "$out/bin/pi-oneshot" \
+      --add-flags "-B $out/lib/codex-usage/codex_oneshot.py" \
+      --prefix PATH : ${lib.makeBinPath [ systemd ]} \
       --set PYTHONDONTWRITEBYTECODE 1
     install -Dm644 README.md "$out/share/doc/codex-usage-tracker/README.md"
     runHook postInstall
