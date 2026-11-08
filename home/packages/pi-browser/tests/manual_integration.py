@@ -79,7 +79,14 @@ def worker(arguments):
         ctl('dispatch','event','pi-consent-begin:'+native_class)
         try:
             ctl('dispatch','focuswindow','address:'+window['address'])
-            keys=['-k','Tab']*(2 if allow else 1)+['-s','200','-k','Return']
+            deadline=time.monotonic()+3
+            while json.loads(ctl('activewindow','-j')).get('address') != window['address']:
+                assert time.monotonic()<deadline,'private consent window did not receive focus'
+                time.sleep(.05)
+            # Chromium-interface dialog initially focuses Cancel; native
+            # Vivaldi's dialog enters the focus order one step earlier.
+            tabs=(1 if allow else 0) if os.environ.get('PI_BROWSER_TEST_CLASSIC') == '1' else (2 if allow else 1)
+            keys=['-s','200']+['-k','Tab']*tabs+['-s','200','-k','Return']
             subprocess.run([os.environ['PI_BROWSER_TEST_WTYPE'],*keys],env=env,
                            capture_output=True,timeout=5,check=True)
         finally:
@@ -94,6 +101,14 @@ def worker(arguments):
             server.phases=[]
         command=[browser,'open','--headed','--manual','--profile='+str(profile),
                  f'http://127.0.0.1:{server.server_port}/?private=synthetic-marker']
+        if os.environ.get('PI_BROWSER_TEST_CLASSIC') == '1':
+            call('open','--headed','--help')
+            private_session=Path(json.loads(call('paths'))['session'])
+            config=json.loads((private_session/'config.json').read_text())
+            config['browser']['launchOptions']['args']=['--disable-vivaldi','--force-dark-mode']
+            config_path=root/'classic-config.json'
+            config_path.write_text(json.dumps(config))
+            command.append('--config='+str(config_path))
         direct = os.environ.get('PI_BROWSER_TEST_DIRECT') == '1'
         if direct:
             command.remove('--manual')
@@ -216,6 +231,44 @@ await popup.close(); return {popup:true};}''')
             call('goto', f'http://127.0.0.1:{server.server_port}/ordinary')
             call('click', '#continue')
             assert 'Agent continued' in call('eval', "document.querySelector('#status').textContent")
+        if os.environ.get('PI_BROWSER_TEST_RECONNECT') == '1':
+            lines=(profile/'DevToolsActivePort').read_text().splitlines()
+            assert len(lines)==2 and lines[0].isdigit() and lines[1].startswith('/devtools/browser/')
+            endpoint='ws://127.0.0.1:'+lines[0]+lines[1]
+            call('detach')
+            with (root/'reconnect.log').open('w') as log:
+                reconnect=subprocess.Popen([browser,'attach','--cdp='+endpoint],env=env,stdout=log,stderr=log)
+                try:
+                    time.sleep(2)
+                    assert reconnect.poll() is None,'reattach completed before renewed native approval'
+                    # Public wrapper control must remain unavailable before the
+                    # synthetic human approves. A queued command is also not
+                    # permission: terminate it before granting consent.
+                    with (root/'before-reapproval.log').open('w') as probe_log:
+                        probe=subprocess.Popen([browser,'tab-list'],env=env,stdout=probe_log,stderr=probe_log)
+                        try:
+                            try:
+                                code=probe.wait(timeout=1)
+                                assert code!=0,'page control was available before renewed approval'
+                            except subprocess.TimeoutExpired:
+                                pass
+                        finally:
+                            if probe.poll() is None:
+                                probe.terminate()
+                                probe.wait(timeout=5)
+                    consent(True)
+                    assert reconnect.wait(timeout=25)==0,'native reconnect failed; see private reconnect.log'
+                finally:
+                    if reconnect.poll() is None:
+                        reconnect.terminate()
+                        reconnect.wait(timeout=5)
+            resumed=call('run-code', '''async page => {
+const task=page.context().pages().find(p=>p.url().endsWith('/ordinary'));
+if(!task)throw Error('Missing fixture after reconnect');
+await task.locator('#continue').click();
+return {login:await task.evaluate(()=>localStorage.getItem('login')),status:await task.locator('#status').textContent()};}''')
+            assert 'synthetic-user' in resumed and 'Agent continued' in resumed
+            assert fixture_alive(),'reconnect changed browser identity'
         (root/'result.json').write_text(json.dumps({'status':0,'stdout':'same-process native runtime consent passed','stderr':''}))
         headed.wait_for_file(root/'done')
     except Exception as error:
@@ -224,7 +277,7 @@ await popup.close(); return {popup:true};}''')
         call('close')
         if state:
             assert profile.exists()  # Explicit fixture profile, never implicitly deleted.
-            if os.environ.get('PI_BROWSER_TEST_DETACH_STAGE') and fixture_alive():
+            if (os.environ.get('PI_BROWSER_TEST_DETACH_STAGE') or os.environ.get('PI_BROWSER_TEST_RECONNECT')) and fixture_alive():
                 # Test controller still owns this isolated synthetic fixture,
                 # even though the browser wrapper deliberately relinquished it.
                 assert Path(env['XDG_RUNTIME_DIR']).resolve().is_relative_to(root.parent.resolve())

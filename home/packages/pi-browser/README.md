@@ -201,6 +201,72 @@ use identical fixture/browser builds; no runtime replacement or real profile is
 used. Manual native-dialog test input remains focus-sensitive, so distinguish a
 consent rejection from reaching the popup regression.
 
+## Backend comparison: Chromium-interface candidate (not the default)
+
+The broader private comparison found a narrower candidate than replacing the
+backend: keep the pinned Vivaldi binary and Playwright, but pass
+`--disable-vivaldi --force-dark-mode` for the task browser. Headless mode already
+uses the first switch; headed mode then uses the bundled Chromium interface
+instead of Vivaldi's custom interface. This is an internal, version-pinned switch,
+not a promise of a stable public Vivaldi API. New versions require this acceptance
+suite again. The deployed/default mode has **not** been changed by these tests.
+
+Local results with fresh synthetic profiles:
+
+| Combination | Result |
+| --- | --- |
+| Existing official CLI + native Vivaldi interface | Popup stalls (above) |
+| Puppeteer Core 25.16.0 + native Vivaldi interface | Popup mouse-release protocol timeout |
+| Packaged Chromium 153 + Playwright | Popup, navigation and same-process reconnect pass |
+| Same Vivaldi 8.2/Chromium 152 binary, Chromium interface + Playwright | Popup, navigation and reconnect pass |
+| Same-binary Chromium-interface browser + official CLI native consent | Popup, navigation, renewed native consent and same-process reconnect pass |
+| Chromium-interface profile reused across two chat identities/browser restarts | Website fixture marker and synthetic Bitwarden extension storage marker retained |
+
+The last three Vivaldi candidate suites pass both verified placement cases without
+stealing host focus. The same-binary control avoids confusing the Chromium 152/153
+version difference with the interface change. A raw-Playwright/native-interface
+probe also failed task binding before reaching the popup; that is **not** counted
+as a second popup reproduction. Native-dialog synthetic keyboard input remains
+focus-sensitive; a consent rejection is not a popup failure.
+
+These are synthetic outcomes, not proof of real Google acceptance, real Bitwarden
+account/session persistence or resolution of Gmail's underlying forwarding error.
+No real profile was opened, copied or inspected. Moving an existing signed-in
+profile to the candidate interface has not been tested on Sumeet's real session.
+Native consent and existing file/network policy must remain unchanged. Known
+upstream routed-popup limitations are not declared solved by this comparison.
+
+`backend_comparison.py` reuses the private compositor harness and takes its usual
+arguments (`--browser-class vivaldi --keep-target-visible`), but `--chromium`
+carries the actual browser executable, plus
+`--backend playwright|puppeteer --module /absolute/module-entry.js`. The harness's
+Vivaldi label is the exact placement class, not browser identification; the probe
+reports the actual version/user agent. Modules are
+explicit test dependencies; the probe never installs packages at runtime.
+The Puppeteer comparison used `puppeteer-core@25.16.0` with install scripts and
+browser downloading disabled in a temporary test directory. It is not a system
+or production dependency. Add these optional environment flags:
+
+- `PI_PROBE_BROWSER_ARGS='["--disable-vivaldi","--force-dark-mode"]'` for the
+  same-binary candidate.
+- `PI_PROBE_SHARED_PROFILE=1 PI_PROBE_EXTENSION=1` to verify cross-chat/browser
+  restart persistence in a **new private fixture profile**, including only an
+  explicitly synthetic `chrome.storage.local` marker in the packaged extension.
+- For official CLI/native-consent acceptance, use `manual_integration.py` with
+  `PI_BROWSER_TEST_CLASSIC=1 PI_BROWSER_TEST_POPUP=1 PI_BROWSER_TEST_RECONNECT=1`.
+  This uses an explicit private config, normal native approval and a verified
+  existing endpoint for fixture reattachment, without restarting the browser.
+
+Build versus adopt: [Puppeteer's maintained CDP API](https://pptr.dev/api/puppeteer.connectoptions)
+was tested directly and did not fix the native-interface stall, so introducing it
+would add migration/maintenance cost without solving the observed problem.
+[Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp) is also
+Puppeteer-based, officially targets Chrome, and enables usage statistics by
+default; no MCP daemon or new agent integration was installed. The same-binary
+candidate requires neither dependency nor custom protocol patch. Default adoption
+and live-profile verification require explicit approval separately from this
+isolated comparison.
+
 ## Bitwarden availability
 
 Managed Vivaldi packages the official Bitwarden `dist-chrome-2026.10.2.zip` release
