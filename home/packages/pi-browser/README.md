@@ -152,6 +152,55 @@ and [MDN's webdriver documentation](https://developer.mozilla.org/en-US/docs/Web
 login cannot prove it. There is no stealth override, account-security downgrade or
 provider-login retry loop. The everyday Vivaldi/profile is unchanged.
 
+## Known native popup stall (unresolved)
+
+The pinned native Vivaldi + Playwright combination is **not accepted for
+popup-dependent automation**. A synthetic local button using `window.open('')`
+and `document.write()` works in the same native browser without an agent
+connection, but its Playwright click hangs after either native-consent attachment
+or the ordinary debugging-port connection. The popup remains blank and receives
+no fixture image request. No request-routing policy is needed to reproduce it.
+
+Private protocol traces show an initially `other` popup target and a pending
+`Runtime.runIfWaitingForDebugger` alongside the opener's pending mouse-release
+command. This narrows the failure to native popup/debugger interaction, not
+Gmail sign-in, internet access or consent alone; it does **not** establish the
+precise engine defect. It resembles the separately reported
+[CEF popup initialization stall](https://github.com/chromiumembedded/cef/issues/4308),
+not necessarily the [routed-popup subresource bug](https://github.com/microsoft/playwright/issues/43496).
+
+Target filtering, changing pause-on-start behavior, non-awaiting unsupported-target
+detach, treating `other` as pages and Vivaldi's popup-in-tab preference did not
+resolve the local fixture. Those experimental production patches were removed;
+no debugger, routing, file-access or consent safeguards were weakened. A single
+recovery probe found that detach returned successfully and a new manual fixture
+tab loaded, but the pending popup stayed blank. That is not proof of safe retry,
+complete recovery or a successful Gmail submission.
+
+Do not repeatedly submit a real form, equate process/listener liveness with page
+health, or claim reconnect/restart fixed a task without equivalent page-level
+verification. No successful native-popup fix is shipped. A backend/browser change
+or engine-level correction needs separate evaluation and authorization.
+
+To reproduce on the **private** compositor, use the normal `manual_integration.py`
+command (same harness/executable arguments as `headed_integration.py`, plus
+`--wtype /absolute/wtype`) with these environment flags:
+
+- No extra flags: existing native-consent/non-popup acceptance; passes.
+- `PI_BROWSER_TEST_POPUP=1`: strict popup/image/navigation regression; currently
+  fails with a bounded command timeout, intentionally not marked as passing.
+- Also `PI_BROWSER_TEST_DIRECT=1`: debugging-port control; currently fails too.
+- Also `PI_BROWSER_TEST_MANUAL_POPUP=1`: synthetic human input without an agent
+  connection; passes. This enters only fixed local-fixture JavaScript through
+  the private compositor's address bar and closes the exact fixture popup.
+- `PI_BROWSER_TEST_TRACE=1`: optional protocol evidence in private logs; fresh
+  synthetic profiles only, never real accounts or vault data.
+
+The failing regression remains opt-in, outside package unit checks. Both controls
+use identical fixture/browser builds; no runtime replacement or real profile is
+used. Manual native-dialog test input remains focus-sensitive, so distinguish a
+consent rejection from reaching the popup regression.
+
 ## Bitwarden availability
 
 Managed Vivaldi packages the official Bitwarden `dist-chrome-2026.10.2.zip` release

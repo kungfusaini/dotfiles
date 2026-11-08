@@ -140,6 +140,21 @@ built-in permission UI, not a Playwright extension or changed automation signals
 Google/provider acceptance still needs a real manual check; synthetic login tests
 do not establish it. The normal Vivaldi profile is untouched.
 
+## Known native popup limitation
+
+The pinned native Vivaldi/Playwright combination has a reproduced popup stall:
+a local `window.open('')` + `document.write()` works without an agent connection,
+but stalls under both native-consent and ordinary debugging-port automation.
+The popup can stay blank and page commands/reconnect may stop responding.
+This is separate from login/profile persistence and is not fixed by new consent.
+Do not claim native popup-dependent workflows are supported or repeatedly submit
+an action whose dispatch/outcome is unknown. A live process/listener is not proof
+of responsive pages. Do not silently switch browsers, remove request/file policy,
+restart the task browser or infer successful recovery from connection status.
+Explain the limitation and obtain approval for any broader workaround. No safe
+popup fix is shipped; private regression and control commands are documented in
+the packaged `share/doc/pi-browser/README.md`.
+
 ## Bitwarden in native Vivaldi
 
 The managed native browser includes the official Bitwarden extension, pinned by

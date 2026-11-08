@@ -20,12 +20,18 @@ import headed_integration as headed
 
 PAGE = b'''<!doctype html><title>Human-first fixture</title><p id="status">Signed in</p>
 <button id="continue" onclick="document.querySelector('#status').textContent='Agent continued'">Continue</button>
+<button id="popup" autofocus onclick="const w=window.open('','fixture-popup','width=500,height=400');
+w.document.write('<title>Popup fixture</title><img src=/pixel><p>Confirmation fixture</p>');w.document.close()">Popup</button>
 <script>const previous=localStorage.getItem('login');
 fetch('/phase?webdriver='+navigator.webdriver+'&previous='+encodeURIComponent(previous||''));
 localStorage.setItem('login','synthetic-user');</script>'''
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path == '/pixel':
+            self.server.pixels += 1
+            self.send_response(200);self.send_header('Content-Type','image/gif');self.end_headers()
+            self.wfile.write(bytes.fromhex('47494638396101000100800000000000ffffff21f90401000000002c00000000010001000002024401003b'));return
         if self.path.startswith('/phase?'):
             self.server.phases.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,keep_blank_values=True))
             self.send_response(204);self.end_headers();return
@@ -37,10 +43,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def worker(arguments):
     root,helper,browser,strip=arguments;root=Path(root)
     headed.wait_for_file(root/'go')
-    server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);server.phases=[]
+    server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);server.phases=[];server.pixels=0
     threading.Thread(target=server.serve_forever,daemon=True).start()
     env={**os.environ,'PI_SESSION_ID':f'runtime-{root.parent.name}-{strip}',
          'XDG_STATE_HOME':str(root/'state'),'NIXOS_OZONE_WL':'1'}
+    if os.environ.get('PI_BROWSER_TEST_TRACE') == '1':
+        env['DEBUG'] = 'pw:protocol'  # Synthetic fixtures only; never real profiles.
     profile=root/'synthetic-profile';profile.mkdir()
     # Test fixture ONLY. Actual users enable the setting in Vivaldi themselves.
     settings_only=os.environ.get('PI_BROWSER_TEST_SETTINGS_ONLY')=='1'
@@ -86,11 +94,25 @@ def worker(arguments):
             server.phases=[]
         command=[browser,'open','--headed','--manual','--profile='+str(profile),
                  f'http://127.0.0.1:{server.server_port}/?private=synthetic-marker']
+        direct = os.environ.get('PI_BROWSER_TEST_DIRECT') == '1'
+        if direct:
+            command.remove('--manual')
         launcher='import os,subprocess,time;'
         if strip=='yes':launcher+="os.environ.pop('HL_EXEC_RULE_TOKEN',None);os.environ.pop('HL_INITIAL_WORKSPACE_TOKEN',None);time.sleep(1.2);"
         launcher+='subprocess.run('+repr(command)+')'
         launched=subprocess.run([helper,sys.executable,'-c',launcher],env=env,capture_output=True,text=True,timeout=25)
         assert launched.returncode==0,launched.stderr
+        if direct:
+            session=Path(json.loads(call('paths'))['session'])
+            state=json.loads((session/'vivaldi-process.json').read_text())
+            call('run-code', '''async page => {
+const popupPromise=page.waitForEvent('popup'); await page.locator('#popup').click();
+const popup=await popupPromise; await popup.waitForFunction(()=>document.querySelector('img')?.naturalWidth>0,null,{timeout:5000});
+await popup.close(); return {popup:true};}''')
+            assert server.pixels == 1
+            (root/'result.json').write_text(json.dumps({'status':0,'stdout':'direct native popup passed','stderr':''}))
+            headed.wait_for_file(root/'done')
+            return
         assert json.loads(call('list'))['connected'] is False
         session=Path(json.loads(call('paths'))['session'])
         state=json.loads((session/'vivaldi-process.json').read_text())
@@ -102,6 +124,33 @@ def worker(arguments):
         while not server.phases:
             assert time.monotonic()<deadline,'normal manual page did not load';time.sleep(.1)
         assert server.phases[0]=={'webdriver':['false'],'previous':['']},server.phases
+        if os.environ.get('PI_BROWSER_TEST_MANUAL_POPUP') == '1':
+            own=next(c for c in json.loads(ctl('clients','-j')) if c.get('pid')==state['pid'])
+            native_class=own['class']
+            ctl('dispatch','event','pi-consent-begin:'+native_class)
+            try:
+                ctl('dispatch','focuswindow','address:'+own['address'])
+                subprocess.run([os.environ['PI_BROWSER_TEST_WTYPE'],'-M','ctrl','-k','l','-m','ctrl',
+                                "javascript:document.getElementById('popup').click()",'-k','Return'],
+                               env=env,check=True,timeout=5)
+            finally:
+                ctl('dispatch','focusmonitor','TEST_FOCUS')
+                ctl('dispatch','workspace','name:Focused elsewhere')
+                ctl('dispatch','event','pi-consent-end:'+native_class)
+            deadline=time.monotonic()+10
+            while server.pixels != 1:
+                assert time.monotonic()<deadline,'manual popup did not load'
+                time.sleep(.1)
+            deadline=time.monotonic()+10
+            while True:
+                popup=next((c for c in json.loads(ctl('clients','-j')) if c.get('class')==native_class and c['address']!=own['address']),None)
+                if popup:break
+                assert time.monotonic()<deadline,'manual popup window did not map'
+                time.sleep(.1)
+            ctl('dispatch','closewindow','address:'+popup['address'])
+            (root/'result.json').write_text(json.dumps({'status':0,'stdout':'manual native popup passed without agent connection','stderr':''}))
+            headed.wait_for_file(root/'done')
+            return
         if settings_only:
             assert not (profile/'DevToolsActivePort').exists()
             assert json.loads(call('connect'))['status']=='enable-debugging'
@@ -158,6 +207,15 @@ def worker(arguments):
         assert not list((session/'artifacts').glob('page-*.yml')),'automatic page snapshot during consent'
         call('snapshot')  # Explicit authorized fixture snapshots remain supported.
         call('connect',success=False)
+        if os.environ.get('PI_BROWSER_TEST_POPUP') == '1':
+            call('run-code', '''async page => {
+const popupPromise=page.waitForEvent('popup'); await page.locator('#popup').click();
+const popup=await popupPromise; await popup.waitForFunction(()=>document.querySelector('img')?.naturalWidth>0,null,{timeout:5000});
+await popup.close(); return {popup:true};}''')
+            assert server.pixels == 1, 'popup image request stalled'
+            call('goto', f'http://127.0.0.1:{server.server_port}/ordinary')
+            call('click', '#continue')
+            assert 'Agent continued' in call('eval', "document.querySelector('#status').textContent")
         (root/'result.json').write_text(json.dumps({'status':0,'stdout':'same-process native runtime consent passed','stderr':''}))
         headed.wait_for_file(root/'done')
     except Exception as error:

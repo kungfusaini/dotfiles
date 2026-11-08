@@ -219,7 +219,7 @@ def main():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.__file__ = str(Path(__file__).resolve())
-    if os.environ.get("PI_BROWSER_TEST_SHARED") == "1":
+    if any(os.environ.get(flag) == "1" for flag in ("PI_BROWSER_TEST_SHARED", "PI_BROWSER_TEST_POPUP")):
         # This suite adds extension storage, native chrome and collision checks
         # to the original placement case; allow its controller adequate time.
         original_wait = module.wait_for
