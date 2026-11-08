@@ -45,8 +45,11 @@ pi-browser open https://example.com
 # Visible browser through the workspace launcher.
 project-workspace-exec pi-browser open --headed https://example.com
 
-# Retain the profile after closing/reopening this Pi session's browser.
+# Native headed defaults reuse the same agent profile across chats.
 project-workspace-exec pi-browser open --headed --persistent https://example.com
+
+# Explicitly isolated temporary browser (no saved human logins).
+project-workspace-exec pi-browser open --headed --no-persistent https://example.com
 
 # Explicit profile path; the same path can be reused by a later Pi session.
 project-workspace-exec pi-browser open --headed --profile=/absolute/profile https://example.com
@@ -55,10 +58,18 @@ project-workspace-exec pi-browser open --headed --profile=/absolute/profile http
 pi-browser open --config=/absolute/config.json https://example.com
 ```
 
-`--persistent` uses `profile/` beneath this Pi session's private directory, shared
-between headless and headed modes.
+Native headed defaults (with or without `--persistent`) reuse
+`$XDG_STATE_HOME/pi-browser/shared-profile` across chats. This profile starts Dark,
+with the left panel bar and bottom status bar hidden; tabs/address bar remain.
+`--no-persistent` explicitly uses a temporary profile. Headless defaults remain
+temporary and isolated; headless `--persistent` stays session-local. Explicit
+`--config` retains its own profile semantics and does not select the shared default.
 `--profile` selects an explicit profile path. A profile can only be open in one
-browser process at a time. Neither option imports another browser's cookies.
+browser process at a time; an occupied shared profile fails, never silently
+replaces another agent's browser or falls back to a fresh signed-out profile.
+Use the owning chat, or explicitly authorize a separate isolated browser. Reusing
+a profile does not grant access to its other authenticated tabs or vault.
+No cookies are imported and everyday Vivaldi is untouched.
 The default config selects Nix Vivaldi with its Chromium sandbox enabled; explicit
 configs select their own browser/launch settings. Native headed Vivaldi is launched
 with its own temporary loopback debugging endpoint, then connected to the pinned
@@ -139,7 +150,12 @@ It is available from Vivaldi's Extensions menu; the popup entry is
 The extension starts with that profile's own account state. A persistent profile
 retains its Bitwarden sign-in/settings; a fresh temporary profile does not inherit
 the everyday browser's vault or login. Bitwarden Desktop being logged in does not
-automatically sign in the browser extension.
+automatically sign in the browser extension. The shared headed profile retains
+its own Bitwarden sign-in across chats and restarts, subject to Bitwarden's normal
+session rules. Signed in is not unlocked: normal locking, organization policies,
+explicit logout and session revocation still apply. Never change vault timeout or
+read extension account/vault storage to implement persistence; Sumeet handles
+login and unlock manually. See [Bitwarden's lock versus logout guide](https://bitwarden.com/help/vault-timeout/).
 
 A per-profile native-messaging manifest points to the packaged Bitwarden Desktop
 proxy. Desktop integration/unlock features still require Bitwarden's own settings
@@ -186,10 +202,11 @@ Playwright snippet. Upload, evaluation and network inspection use the process's
 normal file/network permissions; this wrapper is not a sandbox.
 
 Pi supplies `PI_SESSION_ID` (or `PI_SESSION_FILE`) for browser ownership across shell
-calls and cwd changes. Different Pi sessions have separate default profiles and
-artifacts. `close` stops this session's owned browser and removes its temporary
-profile; persistent profiles and artifacts remain. `delete-data` also removes the
-wrapper's own default persistent profile after shutdown, but not explicit profiles. Global close/kill
+calls and cwd changes. Artifacts, caches and automation ownership stay session-local;
+only the native headed default profile is shared across chats. `close` stops this
+session's owned browser and removes its temporary profile; persistent profiles
+and artifacts remain. `delete-data` refuses the shared sign-in profile; it can
+remove the session-local headless persistent profile, not explicit profiles. Global close/kill
 commands and runtime installation are unavailable: package installation is Nix-managed.
 
 Upstream reference: https://github.com/microsoft/playwright-cli

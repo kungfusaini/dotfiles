@@ -34,6 +34,12 @@ Playwright's engine name remains `chromium`; `executablePath` selects Vivaldi.
 Headless Vivaldi requires `--disable-vivaldi` to bypass its UI bootstrap. Headed
 sessions keep the real Vivaldi UI, including its extension-backed browser chrome.
 No everyday profile is reused and everyday debugging settings remain untouched.
+The shared headed profile's offline startup preferences select built-in Dark
+(`Vivaldi2`), disable OS/timeline theme switching, and hide the left panel bar and
+bottom status bar. Tabs and address bar remain. Only those appearance keys are
+updated, under the profile launch lock and before Vivaldi runs; malformed or
+redirected preferences fail closed. Explicit/custom and temporary profiles keep
+Vivaldi's normal appearance. No live Preferences file is edited.
 
 For native UI compatibility the wrapper launches an owned Vivaldi process with an
 OS-selected loopback CDP port, then starts the pinned official Playwright daemon
@@ -53,11 +59,16 @@ Process ownership records include PID/start time and endpoint identity. `close`
 sends `Browser.close` to the verified owned endpoint before a PID-checked fallback;
 `detach` relinquishes ownership without terminating the native browser. Temporary
 owned profiles are removed after verified shutdown; persistent and explicit
-profiles are retained. The managed default persistent profile is `session/profile`
-in both headed and headless modes. `delete-data` removes that default profile,
-not explicitly supplied profiles. Active profile locks fail closed.
-`--headed` overrides headless mode; `--persistent` and `--profile` use upstream
-profile persistence. A human can use the same headed browser to log in, then
+profiles are retained. Native headed defaults, with or without `--persistent`,
+reuse `$XDG_STATE_HOME/pi-browser/shared-profile` across Pi chats. `--no-persistent`
+opts into temporary native browsing. Headless remains temporary by default;
+headless `--persistent` uses `session/profile`, never the human sign-in profile.
+Explicit `--profile` and `--config` preserve their own selection semantics.
+`delete-data` refuses the shared sign-in profile and removes only session-local
+persistent data, not explicitly supplied profiles. Active profile locks fail
+closed, with a separate cross-session startup lock covering the check-to-launch
+race. No implicit attachment, profile copying or silent fresh-profile fallback.
+`--headed` overrides headless mode. A human can use the same headed browser to log in, then
 hand control back; the agent continues without exporting credentials or cookies.
 Workflow and permission rules for doing so live in the canonical Pi `AGENTS.md`.
 
@@ -158,6 +169,11 @@ Project Object bridge. The ordinary Vivaldi package and everyday profile are not
 changed. No vault/account state is copied, unlocked or exported. Persistent
 profiles retain their own extension state; fresh profiles require their own login.
 The extension cannot obtain Desktop credentials simply because Desktop is running.
+The shared headed profile retains its own extension sign-in across chat/browser
+restarts. This is not an always-unlocked vault: normal lock/logout timeouts,
+organization policy and session revocation remain authoritative. No vault timeout,
+credentials, account data or extension storage is inspected or changed by the
+wrapper. See [Bitwarden's lock versus logout documentation](https://bitwarden.com/help/vault-timeout/).
 
 Before native startup, `NativeMessagingHosts/com.8bit.bitwarden.json` receives an
 immutable link to a Nix-generated manifest pointing at Bitwarden Desktop's packaged
@@ -177,7 +193,8 @@ For manual use, follow [Bitwarden's browser extension guide](https://bitwarden.c
 
 `PI_SESSION_ID` (or `PI_SESSION_FILE` fallback) selects a private folder beneath
 `$XDG_STATE_HOME/pi-browser/` (default `~/.local/state/pi-browser/`). Different Pi
-sessions have different default caches/profiles/artifacts, even in the same repo;
+sessions have different caches/artifacts and headless profiles, even in the same repo;
+the native headed default is the deliberately shared persistent agent profile.
 shell cwd changes do not change browser ownership. Explicit profile paths and
 attachments deliberately allow reuse beyond these defaults. Concurrent commands
 within a Pi session are serialized. Global close/kill commands and runtime install
@@ -219,4 +236,8 @@ exercise native Vivaldi/persistent browsers on a hidden desktop, never the real
 desktop. Pass `--browser-class vivaldi --keep-target-visible` plus the documented
 executable paths. Set `PI_BROWSER_TEST_TEMPORARY=1` for fresh native-profile and
 close-cleanup coverage; the default covers explicit-profile cross-session/mode
-reuse and synthetic login continuation. Compositor events check transient focus.
+reuse and synthetic login continuation. `PI_BROWSER_TEST_SHARED=1` instead tests
+the no-config/default profile across two different Pi sessions: native Dark chrome,
+hidden bars, preserved local fixture login and synthetic MV3 extension storage,
+concurrent profile rejection, and shared delete-data refusal. It never opens real
+accounts or reads vault storage. Compositor events check transient focus.

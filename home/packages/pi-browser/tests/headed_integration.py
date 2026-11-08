@@ -55,13 +55,18 @@ def worker(arguments):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     environment = {**os.environ, "PI_SESSION_ID": f"headed-{root.parent.name}-{strip}",
                    "XDG_STATE_HOME": str(root / "state"), "NIXOS_OZONE_WL": "1"}
+    shared_profile = os.environ.get("PI_BROWSER_TEST_SHARED") == "1"
+    if shared_profile:
+        environment["XDG_STATE_HOME"] = str(root.parent / "shared-state")
     command = [browser, "open", "--headed", "--json", "--config=./custom-config.json", "--profile=../shared-profile",
                f"http://127.0.0.1:{server.server_port}/"]
     temporary_profile = os.environ.get("PI_BROWSER_TEST_TEMPORARY") == "1"
     if temporary_profile:
         command = [arg for arg in command if not arg.startswith("--profile=")]
+    if shared_profile:
+        command = [arg for arg in command if not arg.startswith(("--profile=", "--config="))]
     launcher = "import os,subprocess,time;"
-    if strip == "yes":
+    if strip == "yes" and not shared_profile:
         launcher += "os.environ.pop('HL_EXEC_RULE_TOKEN',None);os.environ.pop('HL_INITIAL_WORKSPACE_TOKEN',None);time.sleep(1.2);"
     launcher += ("import pathlib;opened=subprocess.run(" + repr(command) + ",capture_output=True,text=True);"
                  "pathlib.Path(" + repr(str(root / "open-output.json")) + ").write_text(opened.stdout);"
@@ -84,7 +89,7 @@ def worker(arguments):
         # Window mapping can precede daemon readiness by a few milliseconds.
         deadline = time.monotonic() + 10
         while True:
-            ready = subprocess.run([browser, "snapshot"], env=environment, capture_output=True, text=True, timeout=15)
+            ready = subprocess.run([browser, "snapshot"], env=environment, capture_output=True, text=True, timeout=45)
             if ready.returncode == 0:
                 break
             assert time.monotonic() < deadline, ready
@@ -121,6 +126,41 @@ ws.onerror=()=>process.exit(1);});"""
                                   env=environment, text=True, capture_output=True, timeout=10, check=True)
         installed = json.loads(metadata.stdout)
         assert installed == {"id": "nngceckbapebfimnlniiiahkandclblb", "version": "2026.10.2", "nativePermission": False}, installed
+        if shared_profile:
+            assert Path(state["profile"]) == session.parent / "shared-profile"
+            assert not state["temporary"]
+            # Only synthetic extension data in this harness's fresh private profile.
+            # Proves MV3 storage survives cross-chat restarts without real vault access.
+            def evaluate(target, expression):
+                program = """let input='';process.stdin.on('data',b=>input+=b);process.stdin.on('end',()=>{
+const [url,expression]=JSON.parse(input);const ws=new WebSocket(url);const timer=setTimeout(()=>process.exit(1),7000);
+ws.onopen=()=>ws.send(JSON.stringify({id:1,method:'Runtime.evaluate',params:{awaitPromise:true,returnByValue:true,expression}}));
+ws.onmessage=e=>{const m=JSON.parse(e.data);if(m.id===1){clearTimeout(timer);console.log(JSON.stringify(m.result?.result?.value));ws.close();}};
+ws.onerror=()=>process.exit(1);});"""
+                result = subprocess.run(["node", "-e", program],
+                    input=json.dumps([target["webSocketDebuggerUrl"], expression]), env=environment,
+                    text=True, capture_output=True, timeout=10, check=True)
+                return json.loads(result.stdout)
+            if strip == "yes":
+                assert evaluate(worker_target, "chrome.storage.local.get('piSyntheticPersistence')") == {"piSyntheticPersistence": "retained"}
+            else:
+                assert evaluate(worker_target, "chrome.storage.local.set({piSyntheticPersistence:'retained'}).then(()=>true)") is True
+            ui = next(t for t in targets if t["type"] == "app" and "chrome-extension://mpognobb" in t["url"])
+            appearance = evaluate(ui, """(()=>({background:getComputedStyle(document.querySelector('#browser')).backgroundColor,
+panel:document.querySelector('#panels-container')?.getBoundingClientRect().width||0,
+footer:document.querySelector('footer')?.getBoundingClientRect().height||0,
+tabs:!!document.querySelector('.tab-strip'),address:!!document.querySelector('.UrlBar-UrlField')}))()""")
+            # Inactive-window dimming changes the exact native Dark RGB value.
+            import re
+            colors = [int(c) for c in re.findall(r'\d+', appearance.pop("background"))]
+            assert len(colors) == 3 and max(colors) < 80, colors
+            assert appearance == {"panel": 0, "footer": 0, "tabs": True, "address": True}, appearance
+            collision_env = {**environment, "PI_SESSION_ID": "concurrent-profile-probe"}
+            collision = subprocess.run([browser, "open", "--headed", "about:blank"], env=collision_env,
+                                       capture_output=True, text=True, timeout=15)
+            assert collision.returncode != 0 and "already open" in collision.stderr, collision
+            deletion = subprocess.run([browser, "delete-data"], env=environment, capture_output=True, text=True, timeout=15)
+            assert deletion.returncode != 0 and "retained" in deletion.stderr, deletion
         host = Path(state["profile"]) / "NativeMessagingHosts" / "com.8bit.bitwarden.json"
         manifest = json.loads(host.read_text())
         assert host.is_symlink() and str(host.resolve()).startswith("/nix/store/")
@@ -155,8 +195,9 @@ ws.onerror=()=>process.exit(1);});"""
         if 'state' in locals():
             profile = Path(state["profile"])
             assert profile.exists() is not temporary_profile
-            if not temporary_profile:
-                # The same native login profile is reusable headlessly too.
+            if not temporary_profile and not shared_profile:
+                # Explicit profiles remain reusable headlessly too. The shared
+                # suite exercises native cross-chat reuse in its second case.
                 call("open", "--profile=" + str(profile), f"http://127.0.0.1:{server.server_port}/")
                 assert "synthetic-user" in call("localstorage-get", "login")
                 call("close")
@@ -178,6 +219,11 @@ def main():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     module.__file__ = str(Path(__file__).resolve())
+    if os.environ.get("PI_BROWSER_TEST_SHARED") == "1":
+        # This suite adds extension storage, native chrome and collision checks
+        # to the original placement case; allow its controller adequate time.
+        original_wait = module.wait_for
+        module.wait_for = lambda predicate, timeout=20: original_wait(predicate, 120 if timeout == 60 else timeout)
     if "--check-transient-focus" not in sys.argv:
         sys.argv.append("--check-transient-focus")
     module.main()

@@ -146,6 +146,53 @@ class BrowserTests(unittest.TestCase):
             with patch.object(browser, "process_start", return_value=None):
                 self.assertTrue(browser.profile_locked(root))
 
+    def test_shared_profile_is_cross_chat_but_not_headless_default(self):
+        with tempfile.TemporaryDirectory() as temp:
+            a = browser.session_root({"XDG_STATE_HOME": temp, "PI_SESSION_ID": "a"})
+            b = browser.session_root({"XDG_STATE_HOME": temp, "PI_SESSION_ID": "b"})
+            self.assertEqual(browser.shared_profile(a), browser.shared_profile(b))
+            self.assertNotEqual(a / "profile", browser.shared_profile(a))
+            self.assertFalse(browser.boolean_option(["open", "--headed", "--no-persistent"], "persistent", True))
+
+    def test_appearance_preserves_unrelated_data_and_refuses_redirects(self):
+        with tempfile.TemporaryDirectory() as temp:
+            profile = Path(temp)
+            browser.seed_appearance(profile)
+            path = profile / "Default" / "Preferences"
+            data = json.loads(path.read_text())
+            data["unrelated"] = {"keep": True}
+            data["vivaldi"]["unrelated"] = 42
+            path.write_text(json.dumps(data))
+            browser.seed_appearance(profile)
+            data = json.loads(path.read_text())
+            self.assertEqual(data["unrelated"], {"keep": True})
+            self.assertEqual(data["vivaldi"]["unrelated"], 42)
+            self.assertEqual(data["vivaldi"]["themes"]["current"], "Vivaldi2")
+            self.assertEqual(data["vivaldi"]["theme"]["schedule"]["enabled"], 0)
+            self.assertEqual(data["vivaldi"]["status_bar"]["display"], 1)
+            self.assertFalse(data["vivaldi"]["panels"]["window_defaults"]["barVisible"])
+            self.assertFalse(data["vivaldi"]["panels"]["show_toggle"])
+            path.write_text("malformed")
+            with self.assertRaises(ValueError):
+                browser.seed_appearance(profile)
+            self.assertEqual(path.read_text(), "malformed")
+            path.unlink()
+            path.symlink_to(profile / "elsewhere")
+            with self.assertRaises(ValueError):
+                browser.seed_appearance(profile)
+
+    def test_profile_launch_lock_serializes_and_refuses_live_browser(self):
+        with tempfile.TemporaryDirectory() as temp:
+            profile = Path(temp)
+            with browser.profile_launch_lock(profile):
+                with self.assertRaisesRegex(ValueError, "starting"):
+                    with browser.profile_launch_lock(profile):
+                        self.fail("concurrent launch admitted")
+            with patch.object(browser, "profile_locked", return_value=True):
+                with self.assertRaisesRegex(ValueError, "already open"):
+                    with browser.profile_launch_lock(profile):
+                        self.fail("live profile admitted")
+
     def test_native_profile_resolution_endpoint_and_owned_target(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -298,6 +345,28 @@ class BrowserTests(unittest.TestCase):
                 browser.run(["open", "--headed", "--config=" + str(config)], cli="cli", browser_executable="vivaldi")
             run.assert_not_called()
             native.assert_not_called()
+
+    def test_run_selects_shared_native_only_and_protects_delete_data(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {
+                "XDG_STATE_HOME": temp, "PI_SESSION_ID": "profile-selection"}, clear=True), \
+                patch.object(browser, "runtime_root", return_value=Path(temp) / "runtime" / "test"), \
+                patch.object(browser.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as call, \
+                patch.object(browser, "start_headed", return_value=(None, "target")) as start, \
+                patch.object(browser, "connect_headed", return_value=0):
+            root = browser.session_root(os.environ)
+            for options in (["--headed"], ["--headed", "--persistent"]):
+                browser.run(["open", *options], cli="cli", browser_executable="vivaldi")
+                selected = start.call_args.args[1]["browser"]["userDataDir"]
+                self.assertEqual(Path(selected), browser.shared_profile(root))
+                with self.assertRaisesRegex(ValueError, "retained"):
+                    browser.run(["delete-data"], cli="cli", browser_executable="vivaldi")
+            browser.run(["open", "--headed", "--no-persistent"], cli="cli", browser_executable="vivaldi")
+            self.assertNotIn("userDataDir", start.call_args.args[1]["browser"])
+            browser.run(["open", "--persistent"], cli="cli", browser_executable="vivaldi")
+            config = json.loads((root / "config.json").read_text())
+            self.assertEqual(config["browser"]["userDataDir"], str(root / "profile"))
+            browser.run(["open"], cli="cli", browser_executable="vivaldi")
+            self.assertNotIn("userDataDir", json.loads((root / "config.json").read_text())["browser"])
 
     def test_launch_and_returncode(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {

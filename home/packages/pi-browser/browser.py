@@ -2,6 +2,7 @@
 """Session-scoped launcher for the official Playwright CLI, not a workflow policy."""
 
 import fcntl
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -437,6 +438,57 @@ def open_manual_tab(process, state, executable, target, root, env):
         raise ValueError("Manual Vivaldi exited during URL handoff")
 
 
+def shared_profile(root):
+    """Only native headed defaults share human login state; headless stays isolated."""
+    return root.parent / "shared-profile"
+
+
+@contextmanager
+def profile_launch_lock(profile):
+    """Serialize the check-to-SingletonLock startup gap across Pi sessions."""
+    fd = os.open(profile / ".pi-browser-launch.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as lock:
+        if not stat.S_ISREG(os.fstat(lock.fileno()).st_mode):
+            raise ValueError("Invalid profile launch lock")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ValueError("Vivaldi profile is starting in another session; do not replace it") from None
+        if profile_locked(profile):
+            raise ValueError("Vivaldi profile is already open; use its owning chat, or --no-persistent for an isolated browser")
+        yield
+
+
+def seed_appearance(profile):
+    """Set managed chrome preferences only while the browser is stopped.
+
+    Never touch cookies, extension storage, vault settings or native debugging
+    consent. Malformed or redirected preferences fail closed, not get replaced.
+    """
+    directory = profile / "Default"
+    private_dir(directory)
+    path = directory / "Preferences"
+    if path.is_symlink():
+        raise ValueError("Refusing redirected browser preferences")
+    data = json.loads(path.read_text()) if path.exists() else {}
+    for keys in ((), ("vivaldi",), ("vivaldi", "themes"), ("vivaldi", "theme"),
+                 ("vivaldi", "theme", "schedule"), ("vivaldi", "status_bar"),
+                 ("vivaldi", "panels"), ("vivaldi", "panels", "window_defaults")):
+        value = data
+        for key in keys:
+            value = value.get(key, {})
+        if not isinstance(value, dict):
+            raise ValueError("Invalid browser appearance preferences; refusing replacement")
+    vivaldi = data.setdefault("vivaldi", {})
+    vivaldi.setdefault("themes", {})["current"] = "Vivaldi2"
+    vivaldi.setdefault("theme", {}).setdefault("schedule", {})["enabled"] = 0
+    vivaldi.setdefault("status_bar", {})["display"] = 1  # Vivaldi enum: off
+    panels = vivaldi.setdefault("panels", {})
+    panels["show_toggle"] = False
+    panels.setdefault("window_defaults", {})["barVisible"] = False
+    write_json(path, data)
+
+
 def start_headed(root, config, args, env):
     target = validate_native_settings(config, args)
     manual = boolean_option(args, "manual")
@@ -453,9 +505,16 @@ def start_headed(root, config, args, env):
     # --profile arguments were already resolved against the invoking cwd.
     profile = (root / profile).resolve()
     private_dir(profile)
-    # Existing-instance handoffs must never attach to a browser owned elsewhere.
-    if profile_locked(profile):
-        raise ValueError("Vivaldi profile is already locked; close its owner or attach explicitly")
+    with profile_launch_lock(profile):
+        if profile == shared_profile(root):
+            seed_appearance(profile)
+        return launch_headed_profile(root, config, args, env, target, manual, profile, temporary)
+
+
+def launch_headed_profile(root, config, args, env, target, manual, profile, temporary):
+    browser = config["browser"]
+    launch = browser["launchOptions"]
+    extra = launch.get("args", [])
     # Leave stale-lock recovery to Vivaldi itself, never unlink a live lock.
     port_file = profile / "DevToolsActivePort"
     port_file.unlink(missing_ok=True)
@@ -826,6 +885,15 @@ def run(args, *, cli, browser_executable):
             raise ValueError("Manual browser has no agent connection; use connect after explicit handback")
         if args and args[0] == "attach" and not help_only and managed_state(root):
             raise ValueError("Close or detach the managed Vivaldi before attaching another browser")
+        if operation == "delete-data" and not help_only:
+            previous = json.loads(config.read_text()) if config.exists() else {}
+            profile = (read_state(root) or {}).get("profile") or previous.get("browser", {}).get("userDataDir")
+            if profile and Path(profile) == shared_profile(root):
+                raise ValueError("Shared sign-in profile is retained; use close, not delete-data")
+        if native and not custom and not option_value(args, "--profile") and boolean_option(args, "persistent", True):
+            profile = shared_profile(root)
+            private_dir(profile)  # Refuse redirected shared profile directories.
+            configured["userDataDir"] = str(profile)
         if args and args[0] == "open" and not help_only and (native or managed_state(root)):
             closed = subprocess.run([cli, "-s=agent", "close"], cwd=root, env=env,
                                     text=True, capture_output=True, check=False)
@@ -834,8 +902,8 @@ def run(args, *, cli, browser_executable):
                 print(closed.stderr or "", file=sys.stderr, end="")
                 return closed.returncode
             stop_managed(root)
-        if not custom and boolean_option(args, "persistent"):
-            # Use the same persistent profile in both headless and headed modes.
+        if not native and not custom and boolean_option(args, "persistent"):
+            # Headless persistence stays session-local; never inherit human auth.
             configured["userDataDir"] = str(root / "profile")
         process = None
         target_id = None
@@ -847,7 +915,11 @@ def run(args, *, cli, browser_executable):
             command = [cli, "-s=agent"]
             if args and args[0] in ("open", "attach") and (native or not custom):
                 command += [f"--config={config}"]
-            command += (replace_config(args, config) if native else without_manual_option(args)) or ["--help"]
+            # Upstream delete-data may remove a descriptor's userDataDir even
+            # after close discarded our ownership record. Never delegate data
+            # deletion: only the checked session/profile cleanup below is ours.
+            command += (["close"] if operation == "delete-data" and not help_only else
+                        (replace_config(args, config) if native else without_manual_option(args))) or ["--help"]
             print(f"pi-browser artifacts: {root / 'artifacts'}", file=sys.stderr, flush=True)
             if native and manual:
                 # Keep a readable parent for the sandboxed browser until exit.
@@ -863,7 +935,7 @@ def run(args, *, cli, browser_executable):
             result = (connect_headed(cli, root, config, args, env, target_id) if native else
                       subprocess.run(command, cwd=root, env=env, check=False).returncode)
             if (not args or has_option(args, "--help")) and operation in ("", "open"):
-                print("Wrapper option: open --headed --manual [--persistent|--profile=PATH] URL; connect after handback requests native runtime debugging consent")
+                print("Wrapper: native headed defaults retain a cross-chat profile; --no-persistent uses a temporary profile; --profile=PATH selects another. --manual and connect support human-first native consent.")
             if args and args[0] in ("close", "delete-data"):
                 stop_managed(root)
                 if args[0] == "delete-data" and result == 0:
