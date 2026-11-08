@@ -171,10 +171,11 @@ def without_manual_option(args):
 def launch_options(browser_executable, args):
     options = {"executablePath": browser_executable, "headless": not headed_requested(args),
                "chromiumSandbox": True}
-    if options["headless"]:
-        # Vivaldi's UI bootstrap cannot run headlessly. Keep the Vivaldi binary,
-        # but disable that UI only in headless mode; otherwise it crashes/hangs.
-        options["args"] = ["--disable-vivaldi"]
+    # Keep the pinned Vivaldi binary/profile/extensions, but use its Chromium
+    # interface. Vivaldi's custom UI deadlocks on automated popup creation.
+    options["args"] = ["--disable-vivaldi"]
+    if not options["headless"]:
+        options["args"].append("--force-dark-mode")
     return options
 
 

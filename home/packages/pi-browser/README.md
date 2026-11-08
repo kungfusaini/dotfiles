@@ -32,14 +32,16 @@ pi-browser detach
 The managed default is temporary headless Vivaldi with its Chromium sandbox enabled.
 Playwright's engine name remains `chromium`; `executablePath` selects Vivaldi.
 Headless Vivaldi requires `--disable-vivaldi` to bypass its UI bootstrap. Headed
-sessions keep the real Vivaldi UI, including its extension-backed browser chrome.
-No everyday profile is reused and everyday debugging settings remain untouched.
-The shared headed profile's offline startup preferences select built-in Dark
-(`Vivaldi2`), disable OS/timeline theme switching, and hide the left panel bar and
-bottom status bar. Tabs and address bar remain. Only those appearance keys are
-updated, under the profile launch lock and before Vivaldi runs; malformed or
-redirected preferences fail closed. Explicit/custom and temporary profiles keep
-Vivaldi's normal appearance. No live Preferences file is edited.
+defaults now use that same internal switch plus `--force-dark-mode`, selecting the
+bundled Chromium interface rather than Vivaldi's custom chrome. The executable,
+profile, packaged extensions, sandbox, official CLI and native consent are retained.
+The Chromium interface has no Vivaldi left panel or bottom status bar; tabs and
+address bar remain. No everyday profile is reused or everyday debugging changed.
+The existing shared profile is reused in place, without cookies/vault state being
+copied or inspected. Its legacy Dark/hidden-bar Vivaldi preferences are still
+maintained offline under the profile lock; malformed/redirected preferences fail
+closed. Explicit `--config` keeps its own interface arguments unchanged. No live
+Preferences file is edited and no unsupported protocol patch is introduced.
 
 For native UI compatibility the wrapper launches an owned Vivaldi process with an
 OS-selected loopback CDP port, then starts the pinned official Playwright daemon
@@ -152,10 +154,12 @@ and [MDN's webdriver documentation](https://developer.mozilla.org/en-US/docs/Web
 login cannot prove it. There is no stealth override, account-security downgrade or
 provider-login retry loop. The everyday Vivaldi/profile is unchanged.
 
-## Known native popup stall (unresolved)
+## Legacy custom-interface popup stall (avoided by the default)
 
-The pinned native Vivaldi + Playwright combination is **not accepted for
-popup-dependent automation**. A synthetic local button using `window.open('')`
+The pinned custom Vivaldi interface + Playwright combination is **not accepted
+for popup-dependent automation**. The managed default now uses the same binary's
+Chromium interface, which passes the regression; the legacy engine/UI path itself
+has not been repaired. A synthetic local button using `window.open('')`
 and `document.write()` works in the same native browser without an agent
 connection, but its Playwright click hangs after either native-consent attachment
 or the ordinary debugging-port connection. The popup remains blank and receives
@@ -179,37 +183,40 @@ complete recovery or a successful Gmail submission.
 
 Do not repeatedly submit a real form, equate process/listener liveness with page
 health, or claim reconnect/restart fixed a task without equivalent page-level
-verification. No successful native-popup fix is shipped. A backend/browser change
-or engine-level correction needs separate evaluation and authorization.
+verification. The shipped mitigation is interface selection, not an engine patch,
+policy bypass or proof that Gmail's underlying forwarding error is resolved.
 
 To reproduce on the **private** compositor, use the normal `manual_integration.py`
 command (same harness/executable arguments as `headed_integration.py`, plus
 `--wtype /absolute/wtype`) with these environment flags:
 
-- No extra flags: existing native-consent/non-popup acceptance; passes.
-- `PI_BROWSER_TEST_POPUP=1`: strict popup/image/navigation regression; currently
-  fails with a bounded command timeout, intentionally not marked as passing.
-- Also `PI_BROWSER_TEST_DIRECT=1`: debugging-port control; currently fails too.
+- No extra flags: default Chromium-interface native-consent acceptance.
+- `PI_BROWSER_TEST_POPUP=1`: strict popup/image/navigation acceptance; passes in
+  the default interface.
+- Also `PI_BROWSER_TEST_DIRECT=1`: default debugging-port control.
+- `PI_BROWSER_TEST_NATIVE_UI=1`: explicitly restore the legacy custom interface
+  in a fresh fixture profile. Adding `PI_BROWSER_TEST_POPUP=1` reproduces the
+  bounded failure; it remains a strict failing regression, not an accepted mode.
 - Also `PI_BROWSER_TEST_MANUAL_POPUP=1`: synthetic human input without an agent
   connection; passes. This enters only fixed local-fixture JavaScript through
   the private compositor's address bar and closes the exact fixture popup.
 - `PI_BROWSER_TEST_TRACE=1`: optional protocol evidence in private logs; fresh
   synthetic profiles only, never real accounts or vault data.
 
-The failing regression remains opt-in, outside package unit checks. Both controls
-use identical fixture/browser builds; no runtime replacement or real profile is
-used. Manual native-dialog test input remains focus-sensitive, so distinguish a
+The legacy failing regression remains opt-in, outside package unit checks. The
+same fixture/browser build is used for both interfaces; no real profile is used. Manual native-dialog test input remains focus-sensitive, so distinguish a
 consent rejection from reaching the popup regression.
 
-## Backend comparison: Chromium-interface candidate (not the default)
+## Backend comparison and adopted Chromium-interface default
 
-The broader private comparison found a narrower candidate than replacing the
+The broader private comparison found a narrower change than replacing the
 backend: keep the pinned Vivaldi binary and Playwright, but pass
 `--disable-vivaldi --force-dark-mode` for the task browser. Headless mode already
 uses the first switch; headed mode then uses the bundled Chromium interface
 instead of Vivaldi's custom interface. This is an internal, version-pinned switch,
 not a promise of a stable public Vivaldi API. New versions require this acceptance
-suite again. The deployed/default mode has **not** been changed by these tests.
+suite again. This mode is now the managed headed default after explicit approval;
+custom configuration files remain unchanged.
 
 Local results with fresh synthetic profiles:
 
@@ -232,7 +239,7 @@ focus-sensitive; a consent rejection is not a popup failure.
 These are synthetic outcomes, not proof of real Google acceptance, real Bitwarden
 account/session persistence or resolution of Gmail's underlying forwarding error.
 No real profile was opened, copied or inspected. Moving an existing signed-in
-profile to the candidate interface has not been tested on Sumeet's real session.
+profile to this interface still requires confirmation on Sumeet's real session.
 Native consent and existing file/network policy must remain unchanged. Known
 upstream routed-popup limitations are not declared solved by this comparison.
 
@@ -252,9 +259,9 @@ or production dependency. Add these optional environment flags:
 - `PI_PROBE_SHARED_PROFILE=1 PI_PROBE_EXTENSION=1` to verify cross-chat/browser
   restart persistence in a **new private fixture profile**, including only an
   explicitly synthetic `chrome.storage.local` marker in the packaged extension.
-- For official CLI/native-consent acceptance, use `manual_integration.py` with
-  `PI_BROWSER_TEST_CLASSIC=1 PI_BROWSER_TEST_POPUP=1 PI_BROWSER_TEST_RECONNECT=1`.
-  This uses an explicit private config, normal native approval and a verified
+- For actual-default official CLI/native-consent acceptance, use
+  `manual_integration.py` with `PI_BROWSER_TEST_POPUP=1 PI_BROWSER_TEST_RECONNECT=1`.
+  This uses **no interface override/config**, normal native approval and a verified
   existing endpoint for fixture reattachment, without restarting the browser.
 
 Build versus adopt: [Puppeteer's maintained CDP API](https://pptr.dev/api/puppeteer.connectoptions)
@@ -263,9 +270,9 @@ would add migration/maintenance cost without solving the observed problem.
 [Chrome DevTools MCP](https://github.com/ChromeDevTools/chrome-devtools-mcp) is also
 Puppeteer-based, officially targets Chrome, and enables usage statistics by
 default; no MCP daemon or new agent integration was installed. The same-binary
-candidate requires neither dependency nor custom protocol patch. Default adoption
-and live-profile verification require explicit approval separately from this
-isolated comparison.
+default requires neither dependency nor custom protocol patch. Live-profile
+verification follows deployment and an explicit human handback; never inspect
+credential fields or vault data to infer successful sign-in.
 
 ## Bitwarden availability
 
@@ -352,7 +359,9 @@ desktop. Pass `--browser-class vivaldi --keep-target-visible` plus the documente
 executable paths. Set `PI_BROWSER_TEST_TEMPORARY=1` for fresh native-profile and
 close-cleanup coverage; the default covers explicit-profile cross-session/mode
 reuse and synthetic login continuation. `PI_BROWSER_TEST_SHARED=1` instead tests
-the no-config/default profile across two different Pi sessions: native Dark chrome,
-hidden bars, preserved local fixture login and synthetic MV3 extension storage,
-concurrent profile rejection, and shared delete-data refusal. It never opens real
-accounts or reads vault storage. Compositor events check transient focus.
+the no-config/default profile across two different Pi sessions: Chromium-interface
+and Dark flags, absence of Vivaldi's custom UI app, preserved local fixture login
+and synthetic MV3 extension storage, concurrent profile rejection, and shared
+delete-data refusal. `PI_BROWSER_TEST_CHROME_CAPTURE=1` optionally saves a private
+`grim` capture for visual Dark/tab/address-bar acceptance. No real accounts or
+vault storage are read. Compositor events check transient focus.

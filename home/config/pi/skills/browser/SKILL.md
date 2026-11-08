@@ -60,7 +60,8 @@ pi-browser open --config=/absolute/config.json https://example.com
 
 Native headed defaults (with or without `--persistent`) reuse
 `$XDG_STATE_HOME/pi-browser/shared-profile` across chats. This profile starts Dark,
-with the left panel bar and bottom status bar hidden; tabs/address bar remain.
+using the bundled Chromium interface: no Vivaldi left panel or bottom status bar;
+tabs/address bar and the packaged extensions remain.
 `--no-persistent` explicitly uses a temporary profile. Headless defaults remain
 temporary and isolated; headless `--persistent` stays session-local. Explicit
 `--config` retains its own profile semantics and does not select the shared default.
@@ -74,8 +75,12 @@ The default config selects Nix Vivaldi with its Chromium sandbox enabled; explic
 configs select their own browser/launch settings. Native headed Vivaldi is launched
 with its own temporary loopback debugging endpoint, then connected to the pinned
 official Playwright daemon/CLI. Headless mode uses the same Vivaldi executable with
-`--disable-vivaldi` to disable only its UI bootstrap; headed mode keeps the full
-Vivaldi UI. The adapter selects the exact task tab, not a restored unrelated tab.
+`--disable-vivaldi` to bypass the custom UI bootstrap. Headed defaults also use
+`--disable-vivaldi`, plus `--force-dark-mode`, for the tested Chromium interface.
+The Vivaldi executable, shared profile, sandbox and extensions are unchanged;
+there is no cookie/profile migration or new automation backend. Existing windows
+keep their launch mode until explicitly reopened; never restart another chat's
+browser merely to apply the default. The adapter selects the exact task tab, not a restored unrelated tab.
 Vivaldi needs an initial rendered frame before native UI automation is ready; a
 completely hidden workspace can delay startup. This does not require focusing its
 window. Session diagnostics are private `vivaldi.log`/`daemon.log` files.
@@ -102,7 +107,7 @@ the usual click/fill commands operate in that same browser.
 ## Human-first sign-in and native consent
 
 ```bash
-# Normal native Vivaldi; the launcher does not enable debugging or attach an agent.
+# Normal Vivaldi binary with Chromium UI; no debugging or agent attachment.
 project-workspace-exec pi-browser open --headed --manual --persistent https://mail.google.com/
 
 # After explicit handback, request the next native permission stage.
@@ -140,26 +145,30 @@ built-in permission UI, not a Playwright extension or changed automation signals
 Google/provider acceptance still needs a real manual check; synthetic login tests
 do not establish it. The normal Vivaldi profile is untouched.
 
-## Known native popup limitation
+## Popup compatibility and legacy custom interface
 
-The pinned native Vivaldi/Playwright combination has a reproduced popup stall:
-a local `window.open('')` + `document.write()` works without an agent connection,
-but stalls under both native-consent and ordinary debugging-port automation.
-The popup can stay blank and page commands/reconnect may stop responding.
-This is separate from login/profile persistence and is not fixed by new consent.
-Do not claim native popup-dependent workflows are supported or repeatedly submit
-an action whose dispatch/outcome is unknown. A live process/listener is not proof
-of responsive pages. Do not silently switch browsers, remove request/file policy,
-restart the task browser or infer successful recovery from connection status.
-Explain the limitation and obtain approval for any broader workaround. No safe
-popup fix is shipped; private regression and control commands are documented in
-the packaged `share/doc/pi-browser/README.md`.
+The managed Chromium-interface default passes the local popup/image, navigation,
+native-consent/reconnect and synthetic profile/extension persistence tests. This
+avoids the reproduced `window.open('')` + `document.write()` freeze in Vivaldi's
+custom interface; it is not an engine patch or proof of every website workflow.
+An explicit `--config` that restores the custom Vivaldi UI retains that known
+popup stall, including possible blank pages and reconnect failure. Do not select
+that legacy interface for popup-dependent automation. The internal UI switch is
+version-pinned; upgrades require the private acceptance suite again.
+
+Saved sign-ins are separate from native automation approval, which can be required
+again for a new connection. Real Google/Bitwarden login outcomes still need human
+confirmation. Never repeat a submission whose dispatch/outcome is unknown, equate
+process/listener liveness with page health, remove request/file policy, or restart
+an existing browser without authorization. Known upstream routed-popup limitations
+are not declared solved. Tests and comparison evidence are in the packaged
+`share/doc/pi-browser/README.md`.
 
 ## Bitwarden in native Vivaldi
 
 The managed native browser includes the official Bitwarden extension, pinned by
 Nix, under its normal Chrome extension ID `nngceckbapebfimnlniiiahkandclblb`.
-It is available from Vivaldi's Extensions menu; the popup entry is
+It is available from the browser's Extensions menu; the popup entry is
 `chrome-extension://nngceckbapebfimnlniiiahkandclblb/popup/index.html`.
 
 The extension starts with that profile's own account state. A persistent profile

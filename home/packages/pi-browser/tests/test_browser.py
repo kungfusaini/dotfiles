@@ -105,11 +105,13 @@ class BrowserTests(unittest.TestCase):
     def test_vivaldi_mode_compatibility(self):
         headless = browser.launch_options("vivaldi", ["open"])
         self.assertTrue(headless["headless"])
-        self.assertIn("--disable-vivaldi", headless["args"])
+        self.assertEqual(headless["args"], ["--disable-vivaldi"])
         headed = browser.launch_options("vivaldi", ["open", "--headed"])
         self.assertFalse(headed["headless"])
-        self.assertNotIn("args", headed)
-        self.assertNotIn("--disable-vivaldi", headed.get("args", []))
+        self.assertTrue(headed["chromiumSandbox"])
+        self.assertEqual(headed["args"], ["--disable-vivaldi", "--force-dark-mode"])
+        manual = browser.launch_options("vivaldi", ["open", "--headed", "--manual"])
+        self.assertEqual(manual, headed)  # Interface selection does not enable automation.
         for args in (["open", "--headed", "false"], ["open", "--headed", "--no-headed"],
                      ["fill", "e1", "--", "--headed"]):
             self.assertFalse(browser.headed_requested(args))
@@ -367,6 +369,20 @@ class BrowserTests(unittest.TestCase):
             self.assertEqual(config["browser"]["userDataDir"], str(root / "profile"))
             browser.run(["open"], cli="cli", browser_executable="vivaldi")
             self.assertNotIn("userDataDir", json.loads((root / "config.json").read_text())["browser"])
+
+    def test_explicit_native_config_keeps_its_interface_arguments(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {
+                "XDG_STATE_HOME": temp, "PI_SESSION_ID": "explicit-interface"}, clear=True), \
+                patch.object(browser, "runtime_root", return_value=Path(temp) / "runtime" / "test"), \
+                patch.object(browser.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)), \
+                patch.object(browser, "start_headed", return_value=(None, "target")) as start, \
+                patch.object(browser, "connect_headed", return_value=0):
+            config = Path(temp) / "native-ui.json"
+            config.write_text(json.dumps({"browser": {"launchOptions": {
+                "executablePath": "vivaldi", "headless": False, "chromiumSandbox": True, "args": []}}}))
+            browser.run(["open", "--headed", "--config=" + str(config)], cli="cli", browser_executable="vivaldi")
+            self.assertEqual(start.call_args.args[1]["browser"]["launchOptions"]["args"], [])
+            self.assertNotIn("userDataDir", start.call_args.args[1]["browser"])
 
     def test_launch_and_returncode(self):
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {

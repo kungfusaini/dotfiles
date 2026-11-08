@@ -100,8 +100,8 @@ def worker(arguments):
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         with opener.open(state["endpoint"] + "/json/list", timeout=5) as response:
             targets = json.load(response)
-        assert any(target["type"] == "app" and "chrome-extension://mpognobb" in target["url"]
-                   for target in targets), "native Vivaldi UI is not running"
+        assert not any(target["type"] == "app" and "chrome-extension://mpognobb" in target["url"]
+                       for target in targets), "custom Vivaldi UI must not run in the default mode"
         bitwarden = "chrome-extension://nngceckbapebfimnlniiiahkandclblb/"
         deadline = time.monotonic() + 10
         while True:
@@ -145,16 +145,9 @@ ws.onerror=()=>process.exit(1);});"""
                 assert evaluate(worker_target, "chrome.storage.local.get('piSyntheticPersistence')") == {"piSyntheticPersistence": "retained"}
             else:
                 assert evaluate(worker_target, "chrome.storage.local.set({piSyntheticPersistence:'retained'}).then(()=>true)") is True
-            ui = next(t for t in targets if t["type"] == "app" and "chrome-extension://mpognobb" in t["url"])
-            appearance = evaluate(ui, """(()=>({background:getComputedStyle(document.querySelector('#browser')).backgroundColor,
-panel:document.querySelector('#panels-container')?.getBoundingClientRect().width||0,
-footer:document.querySelector('footer')?.getBoundingClientRect().height||0,
-tabs:!!document.querySelector('.tab-strip'),address:!!document.querySelector('.UrlBar-UrlField')}))()""")
-            # Inactive-window dimming changes the exact native Dark RGB value.
-            import re
-            colors = [int(c) for c in re.findall(r'\d+', appearance.pop("background"))]
-            assert len(colors) == 3 and max(colors) < 80, colors
-            assert appearance == {"panel": 0, "footer": 0, "tabs": True, "address": True}, appearance
+            # Chromium chrome has no Vivaldi panel/footer DOM. Check its native
+            # interface/Dark launch flags below; optional private captures cover
+            # visual acceptance without attempting to inspect a nonexistent app.
             collision_env = {**environment, "PI_SESSION_ID": "concurrent-profile-probe"}
             collision = subprocess.run([browser, "open", "--headed", "about:blank"], env=collision_env,
                                        capture_output=True, text=True, timeout=15)
@@ -167,7 +160,8 @@ tabs:!!document.querySelector('.tab-strip'),address:!!document.querySelector('.U
         assert manifest["allowed_origins"] == [bitwarden]
         assert Path(manifest["path"]).is_file() and os.access(manifest["path"], os.X_OK)
         ps = subprocess.check_output(["ps", "-p", str(state["pid"]), "-o", "args="], text=True)
-        assert "vivaldi-bin" in ps and "--disable-vivaldi" not in ps and "--no-sandbox" not in ps
+        assert "vivaldi-bin" in ps and "--disable-vivaldi" in ps and "--force-dark-mode" in ps
+        assert "--no-sandbox" not in ps and "--headless" not in ps
         extensions = [arg for arg in ps.split() if arg.startswith("--load-extension=")]
         assert len(extensions) == 1 and "pi-browser-bitwarden-extension" in extensions[0], extensions
         assert "project-object-browser-extension" in extensions[0], "existing browser bridge was replaced"
@@ -182,6 +176,9 @@ tabs:!!document.querySelector('.tab-strip'),address:!!document.querySelector('.U
         call("snapshot")
         call("click", "#continue")
         assert "Agent continued" in call("eval", "document.querySelector('#status').textContent")
+        if os.environ.get("PI_BROWSER_TEST_CHROME_CAPTURE") == "1":
+            assert Path(environment["XDG_RUNTIME_DIR"]).resolve().is_relative_to(root.parent.resolve())
+            subprocess.run(["grim", "-o", "TEST", str(root / "chrome.png")], env=environment, check=True)
         (root / "result.json").write_text(json.dumps({"status": 0, "stdout": result.stdout, "stderr": result.stderr}))
         wait_for_file(root / "done")
     except Exception as error:

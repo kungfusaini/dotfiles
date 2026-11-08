@@ -9,6 +9,7 @@ import http.server
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import threading
@@ -55,6 +56,7 @@ def worker(arguments):
     if not settings_only:
         (profile/'Local State').write_text(json.dumps({'devtools':{'remote_debugging':{'user-enabled':True}}}))
     state=None
+    classic_ui=False
     def fixture_alive():
         try:
             value=Path('/proc',str(state['pid']),'stat').read_text()
@@ -85,7 +87,7 @@ def worker(arguments):
                 time.sleep(.05)
             # Chromium-interface dialog initially focuses Cancel; native
             # Vivaldi's dialog enters the focus order one step earlier.
-            tabs=(1 if allow else 0) if os.environ.get('PI_BROWSER_TEST_CLASSIC') == '1' else (2 if allow else 1)
+            tabs=(1 if allow else 0) if classic_ui else (2 if allow else 1)
             keys=['-s','200']+['-k','Tab']*tabs+['-s','200','-k','Return']
             subprocess.run([os.environ['PI_BROWSER_TEST_WTYPE'],*keys],env=env,
                            capture_output=True,timeout=5,check=True)
@@ -101,12 +103,12 @@ def worker(arguments):
             server.phases=[]
         command=[browser,'open','--headed','--manual','--profile='+str(profile),
                  f'http://127.0.0.1:{server.server_port}/?private=synthetic-marker']
-        if os.environ.get('PI_BROWSER_TEST_CLASSIC') == '1':
+        if os.environ.get('PI_BROWSER_TEST_NATIVE_UI') == '1':
             call('open','--headed','--help')
             private_session=Path(json.loads(call('paths'))['session'])
             config=json.loads((private_session/'config.json').read_text())
-            config['browser']['launchOptions']['args']=['--disable-vivaldi','--force-dark-mode']
-            config_path=root/'classic-config.json'
+            config['browser']['launchOptions']['args']=[]
+            config_path=root/'native-ui-config.json'
             config_path.write_text(json.dumps(config))
             command.append('--config='+str(config_path))
         direct = os.environ.get('PI_BROWSER_TEST_DIRECT') == '1'
@@ -132,8 +134,14 @@ await popup.close(); return {popup:true};}''')
         session=Path(json.loads(call('paths'))['session'])
         state=json.loads((session/'vivaldi-process.json').read_text())
         assert state['manual'] and 'endpoint' not in state
-        flags=(Path('/proc')/str(state['pid'])/'cmdline').read_bytes().split(b'\0')
-        assert not any(f.startswith((b'--remote-debugging',b'--enable-automation',b'--headless',b'--no-sandbox')) for f in flags)
+        flags=[x.decode() for x in (Path('/proc')/str(state['pid'])/'cmdline').read_bytes().split(b'\0') if x]
+        if len(flags)==1:
+            flags=shlex.split(flags[0])  # Vivaldi can replace argv with one display string.
+        classic_ui='--disable-vivaldi' in flags
+        assert classic_ui is (os.environ.get('PI_BROWSER_TEST_NATIVE_UI') != '1')
+        if classic_ui:
+            assert '--force-dark-mode' in flags
+        assert not any(f.startswith(('--remote-debugging','--enable-automation','--headless','--no-sandbox')) for f in flags)
         call('snapshot',success=False)
         deadline=time.monotonic()+10
         while not server.phases:
