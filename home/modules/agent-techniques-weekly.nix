@@ -17,12 +17,15 @@ in {
     sdkPath = "${pi}/lib/node_modules/pi-monorepo/dist/index.js";
     nodeBin = "${pkgs.nodejs}/bin/node";
     model = "gpt-6-luna";
+    notifyBin = "${pkgs.libnotify}/bin/notify-send";
+    busBin = "${pkgs.systemd}/bin/busctl";
   };
   systemd.user.services.agent-techniques-weekly = {
     Unit.Description = "Discover worthwhile Reddit agent techniques once weekly";
     Service = {
       Type = "oneshot";
       ExecStart = "${worker}/bin/agent-techniques-weekly run";
+      ExecStopPost = "-${worker}/bin/agent-techniques-weekly notify";
       Environment = [
         "XDG_CONFIG_HOME=${config.xdg.configHome}"
         "XDG_STATE_HOME=${config.xdg.stateHome}"

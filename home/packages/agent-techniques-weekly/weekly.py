@@ -400,9 +400,76 @@ def run(config, now, get=fetch, infer=model, pause=time.sleep):
         return manifest
 
 
+def notify(config, execute=subprocess.run):
+    """One normal desktop notification per recorded weekly outcome; no model work."""
+    root = Path(config['stateRoot'])
+    try:
+        parent = directory(root)
+    except FileNotFoundError:
+        return {'status': 'no_attempt'}
+    try:
+        fd = os.open('lock', os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK, 0o600, dir_fd=parent)
+    finally:
+        os.close(parent)
+    with os.fdopen(fd, 'w'):
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid():
+            raise Problem('unsafe_lock')
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return {'status': 'already_running'}
+        try:
+            state = json.loads(read(root / 'state.json'))
+        except FileNotFoundError:
+            return {'status': 'no_attempt'}
+        week = state.get('attempt_week', '')
+        if not isinstance(week, str) or not re.fullmatch(r'\d{4}-\d{2}-\d{2}', week):
+            return {'status': 'no_attempt'}
+        last = state.get('last_run', {})
+        outcome = last.get('status', 'interrupted') if last.get('week') == week else 'interrupted'
+        marker = week + ':' + outcome
+        if state.get('notified_outcome') == marker:
+            return {'status': 'already_notified'}
+        if outcome == 'published':
+            ideas = json.loads(read(root / 'runs' / week / 'ideas.json'))['ideas']
+            count = len(ideas)
+            title = 'Weekly agent ideas ready'
+            body = (f'{count} technique candidate' + ('' if count == 1 else 's') + ' saved.'
+                    if count else 'No worthwhile new ideas selected this time.')
+            body += f' Read agent-techniques/weekly/{week}/digest.md'
+        elif outcome == 'interrupted':
+            title = 'Weekly agent scan interrupted'
+            body = 'The scan stopped before saving a completed digest. Check agent-techniques-weekly status.'
+        elif outcome in ('http_429', 'http_403', 'network_unavailable'):
+            title = 'Weekly agent scan blocked'
+            reason = {'http_429': 'Reddit rate-limited the scan.', 'http_403': 'Reddit denied access.',
+                      'network_unavailable': 'Reddit could not be reached.'}[outcome]
+            body = reason + ' No completed digest was published. Check agent-techniques-weekly status.'
+        else:
+            title = 'Weekly agent scan failed'
+            body = 'The run failed; no completed digest was published. Check agent-techniques-weekly status.'
+        try:
+            owner = execute([config['busBin'], '--user', '--timeout=5', 'call', 'org.freedesktop.DBus',
+                             '/org/freedesktop/DBus', 'org.freedesktop.DBus', 'NameHasOwner', 's',
+                             'org.freedesktop.Notifications'], capture_output=True, timeout=8, check=False)
+            if owner.returncode or owner.stdout.strip() != b'b true':
+                raise Problem('notification_daemon_unavailable')
+            sent = execute([config['notifyBin'], '--app-name=Agent Techniques', '--icon=dialog-information',
+                            '--urgency=normal', '--expire-time=12000', title, body],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            raise Problem('notification_failed') from None
+        if sent.returncode:
+            raise Problem('notification_failed')
+        state['notified_outcome'] = marker
+        save(root / 'state.json', state, replace=True)
+        return {'status': 'notification_sent', 'week': week, 'outcome': outcome}
+
+
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('action', choices=('run', 'status'))
+    parser.add_argument('action', choices=('run', 'status', 'notify'))
     parser.add_argument('--config', default=os.path.expanduser('~/.config/agent-techniques/weekly.json'))
     args = parser.parse_args()
     try:
@@ -422,6 +489,9 @@ def main():
             report['last_run'] = {k: v for k, v in state.get('last_run', {}).items() if k != 'sources'}
             report['last_run']['source_count'] = len(state.get('last_run', {}).get('sources', []))
             print(json.dumps(report, indent=2))
+            return
+        if args.action == 'notify':
+            print(json.dumps(notify(config)))
             return
         result = run(config, dt.datetime.now(UTC))
         print(json.dumps({k: v for k, v in result.items() if k != 'sources'}, ensure_ascii=False))

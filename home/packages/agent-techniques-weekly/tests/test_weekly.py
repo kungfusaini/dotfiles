@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import tempfile
 import unittest
+from types import SimpleNamespace
 
 spec = importlib.util.spec_from_file_location('weekly', Path(__file__).parents[1] / 'weekly.py')
 w = importlib.util.module_from_spec(spec)
@@ -173,6 +174,66 @@ class WeeklyTests(unittest.TestCase):
         self.run_week(now=NOW + dt.timedelta(days=7), get=self.get)
         state = json.loads((self.state / 'state.json').read_text())
         self.assertEqual([p['id'] for p in state['comment_pending']], ['old2'])
+
+    def notification_executor(self, calls, owner=True, delivered=True):
+        def execute(argv, **kwargs):
+            calls.append(argv)
+            if argv[0] == 'synthetic-bus':
+                return SimpleNamespace(returncode=0, stdout=b'b true' if owner else b'b false')
+            return SimpleNamespace(returncode=0 if delivered else 1)
+        self.config.update(busBin='synthetic-bus', notifyBin='synthetic-notify')
+        return execute
+
+    def test_completion_notification_and_deduplication(self):
+        self.run_week()
+        calls = []
+        execute = self.notification_executor(calls)
+        self.assertEqual(w.notify(self.config, execute)['status'], 'notification_sent')
+        self.assertIn('1 technique candidate saved.', calls[-1][-1])
+        self.assertIn('--urgency=normal', calls[-1])
+        self.assertEqual(w.notify(self.config, execute)['status'], 'already_notified')
+        self.assertEqual(len(calls), 2)
+
+    def test_empty_completion_notification(self):
+        self.run_week(get=lambda _: feed(date='2026-10-01T00:00:00Z'))
+        calls = []
+        w.notify(self.config, self.notification_executor(calls))
+        self.assertIn('No worthwhile new ideas', calls[-1][-1])
+
+    def test_blocked_and_interrupted_notifications_do_not_claim_success(self):
+        def blocked(url):
+            raise w.Problem('http_429')
+        self.run_week(get=blocked)
+        calls = []
+        w.notify(self.config, self.notification_executor(calls))
+        self.assertEqual(calls[-1][-2], 'Weekly agent scan blocked')
+        self.assertIn('Reddit rate-limited', calls[-1][-1])
+        state = json.loads((self.state / 'state.json').read_text())
+        state['attempt_week'] = '2026-11-15'
+        w.save(self.state / 'state.json', state, replace=True)
+        calls.clear()
+        w.notify(self.config, self.notification_executor(calls))
+        self.assertEqual(calls[-1][-2], 'Weekly agent scan interrupted')
+        self.assertIn('stopped before saving', calls[-1][-1])
+        state = json.loads((self.state / 'state.json').read_text())
+        state['last_run'] = {'week': '2026-11-15', 'status': 'model_failed'}
+        w.save(self.state / 'state.json', state, replace=True)
+        calls.clear()
+        w.notify(self.config, self.notification_executor(calls))
+        self.assertEqual(calls[-1][-2], 'Weekly agent scan failed')
+        self.assertIn('The run failed', calls[-1][-1])
+
+    def test_notification_failure_is_not_marked_delivered(self):
+        self.run_week()
+        calls = []
+        with self.assertRaises(w.Problem):
+            w.notify(self.config, self.notification_executor(calls, owner=False))
+        state = json.loads((self.state / 'state.json').read_text())
+        self.assertNotIn('notified_outcome', state)
+        self.assertEqual(len(calls), 1)
+        with self.assertRaises(w.Problem):
+            w.notify(self.config, self.notification_executor(calls, delivered=False))
+        self.assertNotIn('notified_outcome', json.loads((self.state / 'state.json').read_text()))
 
     def test_lock_prevents_overlap(self):
         self.state.mkdir()

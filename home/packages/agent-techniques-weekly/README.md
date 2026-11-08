@@ -35,7 +35,9 @@ systemctl --user list-timers agent-techniques-weekly.timer
 journalctl --user -u agent-techniques-weekly.service -n 20 --no-pager
 ```
 
-`agent-techniques-weekly run` is an intentional manual attempt under the same weekly gate, **not** a force/retry option. Never delete state just to force a retry; investigate or obtain separate authorization. The timer has no retry hook or startup polling interval. Read `weekly/<date>/digest.md` for results; no desktop windows or notifications are opened.
+`agent-techniques-weekly run` is an intentional manual attempt under the same weekly gate, **not** a force/retry option. Never delete state just to force a retry; investigate or obtain separate authorization. The timer has no retry hook or startup polling interval. Read `weekly/<date>/digest.md` for results; no desktop windows are opened.
+
+A service stop hook sends one normal desktop notification per recorded weekly outcome: candidate count and digest location on success, an explicit no-new-ideas message for an empty result, or blocked/failed/interrupted status without claiming a digest exists. It respects Do Not Disturb, contains no prompts, account details or source snippets, and never runs the model. Blocked, failed and interrupted runs have distinct safe messages. The hook checks that a notification daemon already owns the bus name; it does not launch one or mark unavailable/failed delivery as sent. Delivery errors are journalled but do not turn a successfully completed scan service into a failure. Deduplication is saved only after `notify-send` succeeds; this acknowledges delivery to the daemon, not that the human read the notification. `agent-techniques-weekly notify` retries only this delivery, not collection or inference.
 
 ## Validation
 
