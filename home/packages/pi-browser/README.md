@@ -70,8 +70,13 @@ Explicit `--profile` and `--config` preserve their own selection semantics.
 persistent data, not explicitly supplied profiles. Active profile locks fail
 closed, with a separate cross-session startup lock covering the check-to-launch
 race. No implicit attachment, profile copying or silent fresh-profile fallback.
-`--headed` overrides headless mode. A human can use the same headed browser to log in, then
-hand control back; the agent continues without exporting credentials or cookies.
+`--headed` overrides headless mode. `open` now refuses to close/restart a live
+owned headed browser (including when the new request is headless). Use `connect`
+after handback for an existing manual browser, or authorized `goto`/`tab-new` on an
+already connected browser. Deliberate replacement requires an approved `close`
+first, not an automatic reset. Help remains available; untracked headless/external
+session behavior is unchanged. A human can use the same headed browser to log in,
+then hand control back; the agent continues without exporting credentials or cookies.
 Workflow and permission rules for doing so live in the canonical Pi `AGENTS.md`.
 
 Explicit `--config` files replace the generated launch defaults and can select
@@ -120,6 +125,23 @@ Vivaldi's native **Allow remote debugging?** consent and returns
 pages. After explicit handback, `connect` finalizes attachment, selecting the single
 existing HTTP(S) task-origin tab. Missing/ambiguous tabs fail closed.
 
+Further `connect` calls in that same Pi session reuse the existing approved runtime
+connection. The wrapper checks owned browser PID/start, the profile-lock owner,
+recorded runtime daemon PID/start and the owned endpoint marker, then returns only
+`{"connected":true,"reused":true}`. No new daemon/WebSocket, permission prompt,
+CLI page command, tab selection, navigation, snapshot or origin read is performed.
+It does not depend on subsequently regenerated CLI config or report the original
+origin as if it were the current page. This is connection metadata, not proof of
+responsive pages or task success. Missing/dead/reused daemon identity, detached
+ownership or an endpoint change fails without starting a replacement connection.
+
+Keep a live headed browser and approved daemon between authorized operations;
+headed sessions already have no default idle shutdown. This reduces unnecessary
+same-chat prompts, not legitimate requests for a new native debugging connection.
+There is no cross-chat broker, shared automation ownership, native auto-approval
+or always-debuggable launch mode. Native protection intentionally asks for each
+new connection; see [Chrome's consent design](https://developer.chrome.com/blog/chrome-devtools-mcp-debug-your-browser-session).
+
 There is **no restart, new task page, navigation, cookie copying, state export or
 profile import**. The browser, page and login remain live. The native UI writes a
 strictly validated direct WebSocket endpoint in the owned profile's
@@ -144,7 +166,10 @@ attachment and metadata-only output. A synthetic Local State seed models the
 checkbox; test-human permission input is bounded to the private compositor and
 excluded only during explicit consent markers. Browser placement and all agent
 focus events outside that interval remain checked. Address reuse no longer causes
-false focus failures; all browser classes/lifetimes are checked.
+false focus failures; all browser classes/lifetimes are checked. The same private
+suite verifies that manual/connected repeated opens fail without altering browser
+state and repeated connects reuse the exact approved daemon without new consent,
+while subsequent interaction and the popup/reconnect regressions remain usable.
 
 A restart prototype and Playwright-extension experiment were not shipped. The
 built-in route follows [Chrome's runtime-consent mechanism](https://developer.chrome.com/blog/chrome-devtools-mcp-debug-your-browser-session).

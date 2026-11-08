@@ -90,6 +90,90 @@ class RuntimeTests(unittest.TestCase):
             self.assertFalse(current['manual'])
             self.assertEqual(command.call_args_list[1].args[-2:],('tab-select','0'))
 
+    def test_repeated_connect_reuses_only_owned_approved_daemon_without_page_commands(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp); profile=root/'profile'; profile.mkdir()
+            (profile/'SingletonLock').symlink_to(os.uname().nodename+'-123')
+            endpoint='ws://127.0.0.1:9222/devtools/browser/'+'a'*36
+            state={'pid':123,'start':'browser','manual':False,'runtime':True,'bound':True,
+                   'profile':str(profile),'url':'https://example.com/?token=synthetic-private',
+                   'runtime_daemon':{'pid':456,'start':'daemon','endpoint':endpoint}}
+            browser.write_json(root/'vivaldi-process.json',state)
+            before=(root/'vivaldi-process.json').read_bytes()
+            output=io.StringIO()
+            with patch.object(browser,'managed_state',return_value=state), \
+                    patch.object(browser,'runtime_endpoint',return_value=endpoint), \
+                    patch.object(browser,'process_start',return_value='daemon'), \
+                    patch.object(browser,'private_cli_result') as command, \
+                    patch.object(browser.subprocess,'Popen') as spawn, \
+                    patch.object(browser.subprocess,'run') as run, \
+                    patch.object(browser,'stop_managed') as stop,patch('sys.stdout',output):
+                for _ in range(2):
+                    self.assertEqual(browser.connect_manual('cli',root,{},'vivaldi'),0)
+                command.assert_not_called();spawn.assert_not_called();run.assert_not_called();stop.assert_not_called()
+            self.assertEqual([json.loads(line) for line in output.getvalue().splitlines()],
+                             [{'connected':True,'reused':True}]*2)
+            self.assertNotIn('synthetic-private',output.getvalue())
+            self.assertEqual((root/'vivaldi-process.json').read_bytes(),before)
+            self.assertFalse((root/'config.json').exists())  # No mutable config dependency.
+
+    def test_reuse_fails_closed_for_missing_changed_or_foreign_connection(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp); profile=root/'profile'; profile.mkdir()
+            lock=profile/'SingletonLock';lock.symlink_to(os.uname().nodename+'-123')
+            endpoint='ws://127.0.0.1:9222/devtools/browser/'+'a'*36
+            base={'pid':123,'start':'browser','manual':False,'runtime':True,'bound':True,'profile':str(profile),
+                  'runtime_daemon':{'pid':456,'start':'daemon','endpoint':endpoint}}
+            cases=[({'runtime_daemon':None},endpoint,'daemon'),
+                   ({'runtime_daemon':['invalid']},endpoint,'daemon'),
+                   ({'runtime_daemon':{'pid':123,'start':'daemon','endpoint':endpoint}},endpoint,'daemon'),
+                   ({'runtime_daemon':{'pid':456,'start':'daemon'}},endpoint,'daemon'),
+                   ({'runtime_daemon':{'pid':456,'endpoint':endpoint}},endpoint,'daemon'),
+                   ({'runtime_daemon':{'pid':True,'start':'daemon','endpoint':endpoint}},endpoint,'daemon'),
+                   ({},None,'daemon'),({},endpoint+'changed','daemon'),({},endpoint,None),({},endpoint,'reused-pid'),
+                   ({'bound':False},endpoint,'daemon'),({'runtime':False},endpoint,'daemon')]
+            for changes,marker,start in cases:
+                with self.subTest(changes=changes,marker=marker,start=start), \
+                        patch.object(browser,'managed_state',return_value={**base,**changes}), \
+                        patch.object(browser,'runtime_endpoint',return_value=marker), \
+                        patch.object(browser,'process_start',return_value=start), \
+                        patch.object(browser,'private_cli_result') as command, \
+                        patch.object(browser.subprocess,'Popen') as spawn:
+                    with self.assertRaises(ValueError):browser.connect_manual('cli',root,{},'vivaldi')
+                    command.assert_not_called();spawn.assert_not_called()
+            for owner in (os.uname().nodename+'-999','foreign-host-123'):
+                lock.unlink();lock.symlink_to(owner)
+                with patch.object(browser,'managed_state',return_value=base), \
+                        patch.object(browser.subprocess,'Popen') as spawn:
+                    with self.assertRaisesRegex(ValueError,'profile is not owned'):
+                        browser.connect_manual('cli',root,{},'vivaldi')
+                    spawn.assert_not_called()
+
+    def test_open_refuses_to_restart_owned_manual_or_connected_browser(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ,{'PI_SESSION_ID':'open-guard','XDG_STATE_HOME':temp},clear=True), \
+                patch.object(browser,'runtime_root',return_value=Path(temp)/'runtime'/'test'):
+            root=browser.session_root(os.environ)
+            config=root/'config.json';config.write_text('{"keep":"original"}')
+            for manual in (True,False):
+                state={'pid':123,'start':'browser','manual':manual,'runtime':not manual,'bound':True}
+                browser.write_json(root/'vivaldi-process.json',state)
+                before=(root/'vivaldi-process.json').read_bytes()
+                with patch.object(browser,'managed_state',return_value=state), \
+                        patch.object(browser,'stop_managed') as stop, \
+                        patch.object(browser,'start_headed') as start, \
+                        patch.object(browser.subprocess,'run') as upstream:
+                    for args in (['open'],['open','--headed'],['open','--headed','--manual','https://example.com']):
+                        with self.subTest(manual=manual,args=args),self.assertRaisesRegex(ValueError,'already open'):
+                            browser.run(args,cli='cli',browser_executable='vivaldi')
+                    stop.assert_not_called();start.assert_not_called();upstream.assert_not_called()
+                self.assertEqual(config.read_text(),'{"keep":"original"}')
+                self.assertEqual((root/'vivaldi-process.json').read_bytes(),before)
+            with patch.object(browser,'managed_state',return_value={'manual':True}), \
+                    patch.object(browser.subprocess,'run',return_value=subprocess.CompletedProcess([],0)) as upstream, \
+                    patch.object(browser,'stop_managed') as stop:
+                self.assertEqual(browser.run(['open','--headed','--help'],cli='cli',browser_executable='vivaldi'),0)
+                upstream.assert_called_once();stop.assert_not_called()
+
     def test_pending_connection_preserves_manual_browser_and_has_no_auto_retry(self):
         with tempfile.TemporaryDirectory() as temp:
             root=Path(temp); profile=root/'profile'; profile.mkdir()

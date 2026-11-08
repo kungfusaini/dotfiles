@@ -712,7 +712,7 @@ def private_cli_result(cli, root, env, *args):
 
 def connect_manual(cli, root, env, browser_executable):
     state = managed_state(root)
-    if not state or not state.get("manual") or not state.get("bound", True):
+    if not state or not state.get("bound", True) or not (state.get("manual") or state.get("runtime")):
         raise ValueError("No owned manual Vivaldi is running; open --headed --manual first")
     profile = Path(state["profile"])
     try:
@@ -721,6 +721,18 @@ def connect_manual(cli, root, env, browser_executable):
         raise ValueError("Owned manual profile lock is unavailable") from None
     if host != os.uname().nodename or pid != str(state["pid"]):
         raise ValueError("Manual profile is not owned by the recorded browser")
+    if not state.get("manual"):
+        # Reuse only a previously approved, still-owned native connection. No
+        # CLI page command here: ensureTab can create a tab when one is missing.
+        # This is connection metadata, not proof of page/task responsiveness.
+        daemon = state.get("runtime_daemon")
+        if (not isinstance(daemon, dict) or not isinstance(daemon.get("pid"), int) or daemon["pid"] <= 1
+                or daemon["pid"] == state["pid"] or not daemon.get("start")
+                or process_start(daemon["pid"]) != daemon["start"]
+                or not daemon.get("endpoint") or runtime_endpoint(profile) != daemon["endpoint"]):
+            raise ValueError("Approved connection is unavailable or changed; no new connection was started")
+        print(json.dumps({"connected": True, "reused": True}))
+        return 0
     config = state.get("manual_config") or json.loads((root / "config.json").read_text())
     if (config.get("browser", {}).get("launchOptions", {}).get("executablePath") != browser_executable
             or config.get("browser", {}).get("remoteEndpoint")):
@@ -855,7 +867,7 @@ def run(args, *, cli, browser_executable):
         operation = args[0] if args else ""
         if operation == "connect":
             if args[1:] in (["--help"], ["-h"]):
-                print("pi-browser connect: after manual handback, request Vivaldi's native runtime permission and connect to the same live task browser")
+                print("pi-browser connect: after manual handback, request native runtime consent; an already approved owned runtime connection is reused without a new request")
                 return 0
             if args[1:]:
                 raise ValueError("connect takes no options or URL")
@@ -867,6 +879,9 @@ def run(args, *, cli, browser_executable):
             if any(arg.startswith(("--enable-automation", "--headless")) for arg in launch.get("args", [])):
                 raise ValueError("Manual mode does not accept automation/headless launch flags")
         current = managed_state(root)
+        if current and operation == "open" and not help_only:
+            raise ValueError("Owned browser is already open; use connect after handback, or goto/tab-new if connected. "
+                             "Replacing it requires an explicit close first")
         if current and current.get("manual") and operation == "list" and not help_only:
             print(json.dumps({"mode": "awaiting-consent" if current.get("runtime_daemon") else "manual", "running": True, "connected": False}))
             return 0

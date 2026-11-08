@@ -98,9 +98,14 @@ Upstream defaults headless sessions to one hour; headed sessions do not idle-clo
 The workspace launcher verifies window mapping; daemon registration can follow a
 moment later. `pi-browser list` reports session readiness before page commands.
 
-Opening a browser can replace the current session, and navigating changes its
-page. A running headed session can be used directly by a human: login or other
-manual actions take effect in the same page/context. No cookie export is needed.
+`open` refuses to replace a live owned headed browser, even when requesting a
+headless open. For an existing manual browser, use `connect` only after human
+handback. For an already connected browser, use task-authorized `goto` or `tab-new`
+instead of reopening it. Navigating changes its page. Deliberate replacement needs
+an authorized `close` first; do not close/reopen merely to get around this guard.
+Untracked headless/external session behavior is unchanged. A running headed
+session can be used directly by a human: login or other manual actions take effect
+in the same page/context. No cookie export is needed.
 After manual interaction, `pi-browser snapshot` observes the resulting page and
 the usual click/fill commands operate in that same browser.
 
@@ -131,6 +136,17 @@ Previously user-enabled native debugging settings are not disabled or overwritte
 - `connected: true`: a later `connect`, after explicit handback, selects the single
   HTTP(S) tab matching the original task origin. Missing/ambiguous task tabs fail
   closed. Output contains only the origin, never page content or raw CLI metadata.
+- `connected: true, reused: true`: an additional `connect` on this chat's existing
+  approved runtime connection reuses it after browser/profile ownership, daemon
+  PID/start and endpoint checks. It creates no connection, permission request,
+  tab, navigation or page observation, and does not change the selected task.
+  This is connection metadata, **not** a page-health or task-success check. A dead,
+  changed or detached connection fails closed; it is never silently reconnected.
+
+Keep the owned browser/connection open between authorized operations to avoid
+unnecessary new prompts. This reuse is scoped to the owning Pi chat, not automatic
+cross-chat access. A genuinely new connection still needs native approval; do not
+automate the native checkbox/dialog or weaken its protection.
 
 The browser PID, profile, page and login stay unchanged. No cookies are copied,
 exported or imported. Automatic snapshots are disabled in this consent connection;

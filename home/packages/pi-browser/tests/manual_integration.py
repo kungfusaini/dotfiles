@@ -63,11 +63,12 @@ def worker(arguments):
             return value[value.rfind(')')+2:].split()[19]==state['start']
         except (OSError,TypeError,KeyError,IndexError):
             return False
-    def call(*args,success=True):
+    def call(*args,success=True,error=None):
         result=subprocess.run([browser,*args],env=env,capture_output=True,text=True,timeout=25)
         if args[0]=='connect':assert 'synthetic-marker' not in result.stdout+result.stderr
         if success:assert result.returncode==0 and '### Error' not in result.stdout,result.stderr+result.stdout
         else:assert result.returncode!=0,result.stdout
+        if error:assert error in result.stderr,result.stderr
         return result.stdout
     def ctl(*args):
         # Absolute isolation assertion before every synthetic human input step.
@@ -147,6 +148,11 @@ await popup.close(); return {popup:true};}''')
         while not server.phases:
             assert time.monotonic()<deadline,'normal manual page did not load';time.sleep(.1)
         assert server.phases[0]=={'webdriver':['false'],'previous':['']},server.phases
+        before_open=(session/'vivaldi-process.json').read_bytes()
+        call('open','--headed','--manual',f'http://127.0.0.1:{server.server_port}/other',
+             success=False,error='already open')
+        assert (session/'vivaldi-process.json').read_bytes()==before_open
+        assert fixture_alive(),'repeated open stopped the manual browser'
         if os.environ.get('PI_BROWSER_TEST_MANUAL_POPUP') == '1':
             own=next(c for c in json.loads(ctl('clients','-j')) if c.get('pid')==state['pid'])
             native_class=own['class']
@@ -229,7 +235,14 @@ await popup.close(); return {popup:true};}''')
         assert 'false' in call('eval','navigator.webdriver')  # Unmodified native runtime behavior, not a JS override.
         assert not list((session/'artifacts').glob('page-*.yml')),'automatic page snapshot during consent'
         call('snapshot')  # Explicit authorized fixture snapshots remain supported.
-        call('connect',success=False)
+        before_reuse=(session/'vivaldi-process.json').read_bytes()
+        for _ in range(2):
+            assert json.loads(call('connect'))=={'connected':True,'reused':True}
+        call('open','--headed',f'http://127.0.0.1:{server.server_port}/other',
+             success=False,error='already open')
+        assert (session/'vivaldi-process.json').read_bytes()==before_reuse
+        assert fixture_alive(),'reuse changed browser identity'
+        assert 'Agent continued' in call('eval',"document.querySelector('#status').textContent")
         if os.environ.get('PI_BROWSER_TEST_POPUP') == '1':
             call('run-code', '''async page => {
 const popupPromise=page.waitForEvent('popup'); await page.locator('#popup').click();
