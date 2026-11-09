@@ -1,8 +1,10 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFile, execFileSync, spawn } from "node:child_process";
 import { chmodSync, closeSync, constants, fchmodSync, fstatSync, fsyncSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, readSync, realpathSync, renameSync, rmSync, statSync, unlinkSync, writeSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+const ATTENTION_NOTIFY = "notify-send";
 
 const MAX_REGISTRY_BYTES = 1024 * 1024;
 const MAX_STREAM_REGISTRY_BYTES = 1024 * 1024;
@@ -930,6 +932,29 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   let activityState: "working" | "idle" = "idle";
   let closePoll: NodeJS.Timeout | undefined;
   let skillSnapshotRoots: string[] = [];
+  let pendingAttention: WorklogBriefValue | undefined;
+  const notifiedAttention = new Set<string>();
+
+  const notifyAttention = async () => {
+    const brief = pendingAttention;
+    pendingAttention = undefined;
+    const project = resolution.project;
+    if (!brief || brief.attention === "none" || !project) return;
+    const key = JSON.stringify([project.id, resolution.stream?.id, brief]);
+    if (notifiedAttention.has(key)) return;
+    const label = resolution.stream ? `${project.name} · ${resolution.stream.name}` : project.name;
+    // Bodies use notification markup; never interpret agent text as markup or shell input.
+    const escape = (text: string) => text.replace(/[\x00-\x1f\x7f]/g, " ").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    const body = [brief.current, brief.next].filter(Boolean).map((text) => escape(text!)).join("\n");
+    const delivered = await new Promise<boolean>((resolve) => {
+      execFile(process.env.PROJECT_OBJECT_NOTIFY || ATTENTION_NOTIFY, [
+        "--app-name=Pi", "--urgency=normal", "--expire-time=10000", "--",
+        `${label} — ${brief.attention} needed`, body,
+      ], { timeout: 2000 }, (error) => resolve(!error));
+    });
+    // Notification failures must not fail a successful worklog append or agent run.
+    if (delivered) notifiedAttention.add(key);
+  };
 
   const removeSkillSnapshots = () => {
     for (const snapshot of skillSnapshotRoots) {
@@ -957,6 +982,8 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
   pi.on("session_start", async (_event, ctx) => {
     startupWorklog = "";
     startupWorklogError = undefined;
+    pendingAttention = undefined;
+    notifiedAttention.clear();
     activeSessionId = ctx.sessionManager.getSessionId();
     activityState = "idle";
     if (closePoll) clearInterval(closePoll);
@@ -1004,12 +1031,16 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
     try { writeActivity(resolution, "working", activeSessionId); } catch { /* advisory */ }
   });
 
-  pi.on("agent_settled", () => {
+  pi.on("agent_settled", async () => {
     activityState = "idle";
     try { writeActivity(resolution, "idle", activeSessionId); } catch { /* advisory */ }
     const pending = pendingStreamArchive;
     pendingStreamArchive = undefined;
-    if (!pending) return;
+    if (!pending) {
+      await notifyAttention();
+      return;
+    }
+    pendingAttention = undefined;
     const child = spawn(pending.executable, [
       "--archive-stream",
       "--project-id", pending.projectId,
@@ -1207,6 +1238,12 @@ export default function projectObjectExtension(pi: ExtensionAPI) {
       if (!project) throw new Error("No project object is attached to this Pi session");
       const stream = resolution.stream;
       const worklog = appendProjectWorklogEntry(project, parameters as WorklogParametersValue, ctx.sessionManager.getSessionId(), stream);
+      // Only the newest successfully written event drives attention, just like the picker.
+      const brief = (parameters as WorklogParametersValue).brief;
+      pendingAttention = brief ? {
+        current: brief.current.trim(), next: brief.next?.trim(), attention: brief.attention,
+      } : undefined;
+      if (brief?.attention === "none") notifiedAttention.clear();
       return {
         content: [{ type: "text", text: `${parameters.type}: ${parameters.summary}` }],
         details: { projectId: project.id, streamId: stream?.id, scope: stream ? "stream" : "project", worklog, type: parameters.type },
