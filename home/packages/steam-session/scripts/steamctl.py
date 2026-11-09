@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import fcntl
 import html
 import json
@@ -27,6 +28,36 @@ LOGS = STEAM_ROOT / "logs"
 STATE_DIR = Path.home() / ".local/state/steam-organizer"
 HIDE_WATCH_PID = STATE_DIR / "hide-watch.pid"
 HIDE_WATCH_LOCK = STATE_DIR / "hide-watch.lock"
+MANUAL_SESSION = STATE_DIR / "manual-session.json"
+VISIBILITY_LOCK = STATE_DIR / "visibility.lock"
+
+
+@contextmanager
+def visibility_lock():
+    STATE_DIR.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with VISIBILITY_LOCK.open("a+") as lock:
+        os.chmod(VISIBILITY_LOCK, 0o600)
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        yield
+
+
+def manual_session_pids() -> list[int]:
+    """Only this exact client/opener lifetime may opt out of automation."""
+    try:
+        records = json.loads(MANUAL_SESSION.read_text())
+        return [int(item["pid"]) for item in records
+                if process_start_ticks(int(item["pid"])) == int(item["start_ticks"])]
+    except (OSError, ValueError, TypeError, KeyError):
+        return []
+
+
+def record_manual_session(pids):
+    records = [{"pid": pid, "start_ticks": process_start_ticks(pid)} for pid in pids]
+    temporary = MANUAL_SESSION.with_suffix(".tmp")
+    with open(temporary, "w", opener=lambda p, flags: os.open(p, flags, 0o600)) as output:
+        json.dump([record for record in records if record["start_ticks"] is not None], output)
+    temporary.replace(MANUAL_SESSION)
+
 STEAM64_BASE = 76561197960265728
 FULLY_INSTALLED = 4
 SECRET_ATTRIBUTES = ("application", "steam-organizer", "credential", "web-api-key")
@@ -168,6 +199,8 @@ def steam_main_pids() -> list[int]:
         if not entry.name.isdigit():
             continue
         try:
+            if entry.stat().st_uid != os.getuid():
+                continue
             parts = (entry / "cmdline").read_bytes().split(b"\0")
             argv = [part.decode(errors="replace") for part in parts if part]
         except (OSError, PermissionError):
@@ -175,7 +208,8 @@ def steam_main_pids() -> list[int]:
         if not argv:
             continue
         executable = argv[0]
-        if executable.endswith("/ubuntu12_32/steam") and "-child-update-ui" not in argv:
+        if (Path(executable) == STEAM_ROOT / "ubuntu12_32/steam"
+                and "-child-update-ui" not in argv):
             pids.append(int(entry.name))
     return sorted(pids)
 
@@ -334,6 +368,7 @@ def shutdown_blockers() -> dict[str, list[int]]:
         "running_games": running_game_appids(),
         "active_downloads": active_download_appids(),
         "active_cloud_syncs": active_cloud_appids(),
+        "manual_client": manual_session_pids(),
     }
 
 
@@ -359,7 +394,33 @@ def steam_windows() -> list[dict[str, Any]]:
     return windows
 
 
+def configure_hidden_rule() -> dict[str, bool]:
+    with visibility_lock():
+        if manual_session_pids():
+            return {"manual": True}
+        # Disable while configuring; an incomplete rule must never match all apps.
+        rule = "windowrule[project-object-steam-hidden]"
+        effects = (("enable", "0"), ("match:class", "^([Ss]team)$"),
+                   ("workspace", "special:steam-hidden silent"),
+                   ("no_initial_focus", "on"), ("suppress_event", "activate activatefocus"),
+                   ("enable", "1"))
+        for key, value in effects:
+            result = subprocess.run(
+                [os.environ.get("STEAM_VISIBILITY_HYPRCTL", "hyprctl"), "keyword", rule + ":" + key, value],
+                capture_output=True, text=True, check=False, timeout=5)
+            if result.returncode or result.stdout.strip() != "ok":
+                raise SteamError("Could not install the Steam-only hidden-window policy.")
+        return {"manual": False}
+
+
 def hide_windows() -> int:
+    with visibility_lock():
+        if manual_session_pids():
+            return 0
+        return _hide_windows()
+
+
+def _hide_windows() -> int:
     hyprctl = shutil.which("hyprctl")
     if not hyprctl:
         return 0
@@ -425,7 +486,7 @@ def hide_watch_running() -> bool:
 
 
 def start_hide_watch() -> None:
-    if not shutil.which("hyprctl"):
+    if manual_session_pids() or not shutil.which("hyprctl"):
         return
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     with HIDE_WATCH_LOCK.open("a+") as lock:
@@ -523,22 +584,25 @@ def start_steam(timeout: int) -> dict[str, Any]:
             }
         time.sleep(1)
     try:
-        subprocess.run(
-            [steam, "-shutdown"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=20,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
+        stop_steam(20, force=False, approved=False, override_active=False)
+    except SteamError:
+        # Startup timeout is not permission to close a human-owned client or
+        # newly observed game/download/cloud work. The caller reports failure.
         pass
     raise SteamError(
-        f"Steam did not start within {timeout} seconds; a graceful cleanup request was sent."
+        f"Steam did not start within {timeout} seconds; guarded cleanup was attempted."
     )
 
 
 def stop_steam(
+    timeout: int, force: bool, approved: bool, override_active: bool
+) -> dict[str, Any]:
+    # Serialize manual takeover with the actual shutdown, not just its first poll.
+    with visibility_lock():
+        return _stop_steam(timeout, force, approved, override_active)
+
+
+def _stop_steam(
     timeout: int, force: bool, approved: bool, override_active: bool
 ) -> dict[str, Any]:
     if not steam_running():
@@ -1434,6 +1498,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("status")
+    sub.add_parser("manual-status")
+    sub.add_parser("configure-hidden-rule", help=argparse.SUPPRESS)
     sub.add_parser("libraries")
     installed = sub.add_parser("installed")
     installed.add_argument("--search")
@@ -1521,6 +1587,10 @@ def main() -> int:
                     "shutdown_blockers": shutdown_blockers(),
                 }
             )
+        elif args.command == "configure-hidden-rule":
+            emit(configure_hidden_rule())
+        elif args.command == "manual-status":
+            emit({"manual": bool(manual_session_pids())})
         elif args.command == "libraries":
             result = []
             games = manifests()

@@ -179,18 +179,13 @@ def steam_backend_pids(launch_id):
 
 
 def steam_hide_rule():
-    # Named Steam-only policy stays enabled for delayed updater/login windows.
-    # Disable while configuring so an incomplete rule can never match all apps.
-    rule = "windowrule[project-object-steam-hidden]"
-    effects = (("enable", "0"), ("match:class", "^([Ss]team)$"),
-               ("workspace", "special:steam-hidden silent"),
-               ("no_initial_focus", "on"), ("suppress_event", "activate activatefocus"),
-               ("enable", "1"))
-    for key, value in effects:
-        result = subprocess.run([HYPRCTL, "keyword", rule + ":" + key, value],
-                                capture_output=True, text=True, check=False)
-        if result.returncode or result.stdout.strip() != "ok":
-            raise RuntimeError("could not install the Steam-only hidden-window policy")
+    # Shared lock serializes rule installation with human takeover/shutdown.
+    # Forward the exact compositor tool used by this verified launcher.
+    result = subprocess.run(["steam-library", "configure-hidden-rule"], capture_output=True,
+                            text=True, check=False, timeout=40,
+                            env={**os.environ, "STEAM_VISIBILITY_HYPRCTL": HYPRCTL})
+    if result.returncode:
+        raise RuntimeError("could not install the Steam-only hidden-window policy: " + (result.stderr or "").strip())
 
 
 def verify_steam_backend(launch_id):
@@ -326,6 +321,14 @@ def main():
             if result.returncode:
                 raise SystemExit(result.returncode)
             print(f"project-workspace-exec: verified browser launch on {workspace}")
+            return
+        if Path(command[0]).name in ("steam-manual", ".steam-manual-wrapped"):
+            # This entry verifies the exact existing-or-new client UI itself.
+            result = subprocess.run(command, env={**os.environ, LAUNCH_WORKSPACE_ENV: workspace},
+                                    check=False)
+            if result.returncode:
+                raise RuntimeError("manual Steam placement could not be verified")
+            print(f"project-workspace-exec: verified manual Steam UI on {workspace}")
             return
         # Hyprland's exec inherits compositor env, not this terminal's env.
         # Keep the invoking Pi browser owner even through Python/shell launchers;

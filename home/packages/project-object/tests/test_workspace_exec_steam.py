@@ -71,15 +71,26 @@ class SteamWorkspaceTests(unittest.TestCase):
                 h.verify_steam_backend('launch')
             run.assert_not_called()
 
-    def test_hidden_policy_is_only_for_steam_and_precedes_launch(self):
-        with patch.object(h.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, 'ok')) as run:
+    def test_hidden_policy_delegates_to_serialized_visibility_owner(self):
+        with patch.object(h.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '{"manual": false}')) as run:
             h.steam_hide_rule()
-        commands = [c.args[0] for c in run.call_args_list]
-        self.assertEqual(commands[0][-2:], ['windowrule[project-object-steam-hidden]:enable', '0'])
-        self.assertIn('^([Ss]team)$', commands[1])
-        self.assertIn('special:steam-hidden silent', commands[2])
-        self.assertEqual(commands[-1][-1], '1')
-        self.assertFalse(any('focuswindow' in c for c in commands))
+        self.assertEqual(run.call_args.args[0], ['steam-library', 'configure-hidden-rule'])
+        self.assertEqual(run.call_args.kwargs['env']['STEAM_VISIBILITY_HYPRCTL'], h.HYPRCTL)
+
+    def test_manual_client_is_not_hidden_again_by_automated_game_launch(self):
+        with patch.object(h.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0, '{"manual": true}')) as run:
+            h.steam_hide_rule()
+        self.assertEqual(run.call_count, 1)
+
+    def test_manual_launcher_uses_invoking_context_and_its_own_ui_verification(self):
+        with patch.object(sys, 'argv', ['project-workspace-exec', 'steam-manual']), \
+             patch.object(h, 'hypr_clients', return_value=[]), \
+             patch.object(h, 'invoking_workspace', return_value='Invoking workspace'), \
+             patch.object(h, 'verify_window') as regular, \
+             patch.object(h.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+            h.main()
+            self.assertEqual(run.call_args.kwargs['env'][h.LAUNCH_WORKSPACE_ENV], 'Invoking workspace')
+            regular.assert_not_called()
 
     def test_hidden_policy_failure_is_not_ignored(self):
         with patch.object(h.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1, 'error')):

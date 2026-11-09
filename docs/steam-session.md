@@ -47,6 +47,31 @@ finishes on its explicit completion event. Current upload/download phases are
 tracked separately, and prior client process/session evidence is excluded.
 Steam logs, cloud metadata and saves are never deleted to clear activity status.
 
+## Manual Steam UI
+
+Opening Steam from its desktop entry (including its existing actions/URI handler),
+or using the interactive `steam` shell alias, runs `steam-manual`. This explicitly
+hands the current client to the human: it disables the named hidden-window rule,
+stops the window-hider, and silently places verified Steam UI on the invoking
+workspace. It does not toggle the hidden workspace, stop a game/download, or use
+global keyboard/pointer input. Agent opens use
+`project-workspace-exec steam-manual`; placement failure remains an error. Only a
+human desktop-entry invocation without terminal/agent context uses the active
+workspace. New interactive shells load the alias; absolute/`command steam`
+invocations intentionally remain the original client.
+
+The private manual lease is bound to `/proc` PID/start-time identities, not a
+sticky preference. It protects both startup and the current client, makes all
+hider calls no-ops, and appears as a guarded `manual_client` shutdown blocker.
+Automation must not close a human-owned client. Quit Steam normally to end that
+ownership; the next automated client starts hidden and resumes ordinary cleanup.
+Manual takeover and guarded shutdown are serialized. Existing downloads, games,
+cloud work and saves are unchanged. An already-running old monitor must finish
+before upgrading its lifecycle policy; deployment does not rewrite live Python
+processes. No third-party window manager is needed: Hyprland already supports
+[toggleable named rules](https://wiki.hypr.land/configuring/core/rules/window-rules/).
+There are deliberately no permanent class-wide Steam hide/focus rules.
+
 ## Pegasus frontend teardown
 
 The installed Pegasus destroys its mapped frontend immediately after launching a

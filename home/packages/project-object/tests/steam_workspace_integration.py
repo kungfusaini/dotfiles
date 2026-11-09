@@ -37,11 +37,14 @@ static void window(const char *klass,int game) {
 int main(int argc,char **argv) {
     const char *root=getenv("STEAM_TEST_ROOT"); if(!root)return 2;
     if(argc==2 && strcmp(argv[1],"steam://rungameid/1687950")==0) {touch(root,"show-game");return 0;}
+    if(argc==2 && strcmp(argv[1],"steam://open/main")==0) {touch(root,"show-client");return 0;}
+    if(argc==2 && strcmp(argv[1],"steam://open/settings")==0) {touch(root,"show-settings");return 0;}
     if(argc!=2 || strcmp(argv[1],"-silent")!=0)return 3;
-    int ui=0,game=0; touch(root,"backend-running");
+    int ui=0,game=0,settings=0; touch(root,"backend-running");
     while(!has(root,"stop")) {
         if(!ui && has(root,"show-client")){window("steam",0);ui=1;}
         if(!game && has(root,"show-game")){window("steam-fake-game",1);game=1;}
+        if(!settings && has(root,"show-settings")){sleep(2);window("steam",0);settings=1;}
         usleep(50000);
     }
     return 0;
@@ -51,9 +54,10 @@ int main(int argc,char **argv) {
 
 def worker(root, helper, client):
     root = Path(root)
-    for label, argument in [('background', '-silent'), ('game', 'steam://rungameid/1687950')]:
+    for label, argument in [('background', '-silent'), ('game', 'steam://rungameid/1687950'), ('manual', None)]:
         wait_for(lambda: (root / ('go-' + label)).exists(), timeout=90)
-        result = subprocess.run([helper, client, argument], capture_output=True, text=True)
+        command = [helper, client, argument] if argument else [helper, 'steam-manual', '--desktop', 'steam://open/settings']
+        result = subprocess.run(command, capture_output=True, text=True)
         (root / (label + '-result.json')).write_text(json.dumps(dict(code=result.returncode,
                                                        stdout=result.stdout, stderr=result.stderr)))
     wait_for(lambda: (root / 'done').exists(), timeout=90)
@@ -65,17 +69,32 @@ def run(args):
     runtime.mkdir(mode=0o700)
     (root / 'home').mkdir()
     (root / 'labwc').mkdir()
-    binary = root / 'ubuntu12_32/steam'
-    binary.parent.mkdir()
+    binary = root / 'home/.local/share/Steam/ubuntu12_32/steam'
+    binary.parent.mkdir(parents=True)
     (root / 'client.c').write_text(FAKE_CLIENT)
     subprocess.run([args.cc, '-O2', str(root / 'client.c'), '-o', str(binary)], check=True)
+    # Private test-only launchers use the candidate source and private HOME.
+    # No installed/live library helper or account state participates in this lab.
+    scripts = Path(__file__).resolve().parents[2] / 'steam-session/scripts'
+    tools = root / 'bin'
+    tools.mkdir()
+    for name, command in {
+        'steam': [str(binary)],
+        'steam-library': [sys.executable, str(scripts / 'steamctl.py')],
+        'steam-manual': [sys.executable, str(scripts / 'manual.py')],
+        'hyprctl': [args.hyprctl],
+    }.items():
+        path = tools / name
+        path.write_text('#!/bin/sh\nexec ' + shlex.join(command) + ' "$@"\n')
+        path.chmod(0o755)
     env = {**os.environ, 'HOME': str(root / 'home'), 'XDG_RUNTIME_DIR': str(runtime),
            'XDG_CONFIG_HOME': str(root / 'home/.config'), 'XDG_CONFIG_DIRS': str(root / 'empty'),
            'WLR_BACKENDS': 'headless', 'WLR_HEADLESS_OUTPUTS': '1', 'WLR_RENDERER': 'gles2',
            'WLR_RENDER_DRM_DEVICE': args.render_node, 'WLR_LIBINPUT_NO_DEVICES': '1',
            'XDG_SESSION_TYPE': 'wayland', 'XDG_CURRENT_DESKTOP': 'Hyprland',
            'STEAM_TEST_ROOT': str(root), 'STEAM_TEST_KITTY': args.kitty,
-           'PROJECT_PICKER_HYPRCTL': args.hyprctl}
+           'PROJECT_PICKER_HYPRCTL': args.hyprctl,
+           'PATH': str(tools) + ':' + os.environ['PATH']}
     for key in ['DISPLAY', 'WAYLAND_DISPLAY', 'WAYLAND_SOCKET', 'HYPRLAND_INSTANCE_SIGNATURE',
                 'PROJECT_OBJECT_WORKSPACE_NAME', 'PROJECT_OBJECT_LAUNCH_ID',
                 'HL_INITIAL_WORKSPACE_TOKEN', 'HL_EXEC_RULE_TOKEN']:
@@ -108,10 +127,7 @@ def run(args):
         outer = wait_for(lambda: next((p for p in runtime.glob('wayland-*') if p.is_socket()), None))
         env['WAYLAND_DISPLAY'] = outer.name
         config = root / 'config.conf'
-        config.write_text('monitor=,960x640@60,auto,1\nxwayland {\n enabled=false\n}\nmisc {\n disable_hyprland_logo=true\n disable_splash_rendering=true\n}\n'
-                          'windowrule = match:class ^([Ss]team)$, workspace special:steam-hidden silent\n'
-                          'windowrule = match:class ^([Ss]team)$, no_initial_focus on\n'
-                          'windowrule = match:class ^([Ss]team)$, suppress_event activate activatefocus\n')
+        config.write_text('monitor=,960x640@60,auto,1\nxwayland {\n enabled=false\n}\nmisc {\n disable_hyprland_logo=true\n disable_splash_rendering=true\n}\n')
         start([args.hyprland, '-c', str(config)], 'hyprland')
         ipc = wait_for(lambda: next((runtime / 'hypr').glob('*/.socket.sock'), None))
         env['HYPRLAND_INSTANCE_SIGNATURE'] = ipc.parent.name
@@ -155,6 +171,26 @@ def run(args):
         assert all(e[1] == 'special:steam-hidden' for e in opened if len(e) == 4 and e[2] == 'steam')
         assert not any(e.startswith('activewindow>>steam,') for e in events)
         print('PASS: exact app-ID game window routed to invoking library; Steam UI remains hidden', flush=True)
+        (root / 'go-manual').touch()
+        wait_for(lambda: (root / 'manual-result.json').exists(), timeout=70)
+        result = json.loads((root / 'manual-result.json').read_text())
+        assert result['code'] == 0, result
+        assert next(c for c in clients() if c['address'] == client['address'])['workspace']['name'] == 'Invoking library'
+        secondary = [c for c in clients() if c['class'] == 'steam' and c['address'] != client['address']]
+        assert len(secondary) == 1 and secondary[0]['workspace']['name'] == 'Invoking library', secondary
+        assert next(c for c in clients() if c['address'] == game['address'])['workspace']['name'] == 'Invoking library'
+        manual = json.loads(subprocess.check_output([str(tools / 'steam-library'), 'manual-status'], env=env, text=True))
+        assert manual['manual'], manual
+        subprocess.run([str(tools / 'steam-library'), 'configure-hidden-rule'], env=env, check=True)
+        subprocess.run([str(tools / 'steam-library'), 'hide'], env=env, check=True)
+        assert next(c for c in clients() if c['address'] == client['address'])['workspace']['name'] == 'Invoking library'
+        assert json.loads(ctl('activeworkspace', '-j'))['name'] == 'Unrelated active workspace'
+        print('PASS: manual takeover reveals only verified Steam UI on invoking workspace; game and focus preserved', flush=True)
+        (root / 'stop').touch()
+        wait_for(lambda: not json.loads(subprocess.check_output([str(tools / 'steam-library'), 'manual-status'], env=env, text=True))['manual'])
+        result = json.loads(subprocess.check_output([str(tools / 'steam-library'), 'configure-hidden-rule'], env=env, text=True))
+        assert not result['manual'], result
+        print('PASS: manual lease expires with exact client; next automated rule installation resumes', flush=True)
         (root / 'done').touch()
     finally:
         (root / 'stop').touch()

@@ -24,6 +24,9 @@ stdenvNoCC.mkDerivation {
     makeWrapper ${python3}/bin/python3 "$out/bin/steam-library" \
       --prefix PATH : ${lib.makeBinPath [ systemd libnotify ]} \
       --add-flags "$out/libexec/steam-session/steamctl.py"
+    makeWrapper ${python3}/bin/python3 "$out/bin/steam-manual" \
+      --prefix PATH : ${lib.makeBinPath [ systemd libnotify ]} \
+      --add-flags "$out/libexec/steam-session/manual.py"
     runHook postInstall
   '';
   meta = {
