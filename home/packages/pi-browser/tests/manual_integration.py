@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Runtime-consent handoff in a hidden desktop. No real accounts or host input.
+"""Preauthorized/manual and opt-in native-consent tests on a private desktop.
 
---wtype is used ONLY for bounded test-human native permission input on the
-private compositor. A synthetic Local State seed models enabling the checkbox;
-production never writes that preference or approves its own connection.
+Default connections and reconnects require no permission input. --wtype is used
+only for opt-in synthetic native-consent or manual-popup controls; production
+never writes the native consent preference or clicks a permission dialog.
 """
 import http.server
 import json
@@ -44,16 +44,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def worker(arguments):
     root,helper,browser,strip=arguments;root=Path(root)
     headed.wait_for_file(root/'go')
-    server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Handler);server.phases=[];server.pixels=0
+    shared_runtime=os.environ.get('PI_BROWSER_TEST_SHARED_RUNTIME')=='1'
+    port_file=root.parent/'runtime-fixture-port'
+    port=int(port_file.read_text()) if shared_runtime and port_file.exists() else 0
+    server=http.server.ThreadingHTTPServer(('127.0.0.1',port),Handler);server.phases=[];server.pixels=0
+    if shared_runtime:port_file.write_text(str(server.server_port))
     threading.Thread(target=server.serve_forever,daemon=True).start()
     env={**os.environ,'PI_SESSION_ID':f'runtime-{root.parent.name}-{strip}',
          'XDG_STATE_HOME':str(root/'state'),'NIXOS_OZONE_WL':'1'}
     if os.environ.get('PI_BROWSER_TEST_TRACE') == '1':
         env['DEBUG'] = 'pw:protocol'  # Synthetic fixtures only; never real profiles.
-    profile=root/'synthetic-profile';profile.mkdir()
+    profile=(root.parent/'runtime-shared-profile') if shared_runtime else root/'synthetic-profile'
+    profile.mkdir(exist_ok=shared_runtime)
     # Test fixture ONLY. Actual users enable the setting in Vivaldi themselves.
     settings_only=os.environ.get('PI_BROWSER_TEST_SETTINGS_ONLY')=='1'
-    if not settings_only:
+    native_consent=(os.environ.get('PI_BROWSER_TEST_NATIVE_CONSENT')=='1' or settings_only
+                    or os.environ.get('PI_BROWSER_TEST_DENY_FIRST')=='1')
+    assert not (shared_runtime and native_consent),'shared-runtime control is preauthorized only'
+    if native_consent and not settings_only:
         (profile/'Local State').write_text(json.dumps({'devtools':{'remote_debugging':{'user-enabled':True}}}))
     state=None
     classic_ui=False
@@ -66,6 +74,9 @@ def worker(arguments):
     def call(*args,success=True,error=None):
         result=subprocess.run([browser,*args],env=env,capture_output=True,text=True,timeout=25)
         if args[0]=='connect':assert 'synthetic-marker' not in result.stdout+result.stderr
+        if success and (result.returncode!=0 or '### Error' in result.stdout) and os.environ.get('PI_BROWSER_TEST_CAPTURE_FAILURE')=='1':
+            assert Path(env['XDG_RUNTIME_DIR']).resolve().is_relative_to(root.parent.resolve())
+            subprocess.run(['grim','-o','TEST',str(root/'failure.png')],env=env,check=True)
         if success:assert result.returncode==0 and '### Error' not in result.stdout,result.stderr+result.stdout
         else:assert result.returncode!=0,result.stdout
         if error:assert error in result.stderr,result.stderr
@@ -75,6 +86,7 @@ def worker(arguments):
         assert Path(env['XDG_RUNTIME_DIR']).resolve().is_relative_to(root.parent.resolve())
         return subprocess.check_output(['hyprctl',*args],env=env,text=True).strip()
     def consent(allow):
+        assert native_consent,'preauthorized connections must not require permission input'
         time.sleep(2)  # Native permission dialog; no page CDP exists yet.
         windows=json.loads(ctl('clients','-j'))
         window=next(c for c in windows if c.get('pid')==state['pid'])
@@ -104,6 +116,8 @@ def worker(arguments):
             server.phases=[]
         command=[browser,'open','--headed','--manual','--profile='+str(profile),
                  f'http://127.0.0.1:{server.server_port}/?private=synthetic-marker']
+        if native_consent:
+            command.append('--native-consent')
         if os.environ.get('PI_BROWSER_TEST_NATIVE_UI') == '1':
             call('open','--headed','--help')
             private_session=Path(json.loads(call('paths'))['session'])
@@ -114,6 +128,7 @@ def worker(arguments):
             command.append('--config='+str(config_path))
         direct = os.environ.get('PI_BROWSER_TEST_DIRECT') == '1'
         if direct:
+            assert not native_consent,'direct control cannot request native manual consent'
             command.remove('--manual')
         launcher='import os,subprocess,time;'
         if strip=='yes':launcher+="os.environ.pop('HL_EXEC_RULE_TOKEN',None);os.environ.pop('HL_INITIAL_WORKSPACE_TOKEN',None);time.sleep(1.2);"
@@ -131,10 +146,17 @@ await popup.close(); return {popup:true};}''')
             (root/'result.json').write_text(json.dumps({'status':0,'stdout':'direct native popup passed','stderr':''}))
             headed.wait_for_file(root/'done')
             return
-        assert json.loads(call('list'))['connected'] is False
+        listing=json.loads(call('list'))
+        assert listing['connected'] is False
+        assert listing['debugging']==('native-consent' if native_consent else 'preauthorized')
         session=Path(json.loads(call('paths'))['session'])
         state=json.loads((session/'vivaldi-process.json').read_text())
-        assert state['manual'] and 'endpoint' not in state
+        assert state['manual'] and state['preauthorized'] is (not native_consent)
+        assert 'runtime_daemon' not in state
+        if native_consent:
+            assert 'endpoint' not in state
+        else:
+            assert urllib.parse.urlsplit(state['endpoint']).hostname=='127.0.0.1'
         flags=[x.decode() for x in (Path('/proc')/str(state['pid'])/'cmdline').read_bytes().split(b'\0') if x]
         if len(flags)==1:
             flags=shlex.split(flags[0])  # Vivaldi can replace argv with one display string.
@@ -142,12 +164,19 @@ await popup.close(); return {popup:true};}''')
         assert classic_ui is (os.environ.get('PI_BROWSER_TEST_NATIVE_UI') != '1')
         if classic_ui:
             assert '--force-dark-mode' in flags
-        assert not any(f.startswith(('--remote-debugging','--enable-automation','--headless','--no-sandbox')) for f in flags)
+        assert not any(f.startswith(('--enable-automation','--headless','--no-sandbox')) for f in flags)
+        if native_consent:
+            assert not any(f.startswith('--remote-debugging') for f in flags)
+        else:
+            assert '--remote-debugging-address=127.0.0.1' in flags
+            assert '--remote-debugging-port='+str(urllib.parse.urlsplit(state['endpoint']).port) in flags
+            assert urllib.parse.urlsplit(state['endpoint']).port>0
         call('snapshot',success=False)
         deadline=time.monotonic()+10
         while not server.phases:
             assert time.monotonic()<deadline,'normal manual page did not load';time.sleep(.1)
-        assert server.phases[0]=={'webdriver':['false'],'previous':['']},server.phases
+        previous='synthetic-user' if shared_runtime and strip=='yes' else ''
+        assert server.phases[0]=={'webdriver':['false'],'previous':[previous]},server.phases
         before_open=(session/'vivaldi-process.json').read_bytes()
         call('open','--headed','--manual',f'http://127.0.0.1:{server.server_port}/other',
              success=False,error='already open')
@@ -194,14 +223,15 @@ await popup.close(); return {popup:true};}''')
             (root/'result.json').write_text(json.dumps({'status':0,'stdout':'native settings open without agent control','stderr':''}))
             headed.wait_for_file(root/'done')
             return
-        while not (profile/'DevToolsActivePort').exists():
-            assert time.monotonic()<deadline,'on-demand runtime server did not start';time.sleep(.1)
-        assert json.loads(call('connect'))['status']=='approve-connection'
+        if native_consent:
+            while not (profile/'DevToolsActivePort').exists():
+                assert time.monotonic()<deadline,'on-demand runtime server did not start';time.sleep(.1)
+        assert json.loads(call('connect'))['status']==('approve-connection' if native_consent else 'connecting')
         call('snapshot',success=False)
         detach_stage=os.environ.get('PI_BROWSER_TEST_DETACH_STAGE')
         if detach_stage:
             if detach_stage=='approved':
-                consent(True)
+                if native_consent:consent(True)
                 deadline=time.monotonic()+10
                 while b'Daemon listening on' not in (session/'runtime-daemon.log').read_bytes():
                     assert time.monotonic()<deadline,'daemon did not become ready';time.sleep(.1)
@@ -218,12 +248,12 @@ await popup.close(); return {popup:true};}''')
             call('connect',success=False)
             assert profile.exists() and json.loads((session/'vivaldi-process.json').read_text())['pid']==state['pid']
             assert json.loads(call('connect'))['status']=='approve-connection'
-        consent(True)
+        if native_consent:consent(True)
         deadline=time.monotonic()+10
         while True:
             output=json.loads(call('connect'))
             if output.get('connected'):break
-            assert output['status']=='awaiting-approval' and time.monotonic()<deadline,output
+            assert output['status']==('awaiting-approval' if native_consent else 'connecting') and time.monotonic()<deadline,output
             time.sleep(.1)
         assert output=={'connected':True,'origin':f'http://127.0.0.1:{server.server_port}'},output
         connected=json.loads((session/'vivaldi-process.json').read_text())
@@ -253,31 +283,29 @@ await popup.close(); return {popup:true};}''')
             call('click', '#continue')
             assert 'Agent continued' in call('eval', "document.querySelector('#status').textContent")
         if os.environ.get('PI_BROWSER_TEST_RECONNECT') == '1':
-            lines=(profile/'DevToolsActivePort').read_text().splitlines()
-            assert len(lines)==2 and lines[0].isdigit() and lines[1].startswith('/devtools/browser/')
-            endpoint='ws://127.0.0.1:'+lines[0]+lines[1]
+            endpoint=connected['runtime_daemon']['endpoint']
             call('detach')
             with (root/'reconnect.log').open('w') as log:
                 reconnect=subprocess.Popen([browser,'attach','--cdp='+endpoint],env=env,stdout=log,stderr=log)
                 try:
-                    time.sleep(2)
-                    assert reconnect.poll() is None,'reattach completed before renewed native approval'
-                    # Public wrapper control must remain unavailable before the
-                    # synthetic human approves. A queued command is also not
-                    # permission: terminate it before granting consent.
-                    with (root/'before-reapproval.log').open('w') as probe_log:
-                        probe=subprocess.Popen([browser,'tab-list'],env=env,stdout=probe_log,stderr=probe_log)
-                        try:
+                    if native_consent:
+                        time.sleep(2)
+                        assert reconnect.poll() is None,'reattach completed before renewed native approval'
+                        # Public control must remain unavailable in opt-in
+                        # native-consent mode until synthetic human approval.
+                        with (root/'before-reapproval.log').open('w') as probe_log:
+                            probe=subprocess.Popen([browser,'tab-list'],env=env,stdout=probe_log,stderr=probe_log)
                             try:
-                                code=probe.wait(timeout=1)
-                                assert code!=0,'page control was available before renewed approval'
-                            except subprocess.TimeoutExpired:
-                                pass
-                        finally:
-                            if probe.poll() is None:
-                                probe.terminate()
-                                probe.wait(timeout=5)
-                    consent(True)
+                                try:
+                                    code=probe.wait(timeout=1)
+                                    assert code!=0,'page control was available before renewed approval'
+                                except subprocess.TimeoutExpired:
+                                    pass
+                            finally:
+                                if probe.poll() is None:
+                                    probe.terminate()
+                                    probe.wait(timeout=5)
+                        consent(True)
                     assert reconnect.wait(timeout=25)==0,'native reconnect failed; see private reconnect.log'
                 finally:
                     if reconnect.poll() is None:
@@ -290,7 +318,8 @@ await task.locator('#continue').click();
 return {login:await task.evaluate(()=>localStorage.getItem('login')),status:await task.locator('#status').textContent()};}''')
             assert 'synthetic-user' in resumed and 'Agent continued' in resumed
             assert fixture_alive(),'reconnect changed browser identity'
-        (root/'result.json').write_text(json.dumps({'status':0,'stdout':'same-process native runtime consent passed','stderr':''}))
+        mode='native runtime consent' if native_consent else 'preauthorized loopback (no permission input)'
+        (root/'result.json').write_text(json.dumps({'status':0,'stdout':'same-process '+mode+' passed','stderr':''}))
         headed.wait_for_file(root/'done')
     except Exception as error:
         (root/'result.json').write_text(json.dumps({'status':1,'stdout':'','stderr':str(error)}));raise
@@ -303,6 +332,10 @@ return {login:await task.evaluate(()=>localStorage.getItem('login')),status:awai
                 # even though the browser wrapper deliberately relinquished it.
                 assert Path(env['XDG_RUNTIME_DIR']).resolve().is_relative_to(root.parent.resolve())
                 os.kill(state['pid'],15)
+                deadline=time.monotonic()+10
+                while fixture_alive():
+                    assert time.monotonic()<deadline,'private detached browser did not exit'
+                    time.sleep(.05)
         server.shutdown();server.server_close()
 
 
@@ -310,8 +343,9 @@ def main():
     if sys.argv[1:2]==['--worker']:worker(sys.argv[2:]);return
     if '--wtype' in sys.argv:
         index=sys.argv.index('--wtype');os.environ['PI_BROWSER_TEST_WTYPE']=sys.argv[index+1];del sys.argv[index:index+2]
-    if not os.environ.get('PI_BROWSER_TEST_WTYPE'):raise SystemExit('--wtype is required for isolated test-human input')
-    if '--simulate-human-consent' not in sys.argv:sys.argv.append('--simulate-human-consent')
+    needs_input=any(os.environ.get(name)=='1' for name in ('PI_BROWSER_TEST_NATIVE_CONSENT','PI_BROWSER_TEST_DENY_FIRST','PI_BROWSER_TEST_MANUAL_POPUP'))
+    if needs_input and not os.environ.get('PI_BROWSER_TEST_WTYPE'):raise SystemExit('--wtype is required for isolated test-human input')
+    if needs_input and '--simulate-human-consent' not in sys.argv:sys.argv.append('--simulate-human-consent')
     headed.__file__=__file__;headed.main()
 
 if __name__=='__main__':

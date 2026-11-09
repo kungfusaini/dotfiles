@@ -9,6 +9,7 @@ import os
 import re
 from pathlib import Path
 import signal
+import socket
 import shutil
 import select
 import stat
@@ -85,7 +86,7 @@ def boolean_option(args, name, default=False):
 # the pinned CLI's open options (not a workflow/capability policy).
 OPEN_FLAGS = {"browser": "string", "headed": "boolean", "mobile": "boolean",
               "device": "string", "persistent": "boolean", "profile": "string",
-              "config": "string", "idle-timeout": "string", "manual": "boolean",
+              "config": "string", "idle-timeout": "string", "manual": "boolean", "native-consent": "boolean",
               "json": "boolean", "raw": "boolean", "help": "boolean", "version": "boolean"}
 
 
@@ -158,7 +159,7 @@ def without_manual_option(args):
     while index < len(args):
         if args[index] == "--":
             return result + args[index:]
-        if args[index] in ("--manual", "--no-manual"):
+        if args[index] in ("--manual", "--no-manual", "--native-consent", "--no-native-consent"):
             index += 1
             if index < len(args) and args[index] in ("true", "false"):
                 index += 1
@@ -331,6 +332,10 @@ def stop_managed(root):
                 endpoint = urllib.parse.urlsplit(state["endpoint"])
                 if endpoint.scheme != "http" or endpoint.hostname != "127.0.0.1" or not endpoint.port:
                     raise ValueError("Invalid managed loopback endpoint")
+                if state.get("preauthorized") and (not state.get("websocketPath")
+                        or endpoint.username or endpoint.password or endpoint.path or endpoint.query or endpoint.fragment
+                        or not loopback_listener_owned(state["pid"], endpoint.port)):
+                    raise ValueError("Preauthorized listener is not owned; skip endpoint access")
                 opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
                 with opener.open(state["endpoint"] + "/json/version", timeout=3) as response:
                     websocket = json.load(response)["webSocketDebuggerUrl"]
@@ -512,6 +517,82 @@ def start_headed(root, config, args, env):
         return launch_headed_profile(root, config, args, env, target, manual, profile, temporary)
 
 
+def unused_loopback_port():
+    # A nonzero standard developer port keeps manual browser behavior intact
+    # (port=0 itself enables Chromium's webdriver indicator). No JS overrides.
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        return listener.getsockname()[1]
+
+
+def loopback_listener_owned(pid, port):
+    """Fail closed on port-selection races; never probe another browser's CDP."""
+    try:
+        inodes = set()
+        for fd in Path(f"/proc/{pid}/fd").iterdir():
+            try:
+                link = str(fd.readlink())
+            except OSError:
+                continue
+            if link.startswith("socket:[") and link.endswith("]"):
+                inodes.add(link[8:-1])
+        found = False
+        for family, loopback in (("tcp", "0100007F"), ("tcp6", "00000000000000000000000001000000")):
+            try:
+                lines = Path(f"/proc/{pid}/net/{family}").read_text().splitlines()[1:]
+            except FileNotFoundError:
+                if family == "tcp6":
+                    continue  # IPv6 can be absent; IPv4 ownership remains required.
+                raise
+            for line in lines:
+                fields = line.split()
+                address, number = fields[1].split(":")
+                if fields[3] != "0A" or int(number, 16) != port or fields[9] not in inodes:
+                    continue
+                if address != loopback:
+                    raise ValueError("Owned debugging listener is not restricted to loopback")
+                found = found or family == "tcp"
+        return found
+    except OSError:
+        return False
+
+
+def preauthorized_endpoint(state):
+    """Only version metadata, after exact PID/start and listening-socket checks."""
+    value = state.get("endpoint")
+    if not isinstance(value, str):
+        raise ValueError("Invalid preauthorized loopback endpoint")
+    try:
+        endpoint = urllib.parse.urlsplit(value)
+        port = endpoint.port
+    except ValueError:
+        raise ValueError("Invalid preauthorized loopback endpoint") from None
+    if (endpoint.scheme != "http" or endpoint.hostname != "127.0.0.1" or not port
+            or endpoint.username or endpoint.password or endpoint.path or endpoint.query or endpoint.fragment):
+        raise ValueError("Invalid preauthorized loopback endpoint")
+    if process_start(state["pid"]) != state["start"] or not loopback_listener_owned(state["pid"], port):
+        return None
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with opener.open(state["endpoint"] + "/json/version", timeout=2) as response:
+        data = response.read(65537)
+    if len(data) > 65536:
+        raise ValueError("Invalid owned debugging version metadata")
+    data = json.loads(data)
+    websocket = data.get("webSocketDebuggerUrl") if isinstance(data, dict) else None
+    if not isinstance(websocket, str):
+        raise ValueError("Missing owned debugging endpoint")
+    address = urllib.parse.urlsplit(websocket)
+    if (address.scheme != "ws" or address.netloc != endpoint.netloc or address.query or address.fragment
+            or not re.fullmatch(r"/devtools/browser/[a-f0-9-]{36}", address.path)
+            or state.get("websocketPath", address.path) != address.path):
+        raise ValueError("Owned debugging endpoint identity changed")
+    return websocket
+
+
+def owned_runtime_endpoint(state, profile):
+    return preauthorized_endpoint(state) if state.get("preauthorized") else runtime_endpoint(profile)
+
+
 def launch_headed_profile(root, config, args, env, target, manual, profile, temporary):
     browser = config["browser"]
     launch = browser["launchOptions"]
@@ -519,8 +600,12 @@ def launch_headed_profile(root, config, args, env, target, manual, profile, temp
     # Leave stale-lock recovery to Vivaldi itself, never unlink a live lock.
     port_file = profile / "DevToolsActivePort"
     port_file.unlink(missing_ok=True)
+    preauthorized = manual and not boolean_option(args, "native-consent")
+    port = unused_loopback_port() if preauthorized else 0
     state = {"profile": str(profile), "temporary": temporary, "bound": True,
-             "manual": manual, "url": target}
+             "manual": manual, "preauthorized": preauthorized, "url": target}
+    if preauthorized:
+        state["endpoint"] = f"http://127.0.0.1:{port}"
     try:
         provision_bitwarden_host(profile)
         state.update(placement_rule(root, env))
@@ -529,7 +614,7 @@ def launch_headed_profile(root, config, args, env, target, manual, profile, temp
             process = subprocess.Popen([
                 launch["executablePath"], "--no-first-run", "--no-default-browser-check",
                 "--disable-dev-shm-usage",
-                *([] if manual else ["--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"]),
+                *([] if manual and not preauthorized else ["--remote-debugging-address=127.0.0.1", f"--remote-debugging-port={port}"]),
                 "--user-data-dir=" + str(profile), *extra, *window_class, "about:blank"],
                 cwd=root, env=env, stdout=log, stderr=log, start_new_session=True)
     except BaseException:
@@ -544,12 +629,26 @@ def launch_headed_profile(root, config, args, env, target, manual, profile, temp
         write_json(root / "vivaldi-process.json", state)
         deadline = time.monotonic() + 30
         if manual:
-            # No CDP endpoint, daemon, page observation or automation connection.
-            # The workspace launcher separately verifies the actual mapped UI.
+            # No agent connection or page observation before human handback.
+            # Default mode has an authorized localhost debugging server; explicit
+            # --native-consent instead leaves startup debugging disabled.
             while not profile_locked(profile):
                 if process.poll() is not None or time.monotonic() >= deadline:
                     raise ValueError("Manual Vivaldi did not acquire its profile; see vivaldi.log")
                 time.sleep(0.05)
+            if preauthorized:
+                while True:
+                    if process.poll() is not None or time.monotonic() >= deadline:
+                        raise ValueError("Owned loopback debugging server did not become ready; no foreign endpoint used")
+                    try:
+                        endpoint = preauthorized_endpoint(state)
+                    except OSError:
+                        endpoint = None
+                    if endpoint:
+                        state["websocketPath"] = urllib.parse.urlsplit(endpoint).path
+                        write_json(root / "vivaldi-process.json", state)
+                        break
+                    time.sleep(0.05)
             open_manual_tab(process, state, launch["executablePath"], target, root, env)
             return process, None
         while not port_file.exists():
@@ -729,7 +828,7 @@ def connect_manual(cli, root, env, browser_executable):
         if (not isinstance(daemon, dict) or not isinstance(daemon.get("pid"), int) or daemon["pid"] <= 1
                 or daemon["pid"] == state["pid"] or not daemon.get("start")
                 or process_start(daemon["pid"]) != daemon["start"]
-                or not daemon.get("endpoint") or runtime_endpoint(profile) != daemon["endpoint"]):
+                or not daemon.get("endpoint") or owned_runtime_endpoint(state, profile) != daemon["endpoint"]):
             raise ValueError("Approved connection is unavailable or changed; no new connection was started")
         print(json.dumps({"connected": True, "reused": True}))
         return 0
@@ -745,7 +844,9 @@ def connect_manual(cli, root, env, browser_executable):
     port = url.port
     origin = url.scheme + "://" + host_name + ((":" + str(port)) if port and
              (url.scheme, port) not in (("http", 80), ("https", 443)) else "")
-    endpoint = runtime_endpoint(profile)
+    endpoint = owned_runtime_endpoint(state, profile)
+    if not endpoint and state.get("preauthorized"):
+        raise ValueError("Owned preauthorized debugging server is unavailable; no consent mode fallback attempted")
     if not endpoint:
         # Merely show the native setting. Only Sumeet may enable it.
         with (root / "vivaldi.log").open("a") as log:
@@ -772,7 +873,7 @@ def connect_manual(cli, root, env, browser_executable):
             raise ValueError("Runtime connection could not start; browser remains manual")
         state["runtime_daemon"] = {"pid": process.pid, "start": start, "offset": offset, "endpoint": endpoint}
         write_json(root / "vivaldi-process.json", state)
-        print(json.dumps({"status": "approve-connection", "connected": False}))
+        print(json.dumps({"status": "connecting" if state.get("preauthorized") else "approve-connection", "connected": False}))
         return 0
     if daemon.get("endpoint") != endpoint:
         raise ValueError("Runtime endpoint changed; close or detach the prior connection first")
@@ -784,16 +885,34 @@ def connect_manual(cli, root, env, browser_executable):
         log.seek(daemon["offset"])
         ready = b"Daemon listening on" in log.read(65536)
     if not ready:
-        print(json.dumps({"status": "awaiting-approval", "connected": False}))
+        print(json.dumps({"status": "connecting" if state.get("preauthorized") else "awaiting-approval", "connected": False}))
         return 0
     # No navigation, new tab, cookie copy or restart: select the existing task.
+    selection = "return found[0];}"
+    if state.get("preauthorized"):
+        selection = ("const index=found[0];const session=await page.context().newCDPSession(pages[index]);"
+                     "try{const info=await session.send('Target.getTargetInfo');return {index,targetId:info.targetInfo.targetId};}"
+                     "finally{await session.detach();}}")
     script = ("async(page)=>{const pages=page.context().pages();const found=[];"
               "for(let i=0;i<pages.length;i++){try{if(new URL(pages[i].url()).origin==="
               + json.dumps(origin) + ")found.push(i);}catch{}}"
-              "if(found.length!==1)throw Error('Task origin is missing or ambiguous');return found[0];}")
-    index = private_cli_result(cli, root, env, "run-code", script)
+              "if(found.length!==1)throw Error('Task origin is missing or ambiguous');" + selection)
+    selected = private_cli_result(cli, root, env, "run-code", script)
+    index = selected.get("index") if state.get("preauthorized") and isinstance(selected, dict) else selected
     if not isinstance(index, int) or isinstance(index, bool) or index < 0:
         raise ValueError("Could not identify one task tab")
+    if state.get("preauthorized"):
+        if (not isinstance(selected, dict) or not isinstance(selected.get("targetId"), str)
+                or not re.fullmatch(r"[A-Fa-f0-9]{32}", selected["targetId"])):
+            raise ValueError("Could not identify the owned task target")
+        if preauthorized_endpoint(state) != endpoint:
+            raise ValueError("Owned debugging endpoint changed before task selection")
+        # Page.bringToFront alone may leave a first-install extension tab active
+        # in an unfocused window. Reuse the owned HTTP target-activation API,
+        # never global desktop focus/input, navigation or new-tab creation.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(state["endpoint"] + "/json/activate/" + selected["targetId"], timeout=5) as response:
+            response.read(1024)
     private_cli_result(cli, root, env, "tab-select", str(index))
     value = private_cli_result(cli, root, env, "run-code",
                                "async(page)=>({origin:new URL(page.url()).origin})")
@@ -852,7 +971,7 @@ def run(args, *, cli, browser_executable):
         launch = configured.get("launchOptions", {})
         help_only = has_option(args, "--help") or has_option(args, "--version") or "-h" in args
         if help_only and args and args[0] == "open" and has_option(args, "--manual"):
-            print("--manual: normal headed Vivaldi; after handback connect requests native runtime debugging permission without restarting")
+            print("--manual: agent stays disconnected until handback; localhost debugging is preauthorized by default. --native-consent opts into native approval instead")
             return 0
         if args and args[0] == "open" and not help_only:
             open_target(args)  # Validate before any native process/profile side effect.
@@ -867,12 +986,14 @@ def run(args, *, cli, browser_executable):
         operation = args[0] if args else ""
         if operation == "connect":
             if args[1:] in (["--help"], ["-h"]):
-                print("pi-browser connect: after manual handback, request native runtime consent; an already approved owned runtime connection is reused without a new request")
+                print("pi-browser connect: after handback, attach to the owned preauthorized loopback server without prompts, or request native approval in --native-consent mode; existing connections are reused")
                 return 0
             if args[1:]:
                 raise ValueError("connect takes no options or URL")
             return connect_manual(cli, root, env, browser_executable)
         manual = bool(operation == "open" and boolean_option(args, "manual"))
+        if operation == "open" and not help_only and boolean_option(args, "native-consent") and not manual:
+            raise ValueError("--native-consent requires --headed --manual")
         if manual and not help_only:
             if not native:
                 raise ValueError("--manual requires native Vivaldi with --headed")
@@ -883,7 +1004,9 @@ def run(args, *, cli, browser_executable):
             raise ValueError("Owned browser is already open; use connect after handback, or goto/tab-new if connected. "
                              "Replacing it requires an explicit close first")
         if current and current.get("manual") and operation == "list" and not help_only:
-            print(json.dumps({"mode": "awaiting-consent" if current.get("runtime_daemon") else "manual", "running": True, "connected": False}))
+            pending = "connecting" if current.get("preauthorized") else "awaiting-consent"
+            print(json.dumps({"mode": pending if current.get("runtime_daemon") else "manual", "running": True,
+                              "connected": False, "debugging": "preauthorized" if current.get("preauthorized") else "native-consent"}))
             return 0
         if current and current.get("manual") and operation == "detach" and not help_only:
             # Upstream may retain a stale non-attached headless session entry.
@@ -944,14 +1067,15 @@ def run(args, *, cli, browser_executable):
                 # would discard that proof before the native window maps.
                 threading.Thread(target=process.wait, daemon=False).start()
                 if boolean_option(args, "json"):
-                    print(json.dumps({"mode": "manual", "connected": False}))
+                    print(json.dumps({"mode": "manual", "connected": False,
+                                      "debugging": "preauthorized" if read_state(root).get("preauthorized") else "native-consent"}))
                 else:
-                    print("Manual Vivaldi opened without agent control. After sign-in and explicit handback, connect requests native runtime debugging consent in this same browser.")
+                    print("Manual browser opened without agent control. After explicit handback, connect uses preauthorized localhost debugging (or native approval if --native-consent was selected).")
                 return 0
             result = (connect_headed(cli, root, config, args, env, target_id) if native else
                       subprocess.run(command, cwd=root, env=env, check=False).returncode)
             if (not args or has_option(args, "--help")) and operation in ("", "open"):
-                print("Wrapper: native headed defaults retain a cross-chat profile; --no-persistent uses a temporary profile; --profile=PATH selects another. --manual and connect support human-first native consent.")
+                print("Wrapper: headed defaults retain a cross-chat profile; --no-persistent is temporary. --manual defers agent attachment; localhost debugging is preauthorized unless --native-consent is selected.")
             if args and args[0] in ("close", "delete-data"):
                 stop_managed(root)
                 if args[0] == "delete-data" and result == 0:

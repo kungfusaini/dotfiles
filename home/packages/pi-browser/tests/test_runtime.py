@@ -15,7 +15,7 @@ spec.loader.exec_module(browser)
 
 
 class RuntimeTests(unittest.TestCase):
-    def test_manual_start_never_enables_debugger_or_starts_agent(self):
+    def test_native_consent_start_never_enables_debugger_or_starts_agent(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             process = Mock(pid=123)
@@ -26,7 +26,7 @@ class RuntimeTests(unittest.TestCase):
                     patch.object(browser,'provision_bitwarden_host'), \
                     patch.object(browser,'open_manual_tab') as handoff, \
                     patch.object(browser.subprocess,'Popen',return_value=process) as spawn:
-                actual,target = browser.start_headed(root,config,['open','--headed','--manual','https://example.com'],{})
+                actual,target = browser.start_headed(root,config,['open','--headed','--manual','--native-consent','https://example.com'],{})
             self.assertIs(actual,process)
             self.assertIsNone(target)
             self.assertFalse(any(a.startswith(('--remote-debugging','--enable-automation','--no-sandbox')) for a in spawn.call_args.args[0]))
@@ -226,7 +226,7 @@ class RuntimeTests(unittest.TestCase):
             browser.stop_runtime_daemon(state);kill.assert_not_called()
 
     def test_wrapper_flag_and_manual_guard_preserve_literal_data_and_config(self):
-        self.assertEqual(browser.without_manual_option(['open','--manual','false','--','--manual']),['open','--','--manual'])
+        self.assertEqual(browser.without_manual_option(['open','--manual','false','--native-consent','--','--manual']),['open','--','--manual'])
         with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ,{'PI_SESSION_ID':'manual','XDG_STATE_HOME':temp},clear=True), \
                 patch.object(browser,'runtime_root',return_value=Path(temp)/'runtime'/'test'), \
                 patch.object(browser,'managed_state',return_value={'manual':True}):

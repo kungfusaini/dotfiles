@@ -109,57 +109,77 @@ in the same page/context. No cookie export is needed.
 After manual interaction, `pi-browser snapshot` observes the resulting page and
 the usual click/fill commands operate in that same browser.
 
-## Human-first sign-in and native consent
+## Manual handback with preauthorized localhost debugging
 
 ```bash
-# Normal Vivaldi binary with Chromium UI; no debugging or agent attachment.
+# Dedicated browser: localhost debugging enabled, no agent attached before handback.
 project-workspace-exec pi-browser open --headed --manual --persistent https://mail.google.com/
 
-# After explicit handback, request the next native permission stage.
+# After explicit handback; no native Allow click is needed in the default mode.
 pi-browser connect
+
+# Optional per-connection native approval instead of preauthorized debugging.
+project-workspace-exec pi-browser open --headed --manual --native-consent https://example.com
 ```
 
-`--manual` is an optional mode on this Hyprland desktop; existing modes remain
-available. Its readable process parent retains workspace-verification ancestry.
-`list` reports manual/not connected; page commands refuse to run until handoff.
-Previously user-enabled native debugging settings are not disabled or overwritten.
+Sumeet explicitly approved always-authorized debugging for the dedicated agent
+browser. It starts a standard server bound to `127.0.0.1` on a nonzero OS-selected
+port. **Any local program able to reach it can control the signed-in browser
+without another Allow prompt**, even after Pi detaches. This is not a security
+sandbox. Everyday Vivaldi/profile is unchanged; do not enable this mode on other
+browsers/profiles without authorization or share its endpoint.
+
+`--manual` means **no agent attachment/page observation until handback**, not
+"debugging disabled". Pause all browser actions/observations during human login,
+vault unlock or credential entry, despite the server already being enabled.
+`list` reports manual/not connected with `debugging: preauthorized`; page commands
+refuse until handback. Startup verifies PID/start, listening-socket ownership,
+loopback address and endpoint identity. Port conflicts fail closed. No native
+checkbox/dialog is automated, and native preferences are not overwritten.
 
 `connect` returns JSON status, without restarting or navigating the task page:
 
-- `enable-debugging`: the native `vivaldi://inspect/#remote-debugging` page is open.
+- `connecting`: the default preauthorized-mode daemon is starting. Retry with a
+  bounded wait after handback; no native permission action is required.
+- Only with `--native-consent`, `enable-debugging`: the native `vivaldi://inspect/#remote-debugging` page is open.
   Its **Allow remote debugging for this browser instance** checkbox belongs to the
   human, not the agent.
-- `approve-connection`: a background connection request is pending. Vivaldi's native
+- Only with `--native-consent`, `approve-connection`: a background request is pending. Vivaldi's native
   **Allow remote debugging?** dialog requires human confirmation.
-- `awaiting-approval`: that request is still pending. It has no automatic expiry;
+- Only with `--native-consent`, `awaiting-approval`: that request is still pending. It has no automatic expiry;
   there is no need to poll while the human uses the browser.
 - `connected: true`: a later `connect`, after explicit handback, selects the single
   HTTP(S) tab matching the original task origin. Missing/ambiguous task tabs fail
   closed. Output contains only the origin, never page content or raw CLI metadata.
 - `connected: true, reused: true`: an additional `connect` on this chat's existing
   approved runtime connection reuses it after browser/profile ownership, daemon
-  PID/start and endpoint checks. It creates no connection, permission request,
-  tab, navigation or page observation, and does not change the selected task.
+  PID/start and endpoint checks. It creates no debugger WebSocket, permission
+  request, tab, navigation or page observation, and does not change the task.
+  Owned endpoint version metadata may be checked.
   This is connection metadata, **not** a page-health or task-success check. A dead,
   changed or detached connection fails closed; it is never silently reconnected.
 
 Keep the owned browser/connection open between authorized operations to avoid
 unnecessary new prompts. This reuse is scoped to the owning Pi chat, not automatic
-cross-chat access. A genuinely new connection still needs native approval; do not
-automate the native checkbox/dialog or weaken its protection.
+cross-chat access. Default preauthorized connections need no Allow prompt, including
+new connections after a browser restart. New connections in `--native-consent`
+mode still need approval; never automate its checkbox/dialog.
 
 The browser PID, profile, page and login stay unchanged. No cookies are copied,
-exported or imported. Automatic snapshots are disabled in this consent connection;
+exported or imported. Automatic snapshots are disabled in this manual handoff connection;
 explicit `snapshot` remains available for authorized tasks. Native permission grants
 browser-wide debugging capability, not a hard tab-only sandbox; task scope and
 password-manager rules still apply. `close` stops only the owned browser/daemon;
-`detach` releases them without deleting profiles or closing the browser.
+`detach` releases them without deleting profiles or closing the browser. The
+preauthorized debugging server remains enabled until that browser exits.
 
-Vivaldi's direct on-demand WebSocket comes from the owned profile's
-`DevToolsActivePort`; its HTTP `/json/version` route is not available. This uses the
-built-in permission UI, not a Playwright extension or changed automation signals.
-Google/provider acceptance still needs a real manual check; synthetic login tests
-do not establish it. The normal Vivaldi profile is untouched.
+Preauthorized mode validates the owned HTTP `/json/version` endpoint and selects/
+activates the exact existing task tab, without global desktop input or focus.
+It never probes foreign listeners or falls back to native approval on failure.
+The opt-in native-consent mode instead reads its owned `DevToolsActivePort` direct
+WebSocket; that endpoint has no HTTP version route. Existing windows retain their
+launch mode until explicitly reopened. Real provider acceptance still needs human
+confirmation; synthetic tests do not establish it. Everyday Vivaldi is untouched.
 
 ## Popup compatibility and legacy custom interface
 
@@ -172,8 +192,8 @@ popup stall, including possible blank pages and reconnect failure. Do not select
 that legacy interface for popup-dependent automation. The internal UI switch is
 version-pinned; upgrades require the private acceptance suite again.
 
-Saved sign-ins are separate from native automation approval, which can be required
-again for a new connection. Real Google/Bitwarden login outcomes still need human
+Saved sign-ins are separate from debugging mode. Default preauthorized connections
+need no native approval; opt-in native-consent connections still require it. Real Google/Bitwarden login outcomes still need human
 confirmation. Never repeat a submission whose dispatch/outcome is unknown, equate
 process/listener liveness with page health, remove request/file policy, or restart
 an existing browser without authorization. Known upstream routed-popup limitations

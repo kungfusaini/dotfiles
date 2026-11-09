@@ -101,21 +101,54 @@ established. Attachment retains the external
 browser's own scope and ownership and may expose authenticated pages. Detach leaves
 the external browser alive. No profile/cookie copying or implicit connection target.
 
-## Human-first sign-in with native runtime consent
+## Preauthorized localhost debugging and manual handback
 
 ```sh
 project-workspace-exec pi-browser open --headed --manual --persistent https://mail.google.com/
-# After explicit human handback, request the next permission stage:
+# After explicit human handback; no native Allow prompt in this default mode:
 pi-browser connect
+# Opt into per-connection native permission instead:
+project-workspace-exec pi-browser open --headed --manual --native-consent https://example.com/
 ```
 
-Manual mode launches ordinary Vivaldi without debugger/automation flags or an
-agent connection. It never toggles the browser's native debugging preference.
-Owned-window metadata determines UI readiness; ordinary singleton URL handoff
-opens the task. A readable waiting parent preserves sandboxed-process ancestry
-for verified workspace placement. Existing modes remain available.
+Sumeet approved always-authorized remote debugging for this dedicated agent
+browser. Manual mode now launches a standard debugging server bound only to
+`127.0.0.1`, but **does not attach an agent or observe pages before handback**.
+New debugger connections need no native Allow click, including after browser
+restart. **Reachable local programs can control this signed-in browser without
+further approval**; this intentionally trades per-connection protection for the
+requested convenience. It is not a hard security/tab sandbox. Everyday Vivaldi
+and provider/vault security settings are unchanged. Do not expose/share the
+endpoint, copy authentication data or assume this authorizes unrelated tabs.
 
-The native runtime feature is available in the pinned Vivaldi, despite third-party
+A nonzero OS-selected developer port preserves normal manual behavior rather
+than using Chromium's special `port=0` automation indicator. There are no JS,
+user-agent, webdriver or stealth overrides; see [MDN's documented flags](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/webdriver).
+The reservation is released before Chromium binds, so startup verifies exact
+PID/start, its `/proc` listening socket inode, IPv4 loopback binding and a bounded
+HTTP version/WebSocket identity response. It rejects wildcard listeners, port
+collisions, reused processes and changed endpoints before attaching. Cleanup
+skips unowned endpoint access and stops only the owned process. No insecure
+fallback or native prompt is attempted if the authorized endpoint is unavailable.
+The custom agent profile follows [Chrome's non-default-profile debugging guidance](https://developer.chrome.com/blog/remote-debugging-port).
+
+`--manual` still means no agent attachment: page commands refuse until `connect`
+after explicit human handback. Stop actions, screenshots, DOM and traffic
+observation while Sumeet enters credentials or unlocks a vault. Automatic snapshots
+remain disabled in the handoff daemon. A new connection returns `connecting`
+until ready, then only `connected` and the validated task origin. The single task
+tab is selected/activated using the owned endpoint API, without navigation, a new
+tab or desktop focus/input. This also handles first-install extension onboarding
+tabs that can otherwise stay in front in an unfocused browser window.
+
+Owned-window metadata and a readable waiting parent preserve verified workspace
+placement. Explicit shared/profile paths, the sandbox, installed extensions and
+all file/network policy remain unchanged. No native consent preference is toggled.
+
+### Optional native-consent mode
+
+`--headed --manual --native-consent` retains the previous no-startup-debugger mode.
+Its native runtime feature is available in the pinned Vivaldi, despite third-party
 channel lists naming Chrome/Edge only. `connect` verifies the exact live owned
 PID/start identity and profile-lock owner. Without a marker, it opens
 `vivaldi://inspect/#remote-debugging` and returns `enable-debugging`; Sumeet enables
@@ -123,11 +156,16 @@ PID/start identity and profile-lock owner. Without a marker, it opens
 Vivaldi's native **Allow remote debugging?** consent and returns
 `approve-connection`. This private daemon waits without timing out or capturing
 pages. After explicit handback, `connect` finalizes attachment, selecting the single
-existing HTTP(S) task-origin tab. Missing/ambiguous tabs fail closed.
+existing HTTP(S) task-origin tab. Missing/ambiguous tabs fail closed. Only this
+opt-in mode asks for renewed native approval for genuinely new connections.
+Its direct WebSocket comes from the owned `DevToolsActivePort`; HTTP version
+requests are unavailable on that native on-demand endpoint.
 
-Further `connect` calls in that same Pi session reuse the existing approved runtime
+### Shared handoff and reuse semantics
+
+Further `connect` calls in that same Pi session reuse the existing authorized runtime
 connection. The wrapper checks owned browser PID/start, the profile-lock owner,
-recorded runtime daemon PID/start and the owned endpoint marker, then returns only
+recorded runtime daemon PID/start and the owned endpoint identity, then returns only
 `{"connected":true,"reused":true}`. No new daemon/WebSocket, permission prompt,
 CLI page command, tab selection, navigation, snapshot or origin read is performed.
 It does not depend on subsequently regenerated CLI config or report the original
@@ -137,22 +175,23 @@ ownership or an endpoint change fails without starting a replacement connection.
 
 Keep a live headed browser and approved daemon between authorized operations;
 headed sessions already have no default idle shutdown. This reduces unnecessary
-same-chat prompts, not legitimate requests for a new native debugging connection.
-There is no cross-chat broker, shared automation ownership, native auto-approval
-or always-debuggable launch mode. Native protection intentionally asks for each
-new connection; see [Chrome's consent design](https://developer.chrome.com/blog/chrome-devtools-mcp-debug-your-browser-session).
+same-chat reconnects. There is no cross-chat broker or shared automation ownership.
+Preauthorized mode permits fresh local debugger connections without prompts;
+opt-in native-consent mode retains [Chrome's per-connection consent design](https://developer.chrome.com/blog/chrome-devtools-mcp-debug-your-browser-session).
+Neither mode clicks or automates the native permission UI.
 
 There is **no restart, new task page, navigation, cookie copying, state export or
-profile import**. The browser, page and login remain live. The native UI writes a
-strictly validated direct WebSocket endpoint in the owned profile's
-`DevToolsActivePort`; HTTP `/json/version` is not served by this on-demand endpoint.
+profile import**. The browser, page and login remain live. Preauthorized endpoints
+are validated through the owned loopback HTTP version API; the native-consent
+mode uses its strictly validated owned marker instead.
 Raw CLI stdout/stderr, code, page/title and tab metadata are captured and filtered,
 not forwarded. Only status and validated origin are emitted. A version-pinned,
 fail-closed CLI patch disables its hardcoded automatic snapshots only in the
-private consent daemon. Explicit snapshots still work. Normal modes are unchanged.
+private handoff daemon. Explicit snapshots still work. Non-manual modes are unchanged.
 
-Native permission grants full browser debugging capability; origin selection is
-not a security sandbox. AGENTS.md authorization, manual-entry pause, explicit
+Both modes permit full browser debugging; origin selection is not a security
+sandbox. In preauthorized mode, `detach` leaves the local server enabled until
+browser exit; releasing Pi ownership does not revoke that local capability. AGENTS.md authorization, manual-entry pause, explicit
 handback, task scope and password-manager restrictions remain authoritative.
 Declining a request leaves the same manual browser/profile intact, with no automatic
 retry. `close` or `detach` also terminates the exact owned pending daemon by
@@ -160,9 +199,10 @@ PID/start identity; detach releases browser/profile ownership. Existing temporar
 cleanup and explicit/persistent-profile retention are unchanged.
 
 Tests use only a private compositor/DBus and synthetic local login. They prove
-startup has no debugger flags, normal `navigator.webdriver` behavior is unmodified,
-native permission approval/denial, same PID/profile/login, real interaction after
-attachment and metadata-only output. A synthetic Local State seed models the
+default startup has no agent attachment but does have owned loopback debugging;
+normal `navigator.webdriver` behavior is unmodified. Default initial/reconnections
+and browser restarts pass without permission input; opt-in native mode still tests
+approval/denial. Both retain PID/profile/login, interaction and metadata-only output. A synthetic Local State seed models the
 checkbox; test-human permission input is bounded to the private compositor and
 excluded only during explicit consent markers. Browser placement and all agent
 focus events outside that interval remain checked. Address reuse no longer causes
@@ -171,13 +211,14 @@ suite verifies that manual/connected repeated opens fail without altering browse
 state and repeated connects reuse the exact approved daemon without new consent,
 while subsequent interaction and the popup/reconnect regressions remain usable.
 
-A restart prototype and Playwright-extension experiment were not shipped. The
-built-in route follows [Chrome's runtime-consent mechanism](https://developer.chrome.com/blog/chrome-devtools-mcp-debug-your-browser-session).
+A restart-on-handoff prototype and Playwright-extension experiment were not
+shipped. The optional native route follows [Chrome's runtime-consent mechanism](https://developer.chrome.com/blog/chrome-devtools-mcp-debug-your-browser-session).
 See also [Google's browser guidance](https://support.google.com/accounts/answer/7675428?hl=en)
 and [MDN's webdriver documentation](https://developer.mozilla.org/en-US/docs/Web/API/Navigator/webdriver).
 **Real Google sign-in acceptance still requires Sumeet's manual check**; synthetic
-login cannot prove it. There is no stealth override, account-security downgrade or
-provider-login retry loop. The everyday Vivaldi/profile is unchanged.
+login cannot prove it. There is no stealth override, provider account-security
+change or login retry loop. The local debugging exposure is intentionally changed
+only for the dedicated agent browser, as authorized above. The everyday Vivaldi/profile is unchanged.
 
 ## Legacy custom-interface popup stall (avoided by the default)
 
@@ -200,8 +241,9 @@ not necessarily the [routed-popup subresource bug](https://github.com/microsoft/
 
 Target filtering, changing pause-on-start behavior, non-awaiting unsupported-target
 detach, treating `other` as pages and Vivaldi's popup-in-tab preference did not
-resolve the local fixture. Those experimental production patches were removed;
-no debugger, routing, file-access or consent safeguards were weakened. A single
+resolve the local fixture. Those experimental protocol patches were removed. The subsequently authorized
+startup-debugging mode is a separate, documented local-access trade-off; routing,
+file-access policy, sandbox and provider account security remain unchanged. A single
 recovery probe found that detach returned successfully and a new manual fixture
 tab loaded, but the pending popup stayed blank. That is not proof of safe retry,
 complete recovery or a successful Gmail submission.
@@ -212,10 +254,15 @@ verification. The shipped mitigation is interface selection, not an engine patch
 policy bypass or proof that Gmail's underlying forwarding error is resolved.
 
 To reproduce on the **private** compositor, use the normal `manual_integration.py`
-command (same harness/executable arguments as `headed_integration.py`, plus
-`--wtype /absolute/wtype`) with these environment flags:
+command (same harness/executable arguments as `headed_integration.py`) with these
+flags. Default acceptance needs no keyboard/pointer input or permission automation:
 
-- No extra flags: default Chromium-interface native-consent acceptance.
+- No extra flags: default Chromium-interface preauthorized handoff acceptance.
+- `PI_BROWSER_TEST_NATIVE_CONSENT=1` plus `--wtype /absolute/wtype`: opt-in native
+  approval/renewed-approval controls. `PI_BROWSER_TEST_DENY_FIRST=1` adds denial.
+- `PI_BROWSER_TEST_SHARED_RUNTIME=1` reuses a fresh synthetic profile and local
+  fixture origin across two chats/browser lifetimes, verifying no-prompt startup,
+  unmodified webdriver behavior and retained fixture login.
 - `PI_BROWSER_TEST_POPUP=1`: strict popup/image/navigation acceptance; passes in
   the default interface.
 - Also `PI_BROWSER_TEST_DIRECT=1`: default debugging-port control.
@@ -284,10 +331,12 @@ or production dependency. Add these optional environment flags:
 - `PI_PROBE_SHARED_PROFILE=1 PI_PROBE_EXTENSION=1` to verify cross-chat/browser
   restart persistence in a **new private fixture profile**, including only an
   explicitly synthetic `chrome.storage.local` marker in the packaged extension.
-- For actual-default official CLI/native-consent acceptance, use
-  `manual_integration.py` with `PI_BROWSER_TEST_POPUP=1 PI_BROWSER_TEST_RECONNECT=1`.
-  This uses **no interface override/config**, normal native approval and a verified
-  existing endpoint for fixture reattachment, without restarting the browser.
+- For actual-default official CLI preauthorized acceptance, use
+  `manual_integration.py` with `PI_BROWSER_TEST_POPUP=1 PI_BROWSER_TEST_RECONNECT=1`
+  and optionally `PI_BROWSER_TEST_SHARED_RUNTIME=1`. This uses **no interface
+  override/config or permission input** and verifies a fresh debugger attachment.
+  Set `PI_BROWSER_TEST_NATIVE_CONSENT=1` and pass `--wtype /absolute/wtype` for the
+  separate opt-in native-approval regression.
 
 Build versus adopt: [Puppeteer's maintained CDP API](https://pptr.dev/api/puppeteer.connectoptions)
 was tested directly and did not fix the native-interface stall, so introducing it
