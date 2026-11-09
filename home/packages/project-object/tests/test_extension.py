@@ -52,82 +52,42 @@ class ExtensionTests(unittest.TestCase):
             "PI_CODING_AGENT_SESSION_DIR",
         ):
             environment.pop(name, None)
-        # Never contact the live notification bus from extension tests.
-        environment["PROJECT_OBJECT_NOTIFY"] = str(self.root / "missing-notify")
         environment.update(extra_environment or {})
         script = f"import fs from 'node:fs'; import * as m from {json.dumps(EXTENSION)}; {expression}"
         return subprocess.run(["node", "--no-warnings", "--experimental-strip-types", "--input-type=module", "-e", script], env=environment, text=True, capture_output=True)
 
-    def test_attention_notifications_wait_for_settle_and_deduplicate(self):
-        capture = self.root / "notifications.jsonl"
-        notifier = self.root / "notify"
-        notifier.write_text("#!/usr/bin/env python3\nimport json, sys\nwith open(" + repr(str(capture)) + ", 'a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n")
-        notifier.chmod(0o700)
-        expression = r"""
-const handlers = {}, tools = {};
-m.default({on: (name, fn) => { handlers[name] = fn; }, registerTool: tool => { tools[tool.name] = tool; }, registerCommand: () => {}});
-const ctx = {sessionManager: {getSessionId: () => 'test-session'}};
-const append = (brief) => tools.project_worklog_append.execute('call', {type: 'note', summary: 'Needs input', ...(brief ? {brief} : {})}, undefined, undefined, ctx);
-const request = {current: 'Choose <safe> & useful work.', next: 'Pick a task.', attention: 'decision'};
-await append(request);
-if (fs.existsSync(process.env.CAPTURE)) throw Error('notified before settle');
-await handlers.agent_settled();
-await handlers.agent_settled();
-await append(request);
-await handlers.agent_settled();
-await append({current: 'Ready', attention: 'review'});
-await append({current: 'Working', attention: 'none'});
-await handlers.agent_settled();
-await append(request);
-await handlers.agent_settled();
-await append({current: 'Do something', attention: 'action'});
-await append(undefined); // Newest event supersedes a stale request.
-await handlers.agent_settled();
-try { await append({current: 'Bad', attention: 'invalid'}); } catch {}
-await handlers.agent_settled();
-await append({current: 'Please sign in', attention: 'action'});
-await handlers.agent_settled();
-await append({current: 'Check the result', attention: 'review'});
-await handlers.agent_settled();
-await append(request); // A -> B -> A must not notify A again without none.
-await handlers.agent_settled();
-console.log('ok');
-"""
-        result = self.node(expression, {
-            "PROJECT_OBJECT_ID": self.project_id,
-            "PROJECT_OBJECT_NOTIFY": str(notifier), "CAPTURE": str(capture),
-        })
-        self.assertEqual(result.returncode, 0, result.stderr)
-        calls = [json.loads(line) for line in capture.read_text().splitlines()]
-        self.assertEqual(len(calls), 4)
-        self.assertEqual(calls[0][-2], "Alpha — decision needed")
-        self.assertEqual(calls[0][-1], "Choose &lt;safe&gt; &amp; useful work.\nPick a task.")
-        self.assertEqual(calls[0][-3], "--")
-        self.assertEqual(calls[2][-2], "Alpha — action needed")
-
-        stream_id = str(uuid.uuid4())
-        (self.home / self.project_id / "streams" / stream_id).mkdir(parents=True)
-        (self.home / self.project_id / "streams.json").write_text(json.dumps({
-            "version": 1, "streams": [{"id": stream_id, "name": "Surface", "mainDirectory": None, "archivedAt": None}],
-        }))
-        result = self.node(expression.replace("attention: 'decision'", "attention: 'review'"), {
-            "PROJECT_OBJECT_ID": self.project_id, "PROJECT_OBJECT_STREAM_ID": stream_id,
-            "PROJECT_OBJECT_NOTIFY": str(notifier), "CAPTURE": str(self.root / "unused"),
-        })
-        self.assertEqual(result.returncode, 0, result.stderr)
-        calls = [json.loads(line) for line in capture.read_text().splitlines()]
-        self.assertEqual(calls[4][-2], "Alpha · Surface — review needed")
-
-    def test_attention_notification_failure_does_not_fail_agent(self):
+    def test_plain_completion_markers_survive_fast_runs_and_do_not_replay(self):
         result = self.node(r"""
-const handlers = {}, tools = {};
-m.default({on: (name, fn) => { handlers[name] = fn; }, registerTool: tool => { tools[tool.name] = tool; }, registerCommand: () => {}});
-await tools.project_worklog_append.execute('call', {type: 'note', summary: 'Need help', brief: {current: 'Please review', attention: 'review'}}, undefined, undefined, {sessionManager: {getSessionId: () => 'test'}});
+const handlers = {};
+m.default({on: (name, fn) => { handlers[name] = fn; }, registerTool: () => {}, registerCommand: () => {}});
+const ctx = {hasUI: false, mode: 'rpc', sessionManager: {getSessionId: () => 'test-session'}, ui: {setStatus: () => {}, theme: {fg: (_, text) => text}}};
+const file = `${process.env.PROJECT_OBJECT_RUNTIME_DIR}/pi-activity/${process.pid}.json`;
+const record = () => JSON.parse(fs.readFileSync(file, 'utf8'));
+await handlers.session_start({}, ctx);
+const startup = record();
+await handlers.agent_start();
+await handlers.agent_settled(); // No worklog or explicit attention brief.
+const first = record();
 await handlers.agent_settled();
-console.log('ok');
-""", {"PROJECT_OBJECT_ID": self.project_id})
+const duplicate = record();
+await handlers.agent_start();
+const working = record();
+await handlers.agent_settled();
+const second = record();
+await handlers.session_start({}, ctx); // Reload/startup must not replay completion.
+const reloaded = record();
+await handlers.session_shutdown();
+console.log(JSON.stringify({startup, first, duplicate, working, second, reloaded}));
+""", {"PROJECT_OBJECT_ID": self.project_id, "PROJECT_OBJECT_RUNTIME_DIR": str(self.root / "runtime")})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "ok")
+        output = json.loads(result.stdout)
+        self.assertIsNone(output["startup"]["completedRun"])
+        self.assertTrue(output["first"]["completedRun"])
+        self.assertEqual(output["first"]["completedRun"], output["duplicate"]["completedRun"])
+        self.assertEqual(output["first"]["completedRun"], output["working"]["completedRun"])
+        self.assertEqual(output["working"]["state"], "working")
+        self.assertNotEqual(output["first"]["completedRun"], output["second"]["completedRun"])
+        self.assertIsNone(output["reloaded"]["completedRun"])
 
     def test_explicit_archived_project_is_not_resolved(self):
         self.registry["projects"][0]["archivedAt"] = "2026-01-01T00:00:00Z"

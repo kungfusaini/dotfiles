@@ -13,6 +13,93 @@ HOME_MANAGER_MODULE = ROOT / "nix" / "home-manager-module.nix"
 
 
 class PickerGuiSourceTests(unittest.TestCase):
+    def completion_notifier(self):
+        tree = ast.parse(GUI_SOURCE.read_text())
+        picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")
+        names = {"notify_settled_scopes", "poll_activity"}
+        methods = [copy.deepcopy(node) for node in picker.body if isinstance(node, ast.FunctionDef) and node.name in names]
+        backend = SimpleNamespace(
+            NOTIFY="isolated-notify", load_session=lambda: {},
+            hypr_json=lambda _: [{"name": "Alpha"}, {"name": "Alpha · Surface"}],
+            active_workspace_name=lambda: "Elsewhere", scope_is_open=lambda *_: True,
+            project_scope=lambda p: p["id"], stream_scope=lambda p, s: (p["id"], s["id"]),
+            workspace_name=lambda p: p["name"], stream_workspace_name=lambda p, s: f'{p["name"]} · {s["name"]}',
+            project_browser_workspace_name=lambda p: p["name"] + " Browser",
+        )
+        namespace = {"backend": backend, "subprocess": subprocess, "GLib": SimpleNamespace(SOURCE_CONTINUE=True)}
+        exec(compile(ast.fix_missing_locations(ast.Module(body=methods, type_ignores=[])), GUI_SOURCE, "exec"), namespace)
+        project, stream = {"id": "p", "name": "Alpha"}, {"id": "s", "name": "Surface"}
+        app = SimpleNamespace(
+            loaded_agent_completions={}, seen_agent_completions=None, pending_settled_scopes=set(),
+            context_key=lambda p, s: (p["id"], s["id"] if s else None),
+            context_targets=lambda: [(project, None), (project, stream)],
+        )
+        app.notify_settled_scopes = lambda activity: namespace["notify_settled_scopes"](app, activity)
+        return app, backend, namespace
+
+    def test_green_completion_alerts_plain_finish_once_and_waits_for_scope(self):
+        app, backend, _ = self.completion_notifier()
+        main, stream = ("p", None), ("p", "s")
+        with mock.patch.object(subprocess, "run") as notify:
+            app.loaded_agent_completions = {main: {"old"}}
+            app.notify_settled_scopes({main: {"idle"}})  # Startup baseline, no replay.
+            notify.assert_not_called()
+            app.loaded_agent_completions = {main: {"first"}}
+            app.notify_settled_scopes({main: {"idle"}})  # Fast run: no observed working poll.
+            self.assertEqual(notify.call_count, 1)
+            self.assertEqual(notify.call_args.args[0][-2], "Alpha — ready")
+            app.notify_settled_scopes({main: {"idle"}})
+            self.assertEqual(notify.call_count, 1)
+            app.loaded_agent_completions = {main: {"second"}, stream: {"stream-first"}}
+            app.notify_settled_scopes({main: {"idle", "working"}, stream: {"idle"}})
+            self.assertEqual(notify.call_count, 2)  # Stream is independent of main.
+            self.assertEqual(notify.call_args.args[0][-2], "Alpha · Surface — ready")
+            app.notify_settled_scopes({main: {"idle", "working"}, stream: {"idle"}})
+            self.assertEqual(notify.call_count, 2)
+            app.loaded_agent_completions[main].add("third")
+            app.notify_settled_scopes({main: {"idle"}, stream: {"idle"}})
+            self.assertEqual(notify.call_count, 3)  # One alert after all main agents settle.
+            app.notify_settled_scopes({main: {"idle"}, stream: {"idle"}})
+            self.assertEqual(notify.call_count, 3)
+            self.assertIn("--urgency=normal", notify.call_args.args[0])
+            self.assertIn("--", notify.call_args.args[0])
+
+    def test_green_completion_closed_gone_and_failed_alerts_do_not_replay(self):
+        app, backend, _ = self.completion_notifier()
+        key = ("p", None)
+        app.notify_settled_scopes({})
+        with mock.patch.object(subprocess, "run", side_effect=OSError("unavailable")) as notify:
+            backend.scope_is_open = lambda *_: False
+            app.loaded_agent_completions = {key: {"closed"}}
+            app.notify_settled_scopes({key: {"idle"}})
+            backend.scope_is_open = lambda *_: True
+            app.notify_settled_scopes({key: {"idle"}})
+            notify.assert_not_called()
+            app.loaded_agent_completions = {key: {"gone"}}
+            app.notify_settled_scopes({})
+            app.notify_settled_scopes({key: {"idle"}})
+            notify.assert_not_called()
+            app.loaded_agent_completions = {key: {"failure"}}
+            app.notify_settled_scopes({key: {"idle"}})
+            self.assertEqual(notify.call_count, 1)
+            app.notify_settled_scopes({key: {"idle"}})
+            self.assertEqual(notify.call_count, 1)
+
+    def test_completion_poll_runs_while_picker_is_hidden(self):
+        app, backend, namespace = self.completion_notifier()
+        current = {("p", None): {"idle"}}
+        app.registry = {}
+        app.agent_activity = {}
+        app.window = SimpleNamespace(get_visible=lambda: False)
+        app.stack = mock.Mock()
+        app.load_agent_activity = lambda: current
+        app.notify_settled_scopes = mock.Mock()
+        backend.load_registry = lambda: {"projects": []}
+        self.assertTrue(namespace["poll_activity"](app))
+        app.notify_settled_scopes.assert_called_once_with(current)
+        self.assertEqual(app.agent_activity, current)
+        app.stack.get_visible_child_name.assert_not_called()
+
     def test_invalid_stream_diagnostics_cannot_open_close_resume_or_archive(self):
         tree = ast.parse(GUI_SOURCE.read_text())
         picker = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "PickerApplication")

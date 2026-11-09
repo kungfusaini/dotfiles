@@ -248,6 +248,9 @@ class PickerApplication(Adw.Application):
         self.session = None
         self.rows = []
         self.agent_activity = {}
+        self.loaded_agent_completions = {}
+        self.seen_agent_completions = None
+        self.pending_settled_scopes = set()
         self.context_cache = {}
         self.context_scope_targets = []
         self.context_open = False
@@ -285,6 +288,7 @@ class PickerApplication(Adw.Application):
             self.session = backend.reconcile_session(self.registry, backend.load_session())
             self.current_workspace = backend.active_workspace_name()
             self.agent_activity = self.load_agent_activity()
+            self.seen_agent_completions = set().union(*self.loaded_agent_completions.values()) if self.loaded_agent_completions else set()
             self.load_picker_state()
             self.preload_context_cache()
         except Exception as error:
@@ -558,6 +562,7 @@ class PickerApplication(Adw.Application):
         return page
 
     def load_agent_activity(self):
+        self.loaded_agent_completions = {}
         activity_root = backend.RUNTIME_ROOT / "pi-activity"
         try:
             if activity_root.is_symlink() or not activity_root.is_dir():
@@ -609,18 +614,74 @@ class PickerApplication(Adw.Application):
                     continue
                 if environment.get("PROJECT_OBJECT_STREAM_ID") != (stream_id or None):
                     continue
-                activity.setdefault((project_id, stream_id), set()).add(state)
+                key = (project_id, stream_id)
+                activity.setdefault(key, set()).add(state)
+                completed = value.get("completedRun")
+                if isinstance(completed, str) and 0 < len(completed) <= 160:
+                    token = (pid, value.get("processStartTime"), value.get("sessionId"), completed)
+                    self.loaded_agent_completions.setdefault(key, set()).add(token)
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 continue
         return activity
 
+    def notify_settled_scopes(self, activity):
+        tokens = set().union(*self.loaded_agent_completions.values()) if self.loaded_agent_completions else set()
+        if self.seen_agent_completions is None:
+            self.seen_agent_completions = tokens
+            return
+        for key, completions in self.loaded_agent_completions.items():
+            if completions - self.seen_agent_completions:
+                self.pending_settled_scopes.add(key)
+        self.seen_agent_completions.update(tokens)
+        if not self.pending_settled_scopes:
+            return
+
+        # Use the same scope/activity interpretation as the green workspace dots.
+        # Refresh even while hidden; never rely on the inspector's cached brief.
+        session = backend.load_session()
+        live_names = {workspace.get("name") for workspace in backend.hypr_json("workspaces") if isinstance(workspace, dict)}
+        current_workspace = backend.active_workspace_name()
+        targets = {self.context_key(project, stream): (project, stream) for project, stream in self.context_targets()}
+        for key in list(self.pending_settled_scopes):
+            target = targets.get(key)
+            if not target:
+                self.pending_settled_scopes.discard(key)
+                continue
+            project, stream = target
+            scope = backend.stream_scope(project, stream) if stream else backend.project_scope(project)
+            workspace = backend.stream_workspace_name(project, stream) if stream else backend.workspace_name(project)
+            is_current = current_workspace == workspace or (not stream and current_workspace == backend.project_browser_workspace_name(project))
+            is_open = is_current or (workspace in live_names and backend.scope_is_open(session, scope))
+            states = activity.get(key, set())
+            if not is_open or not states:
+                self.pending_settled_scopes.discard(key)
+                continue
+            if "working" in states or "idle" not in states:
+                continue
+            # Consume before delivery: failures must not create a repeated-alert loop.
+            self.pending_settled_scopes.discard(key)
+            label = f'{project["name"]} · {stream["name"]}' if stream else project["name"]
+            try:
+                subprocess.run(
+                    [backend.NOTIFY, "--app-name=Pi", "--urgency=normal", "--expire-time=5000", "--",
+                     f"{label} — ready", "Agents in this workspace have finished and are ready for you."],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False, timeout=2,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
     def poll_activity(self):
-        if self.window and self.window.get_visible():
+        try:
+            self.registry = backend.load_registry()
             current = self.load_agent_activity()
+            self.notify_settled_scopes(current)
             if current != self.agent_activity:
                 self.agent_activity = current
-                if self.stack.get_visible_child_name() == "list":
+                if self.window and self.window.get_visible() and self.stack.get_visible_child_name() == "list":
                     self.refresh_rows()
+        except Exception as error:
+            # A transient registry/desktop failure must not stop background monitoring.
+            print(f"Project picker activity poll: {error}", file=sys.stderr)
         return GLib.SOURCE_CONTINUE
 
     @staticmethod
