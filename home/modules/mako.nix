@@ -3,6 +3,9 @@
 {
   services.mako = {
     enable = true;
+    # Expire notifications even when an app requests that they stay open.
+    settings.default-timeout = 5000;
+    settings.ignore-timeout = true;
     # Keep mail syncing, but never show or retain Thunderbird notifications.
     settings."app-name=\"Thunderbird\"" = {
       invisible = true;
