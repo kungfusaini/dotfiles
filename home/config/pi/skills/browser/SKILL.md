@@ -42,7 +42,7 @@ Use `--` before dash-prefixed positional text: `pi-browser fill e3 -- '--help'`.
 # Default: temporary, headless Nix Vivaldi.
 pi-browser open https://example.com
 
-# Visible browser through the workspace launcher.
+# Immediately connected visible browser; for human sign-in, use the manual example below.
 project-workspace-exec pi-browser open --headed https://example.com
 
 # Native headed defaults reuse the same agent profile across chats.
@@ -110,6 +110,13 @@ After manual interaction, `pi-browser snapshot` observes the resulting page and
 the usual click/fill commands operate in that same browser.
 
 ## Manual handback with preauthorized localhost debugging
+
+For a new human-assisted sign-in, `AGENTS.md` requires the manual launch below,
+then explicit human handback before `connect`. A plain `open --headed` attaches
+automation immediately; merely pausing commands does not make it manual mode.
+`connect` attaches to the existing manual browser: do not run `open` again to
+resume automation. An already connected browser can continue authorized work
+without a restart; profile ownership and approval rules still apply.
 
 ```bash
 # Dedicated browser: localhost debugging enabled, no agent attached before handback.
@@ -180,6 +187,27 @@ The opt-in native-consent mode instead reads its owned `DevToolsActivePort` dire
 WebSocket; that endpoint has no HTTP version route. Existing windows retain their
 launch mode until explicitly reopened. Real provider acceptance still needs human
 confirmation; synthetic tests do not establish it. Everyday Vivaldi is untouched.
+
+### Observed Cloudflare handoff
+
+In the verified 2026-11-09 attempt, Cloudflare security verification looped in an
+immediately automated headed browser. Sumeet confirmed login succeeded after an
+approved restart into `--headed --manual --persistent` using the same shared
+profile. After explicit handback, `connect` succeeded and a read-only check of the
+same Cloudflare page responded without detected challenge text. No account
+settings, DNS writes or broader authenticated workflows were verified by that
+check; this is an observed login/connection success, not a universal fix.
+
+Local isolated tests show immediately automated headed mode uses
+`--remote-debugging-port=0` and exposes `navigator.webdriver=true`; the default
+manual/preauthorized mode uses a nonzero port and retains unmodified
+`navigator.webdriver=false` before and after connection. This difference is a
+plausible contributor, not proof of Cloudflare's exact detection reason. No
+webdriver/UA spoofing, stealth patches or security-policy weakening is needed for
+the observed sequence. [Cloudflare does not support automation frameworks for
+solving production challenges](https://developers.cloudflare.com/cloudflare-challenges/reference/supported-browsers/).
+If verification loops recur, stop retries and diagnose with approval rather than
+resetting profiles or promising a challenge bypass.
 
 ## Popup compatibility and legacy custom interface
 
