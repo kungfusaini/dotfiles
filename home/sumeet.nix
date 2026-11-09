@@ -58,6 +58,17 @@ in
     mimeApps = {
       enable = true;
       defaultApplications = {
+        # Use a lightweight Wayland viewer rather than an editor/PDF fallback.
+        "image/avif" = "swayimg.desktop";
+        "image/bmp" = "swayimg.desktop";
+        "image/gif" = "swayimg.desktop";
+        "image/heif" = "swayimg.desktop";
+        "image/jpeg" = "swayimg.desktop";
+        "image/jxl" = "swayimg.desktop";
+        "image/png" = "swayimg.desktop";
+        "image/svg+xml" = "swayimg.desktop";
+        "image/tiff" = "swayimg.desktop";
+        "image/webp" = "swayimg.desktop";
         "text/html" = "vivaldi-stable.desktop";
         "x-scheme-handler/http" = "project-browser.desktop";
         "x-scheme-handler/https" = "project-browser.desktop";
@@ -72,6 +83,7 @@ in
     nicotine-plus
     nodejs
     poppler-utils
+    swayimg
   ];
 
   # Prune stale user and Home Manager generations alongside the system policy.
