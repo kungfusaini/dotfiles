@@ -26,6 +26,54 @@ TestCase {
     }
     Component { id: signalSpyComponent; SignalSpy {} }
     Component { id: tileComponent; Tablet.GlassTile { width: 180; height: 100 } }
+    Component { id: controlsComponent; Tablet.ControlCenter { width: 392; height: 480 } }
+    function test_native_control_center_hides_exit_without_changing_preview_default() {
+        const controls = createTemporaryObject(controlsComponent, testCase)
+        const exit = findChild(controls, "exitPreview")
+        compare(exit.visible, true)
+        controls.live = true
+        controls.showExit = false
+        compare(exit.visible, false)
+    }
+    function test_native_home_animates_without_mock_app_and_uses_original_touch_navigation() {
+        const surface = makeSurface()
+        surface.nativePresentation = true
+        surface.nativeAppId = "browser"
+        surface.nativeAppVisible = true
+        surface.history.open("browser")
+        tryCompare(surface, "homeProgress", 0)
+        compare(surface.homeVisible, false)
+        compare(surface.activeApp, "") // no mock app rendering
+        const homeSpy = createTemporaryObject(signalSpyComponent, testCase, {target: surface, signalName: "nativeHomeRequested"})
+        surface.keyboardInset = 240
+        const handle = findChild(surface, "homeHandle")
+        compare(handle.mapToItem(surface, 0, handle.height).y, surface.height - 244)
+        const sequence = touchEvent(handle)
+        sequence.press(0, handle, 70, 24).commit()
+        tryCompare(surface, "navigationContactActive", true)
+        sequence.move(0, handle, 70, 4).commit()
+        wait(25)
+        sequence.move(0, handle, 70, -90).commit()
+        wait(25)
+        sequence.release(0, handle, 70, -90).commit()
+        tryCompare(homeSpy, "count", 1)
+        compare(surface.nativeAppVisible, true) // backend owns the state
+        surface.nativeAppVisible = false
+        wait(50)
+        verify(surface.homeProgress > 0 && surface.homeProgress < 1)
+        tryCompare(surface, "homeProgress", 1)
+        surface.openSwitcher()
+        compare(surface.switcherOpen, true)
+        compare(surface.history.cards()[0].id, "browser")
+    }
+    function test_native_settings_delegates_without_changing_simulated_values() {
+        const surface = makeSurface()
+        surface.settingsExternallyManaged = true
+        const spy = createTemporaryObject(signalSpyComponent, testCase, {target: surface, signalName: "settingsRequested"})
+        surface.pullFromCorner(44)
+        compare(spy.count, 1)
+        compare(surface.settingsOpen, false)
+    }
     function test_glass_tile_has_no_decorative_line_overlay() {
         const tile = createTemporaryObject(tileComponent, testCase)
         verify(tile !== null)

@@ -30,6 +30,16 @@ class TabletWorkspaceTests(unittest.TestCase):
     def state(self, origin="work"):
         trial.save_state({"instance": "test-instance", "return": origin, "enabled": True})
 
+    def test_native_session_blocks_legacy_workspace_entry(self):
+        path = Path(self.tmp.name) / 'tablet-proof'
+        path.mkdir()
+        (path / 'recovery.json').write_text('{}')
+        with patch.object(trial, 'dispatch') as dispatch, patch.object(trial, 'hypr') as query:
+            with self.assertRaisesRegex(RuntimeError, 'native tablet session'):
+                trial.enter()
+        dispatch.assert_not_called()
+        query.assert_not_called()
+
     def test_enter_only_switches_workspace_and_remembers_origin(self):
         with patch.object(trial, "hypr", side_effect=[{"name": "work"}, []]), \
                 patch.object(trial, "dispatch") as dispatch, \

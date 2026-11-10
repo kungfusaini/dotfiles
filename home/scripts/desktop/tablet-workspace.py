@@ -48,6 +48,8 @@ def foreground():
 
 
 def enter(automatic=False, panel=True):
+    if (Path(os.environ["XDG_RUNTIME_DIR"]) / "tablet-proof/recovery.json").exists():
+        raise RuntimeError("Close/recover the native tablet session before entering the legacy workspace")
     state = load_state()
     previous_state = dict(state) if state else None
     if state and state.get("exit_pending"):

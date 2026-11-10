@@ -282,6 +282,8 @@ class Trial:
                                    and not m.get("disabled", False) for m in hypr("monitors"))
 
     def setup(self):
+        if (Path(os.environ["XDG_RUNTIME_DIR"]) / "tablet-proof/recovery.json").exists():
+            raise RuntimeError("Close/recover the native tablet session before starting the legacy trial")
         if (directory() / "recovery.json").exists():
             raise RuntimeError("Previous trial needs tablet-iterate recover first")
         if not self.safe() or hypr("activeworkspace").get("monitor") != "eDP-1":

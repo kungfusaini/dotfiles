@@ -363,7 +363,7 @@ class NativeChatTests(unittest.TestCase):
     def test_preview_wrapper_has_no_standalone_shell_launch_path(self):
         module = (ROOT / "home/modules/tablet-workspace.nix").read_text()
         preview = module.split('name = "tablet-home-preview";', 1)[1].split("voxtype =", 1)[0]
-        self.assertIn("tablet-chat start", preview)
+        self.assertIn("tablet-native start", preview)
         self.assertNotIn("exec quickshell", preview)
         self.assertFalse((ROOT / "home/config/quickshell/tablet-home-preview/shell.qml").exists())
 

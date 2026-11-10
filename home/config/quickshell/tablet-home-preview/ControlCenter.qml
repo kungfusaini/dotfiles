@@ -10,6 +10,12 @@ Item {
     property real brightness: 65
     property bool muted: false
     property bool playing: false
+    property bool live: false
+    property bool showExit: true
+    property bool volumeAvailable: true
+    property bool brightnessAvailable: true
+    property string networkText: live ? "Not monitored" : "Connected"
+    property string batteryText: live ? "—" : "82%"
     signal volumeEdited(real value)
     signal brightnessEdited(real value)
     signal muteRequested()
@@ -64,7 +70,7 @@ Item {
                     Layout.fillWidth: true
                     spacing: 3
                     Label { text: "CONTROL CENTRE"; color: "#eff5ff"; font.pixelSize: 11; font.letterSpacing: 1.5 }
-                    Label { text: "PREVIEW · SIMULATED"; color: "#bdcddc"; font.pixelSize: 9; font.letterSpacing: 1 }
+                    Label { text: panel.live ? "LIVE · SYSTEM CONTROLS" : "PREVIEW · SIMULATED"; color: "#bdcddc"; font.pixelSize: 9; font.letterSpacing: 1 }
                 }
                 RoundButton {
                     objectName: "closeSettings"
@@ -94,14 +100,14 @@ Item {
                             ColumnLayout {
                                 spacing: 2
                                 Label { text: "Wi-Fi"; color: "white"; font.pixelSize: 14; font.weight: Font.DemiBold }
-                                Label { text: "Connected"; color: "#c5d6e7"; font.pixelSize: 10 }
+                                Label { text: panel.networkText; color: "#c5d6e7"; font.pixelSize: 10 }
                             }
                         }
                         Item { Layout.fillHeight: true }
                         RowLayout {
                             Layout.fillWidth: true
                             ControlIcon { name: "battery"; width: 24; height: 24; ink: "#d8f4e5" }
-                            Label { text: "82%"; color: "#f4f8ff"; font.pixelSize: 15; Layout.fillWidth: true }
+                            Label { text: panel.batteryText; color: "#f4f8ff"; font.pixelSize: 15; Layout.fillWidth: true }
                         }
                     }
                 }
@@ -125,7 +131,7 @@ Item {
                                 ControlIcon { anchors.centerIn: parent; name: "music"; width: 23; height: 23 }
                             }
                             Label {
-                                text: panel.playing ? "Playing" : "Not playing"
+                                text: panel.live ? "Media controls\nnot connected" : panel.playing ? "Playing" : "Not playing"
                                 font.pixelSize: 13; font.weight: Font.DemiBold; color: "white"
                                 Layout.fillWidth: true
                                 elide: Text.ElideRight
@@ -134,6 +140,7 @@ Item {
                         Item { Layout.fillHeight: true }
                         RoundButton {
                             objectName: "playPauseButton"
+                            enabled: !panel.live
                             Layout.alignment: Qt.AlignHCenter
                             glyph: panel.playing ? "pause" : "play"
                             glyphColor: "#263b51"
@@ -156,6 +163,7 @@ Item {
                     Button {
                         id: muteButton
                         objectName: "muteButton"
+                        enabled: panel.volumeAvailable
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         Accessible.name: panel.muted ? "Unmute" : "Mute"
@@ -184,9 +192,10 @@ Item {
                     Button {
                         id: exitButton
                         objectName: "exitPreview"
+                        visible: panel.showExit
                         Layout.fillWidth: true
                         Layout.fillHeight: true
-                        Accessible.name: "Close preview"
+                        Accessible.name: panel.live ? "Return to desktop" : "Close preview"
                         scale: down ? 0.96 : 1
                         Behavior on scale { NumberAnimation { duration: 110; easing.type: Easing.OutCubic } }
                         background: GlassTile {
@@ -196,7 +205,7 @@ Item {
                         contentItem: ColumnLayout {
                             spacing: 8
                             ControlIcon { Layout.alignment: Qt.AlignHCenter; width: 28; height: 28; name: "power" }
-                            Label { Layout.alignment: Qt.AlignHCenter; text: "Close preview"; color: "#f1f6fd"; font.pixelSize: 12 }
+                            Label { Layout.alignment: Qt.AlignHCenter; text: panel.live ? "Return to desktop" : "Close preview"; color: "#f1f6fd"; font.pixelSize: 12 }
                         }
                         onClicked: panel.exitRequested()
                     }
@@ -208,6 +217,7 @@ Item {
                     spacing: 12
                     PillSlider {
                         objectName: "brightnessSlider"
+                        enabled: panel.brightnessAvailable
                         Layout.fillWidth: true
                         Layout.preferredWidth: 1
                         Layout.fillHeight: true
@@ -219,6 +229,7 @@ Item {
                     }
                     PillSlider {
                         objectName: "volumeSlider"
+                        enabled: panel.volumeAvailable
                         Layout.fillWidth: true
                         Layout.preferredWidth: 1
                         Layout.fillHeight: true

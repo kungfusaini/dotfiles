@@ -12,12 +12,14 @@ Item {
     readonly property bool capturing: !!history && history.capturing
     property string activeAppId: ""
     property bool blocked: false
+    property real keyboardInset: 0
     property bool urgentInput: false
     property bool overview: false
     property var summary: app => app.id === "tablet-improve" ? "Your Pi conversation" : "Preview · no application launched"
     readonly property real progress: overview ? 1 : Math.min(1, gesture.pull / Math.max(120, height * .30))
     readonly property bool navigating: overview || progress > 0
     readonly property bool dragging: gesture.dragging || capturing || cards.draggingCard
+    readonly property bool contactActive: gesture.pressed || gesture.dragging
     readonly property real cardWidth: Math.min(width * .76, 760)
     readonly property real cardHeight: height * .70
     readonly property real cardTop: height * .15
@@ -191,7 +193,7 @@ Item {
         id: gesture
         width: parent.width
         z: 5
-        anchors { bottom: parent.bottom; bottomMargin: 4; horizontalCenter: parent.horizontalCenter }
+        anchors { bottom: parent.bottom; bottomMargin: 4 + nav.keyboardInset; horizontalCenter: parent.horizontalCenter }
         blocked: nav.blocked
         onBegan: nav.gestureBegan()
         onHomeRequested: nav.goHome()

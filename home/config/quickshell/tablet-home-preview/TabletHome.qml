@@ -8,6 +8,16 @@ Control {
     id: root
     font.family: "DejaVu Sans"
     property var apps: []
+    property string modeLabel: "TABLET / PREVIEW"
+    property bool settingsExternallyManaged: false
+    signal settingsRequested()
+    property bool nativePresentation: false
+    property bool nativeAppVisible: false
+    property string nativeAppId: ""
+    property real keyboardInset: 0
+    signal nativeHomeRequested()
+    readonly property bool navigationContactActive: navigator.contactActive
+    readonly property bool navigationVisible: navigator.navigating
     property bool liveClock: true
     property string clockText: Qt.formatTime(new Date(), "hh:mm")
     Timer { interval: 30000; running: root.liveClock; repeat: true; onTriggered: root.clockText = Qt.formatTime(new Date(), "hh:mm") }
@@ -37,7 +47,7 @@ Control {
     property bool muted: false
     property bool playing: false
     readonly property int gridColumns: Math.max(2, Math.min(6, Math.floor((width - 48) / 144)))
-    readonly property bool homeVisible: activeApp === ""
+    readonly property bool homeVisible: nativePresentation ? !nativeAppVisible : activeApp === ""
     signal appRequested(string id, string label)
     signal exitRequested()
     signal windowCloseRequested(string id)
@@ -47,8 +57,10 @@ Control {
     function dismissApp(id) { navigator.dismissCard(id) }
     function requestHome() { navigator.goHome() }
     function pullFromCorner(distance) {
-        if (distance >= 44)
-            settingsOpen = true
+        if (distance >= 44) {
+            if (settingsExternallyManaged) settingsRequested()
+            else settingsOpen = true
+        }
     }
     function showHome() {
         navigator.overview = false
@@ -69,12 +81,16 @@ Control {
     focus: true
     Keys.onEscapePressed: dismiss()
 
-    TabletWallpaper { anchors.fill: parent }
+    TabletWallpaper {
+        anchors.fill: parent
+        opacity: root.nativePresentation ? root.homeProgress : 1
+        visible: opacity > 0
+    }
 
     RowLayout {
-        opacity: 1 - root.settingsProgress
+        opacity: (1 - root.settingsProgress) * (root.nativePresentation ? root.homeProgress : 1)
         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 24 }
-        Label { text: "TABLET / PREVIEW"; color: "#a9c9ca"; font.pixelSize: 12; font.letterSpacing: 2 }
+        Label { text: root.modeLabel; color: "#a9c9ca"; font.pixelSize: 12; font.letterSpacing: 2 }
         Item { Layout.fillWidth: true }
         Label {
             objectName: "settingsHint"
@@ -176,7 +192,7 @@ Control {
     AppSurface {
         id: mockSurface
         anchors.fill: parent
-        opened: !root.homeVisible
+        opened: !root.homeVisible && !root.nativePresentation
     ColumnLayout {
         objectName: "appContent"
         opacity: 1 - 0.9 * root.settingsProgress
@@ -206,14 +222,15 @@ Control {
         id: navigator
         anchors.fill: parent
         visible: root.settingsProgress === 0
-        sourceItem: root.homeVisible ? null : mockSurface
+        sourceItem: root.nativePresentation || root.homeVisible ? null : mockSurface
         history: root.history
         apps: root.history.cards()
-        activeAppId: (root.apps.find(app => app.label === root.activeApp) || {}).id || ""
+        activeAppId: root.nativePresentation ? (root.nativeAppVisible ? root.nativeAppId : "") : (root.apps.find(app => app.label === root.activeApp) || {}).id || ""
+        keyboardInset: root.keyboardInset
         blocked: root.navigationBlocked
         urgentInput: root.navigationUrgent
         summary: root.appSummary
-        onHomeRequested: root.showHome()
+        onHomeRequested: { if (root.nativePresentation) root.nativeHomeRequested(); else root.showHome() }
         onAppRequested: (id, label) => root.appRequested(id, label)
         onCloseRequested: id => {
             const app = root.apps.find(app => app.id === id)

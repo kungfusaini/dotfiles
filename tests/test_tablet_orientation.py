@@ -554,6 +554,34 @@ class BackendGateTests(unittest.TestCase):
                     patch.object(rotation.subprocess, 'run', side_effect=pgrep):
                 self.assertFalse(self.backend.active())
 
+    def test_native_session_rotates_in_place_only_with_live_owner_and_lease(self):
+        self.backend.native = True
+        self.workspace = {'name': 'Machine · Browser', 'monitor': 'eDP-1'}
+        start = Path(f'/proc/{os.getpid()}/stat').read_text().rsplit(')', 1)[1].split()[19]
+        state = {'native': True, 'instance': 'test', 'rotation_enabled': True,
+                 'workspace': 'Machine · Browser', 'home_only': True,
+                 'owner': {'pid': os.getpid(), 'start': start}}
+        directory = self.backend.runtime / 'tablet-proof'
+        directory.mkdir()
+        path = directory / 'recovery.json'
+        path.write_text(json.dumps({'window': state}))
+        self.assertTrue(self.active())
+        state['owner']['start'] = 'recycled'
+        path.write_text(json.dumps({'window': state}))
+        self.assertFalse(self.active())
+        state['owner']['start'] = start
+        state['rotation_enabled'] = False
+        path.write_text(json.dumps({'window': state}))
+        self.assertFalse(self.active())
+        state.update(rotation_enabled=True, home_only=False, address='0xab', stableId='abc')
+        path.write_text(json.dumps({'window': state}))
+        self.assertFalse(self.active())  # foreground query lacks leased stableId
+        with patch.object(self.backend, 'hypr', side_effect=[self.workspace, {'address': '0xab', 'stableId': 'abc'}]), \
+                patch.object(self.backend, 'panel', return_value={'transform': 0}), \
+                patch.object(self.backend, 'headless', return_value=False), \
+                patch.object(rotation.subprocess, 'run', return_value=subprocess.CompletedProcess([], 1)):
+            self.assertTrue(self.backend.active())
+
     def test_disabled_or_dpms_off_panel_is_not_selected(self):
         with patch.object(self.backend, 'hypr', return_value=[{'name': 'eDP-1', 'disabled': True}]):
             self.assertIsNone(self.backend.panel())

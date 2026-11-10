@@ -1,6 +1,7 @@
 { config, pkgs, lib, osConfig, ... }:
 
 let
+  nativeAutomatic = config.programs.tablet-native.automatic;
   tabletOskPackage = pkgs.writeShellApplication {
     name = "tablet-osk";
     runtimeInputs = with pkgs; [ coreutils procps util-linux libnotify wvkbd wtype python3 osConfig.programs.hyprland.package ];
@@ -36,10 +37,10 @@ let
   };
   tabletHomePreview = pkgs.writeShellApplication {
     name = "tablet-home-preview";
-    runtimeInputs = [ tabletChat ];
-    text = ''
-      # Home and Pi are views of one supervised tablet session. Never launch a
-      # standalone Home that starts a second interface when Pi is tapped.
+    runtimeInputs = [ (if nativeAutomatic then tabletNative else tabletChat) ];
+    text = if nativeAutomatic then ''
+      exec ${tabletNative}/bin/tablet-native start
+    '' else ''
       exec ${tabletChat}/bin/tablet-chat start
     '';
   };
@@ -103,10 +104,27 @@ let
   };
   tabletIterate = mkTabletTrial "tablet-iterate" false;
   tabletChat = assert tabletModel.provider != "nanogpt"; mkTabletTrial "tablet-chat" true;
+  tabletNativeOrientation = pkgs.writeShellApplication {
+    name = "tablet-orientation";
+    runtimeInputs = with pkgs; [ coreutils procps python3 quickshell osConfig.hardware.sensor.iio.package osConfig.programs.hyprland.package ];
+    text = ''
+      export TABLET_ORIENTATION_SESSION=native
+      export TABLET_ORIENTATION_POLICY=${orientationPolicy}
+      export TABLET_ROTATION_FADE_QML=${../config/quickshell/tablet-rotation-fade}
+      exec python3 ${../scripts/desktop/tablet-orientation.py} "$@"
+    '';
+  };
+  tabletNativeBundle = pkgs.callPackage ../packages/tablet-proof/native.nix {
+    hyprland = osConfig.programs.hyprland.package;
+    orientation = tabletNativeOrientation;
+  };
+  tabletNative = tabletNativeBundle.package;
   tabletFoldWatch = pkgs.writeShellApplication {
     name = "tablet-fold-watch";
-    runtimeInputs = [ pkgs.python3 tabletChat tabletWorkspace ];
-    text = ''
+    runtimeInputs = if nativeAutomatic then [ tabletNative ] else [ pkgs.python3 tabletChat tabletWorkspace ];
+    text = if nativeAutomatic then ''
+      exec ${tabletNative}/bin/tablet-native watch-fold
+    '' else ''
       export TABLET_WORKSPACE_SOURCE=${../scripts/desktop/tablet-workspace.py}
       exec python3 ${../scripts/desktop/tablet-fold-watch.py}
     '';
@@ -121,44 +139,58 @@ let
   };
 in
 {
-  home.packages = [ tabletWorkspace tabletOskPackage tabletOrientation tabletHomePreview tabletIterate tabletChat tabletUiBundle tabletFoldWatch ];
-  assertions = [{
-    assertion = osConfig.hardware.sensor.iio.enable;
-    message = "Tablet orientation requires hardware.sensor.iio.enable.";
-  } {
-    assertion = builtins.all (name: !(lib.hasInfix name config.wayland.windowManager.hyprland.extraConfig))
-      [ "wacom-hid-5430-finger" "wacom-hid-5430-pen" ];
-    message = "Declare built-in touch/pen overrides in Hyprland settings.device, not extraConfig, so tablet orientation can restore them.";
-  }];
-
-  # A transform-only monitor command is a no-op without a named rule on this
-  # Hyprland build. Keep the generic rule for other displays unchanged.
-  wayland.windowManager.hyprland.settings.monitor = lib.mkAfter [
-    "eDP-1, preferred, auto, 1.25"
-  ];
-
-  xdg.desktopEntries.tablet-workspace = {
-    name = "Tablet workspace";
-    comment = "Open Tablet Home without moving or closing desktop windows";
-    exec = "${tabletChat}/bin/tablet-chat start-home";
-    icon = "input-tablet";
-    terminal = false;
-    categories = [ "Utility" ];
+  options.programs.tablet-native.automatic = lib.mkOption {
+    type = lib.types.bool;
+    default = false;
+    description = "Route folding and tablet entry to the native session after companion pairing and physical acceptance.";
   };
 
-  # Shared guarded tablet namespace, also reused by native stage/app surfaces.
-  # Keep this deployed policy: Hyprland's layers IPC exposes alpha.goal(), not
-  # current fade opacity. Qt animates content inside these opaque surfaces.
-  # Do not rename/remove the rule independently of the tablet presentation gate.
-  wayland.windowManager.hyprland.settings.layerrule = lib.mkAfter [
-    "match:namespace ^tablet-rotation-fade$, no_anim on"
-  ];
+  config = {
+    # Install immutable assets/host without changing Vivaldi's load-extension list
+    # or other profiles. Human extension consent/pairing precedes native routing.
+    xdg.dataFile."tablet-media-companion".source = tabletNativeBundle.media.extension;
+    xdg.configFile."vivaldi/NativeMessagingHosts/org.machine.tablet_media.json".source = tabletNativeBundle.media.hostManifest;
 
-  wayland.windowManager.hyprland.settings.exec-once = lib.mkAfter [
-    "${tabletFoldWatch}/bin/tablet-fold-watch >> \"$XDG_RUNTIME_DIR/tablet-fold-watch.log\" 2>&1"
-  ];
+    home.packages = [ tabletNative tabletWorkspace tabletOskPackage tabletOrientation tabletHomePreview tabletIterate tabletChat tabletUiBundle tabletFoldWatch ];
+    assertions = [{
+      assertion = osConfig.hardware.sensor.iio.enable;
+      message = "Tablet orientation requires hardware.sensor.iio.enable.";
+    } {
+      assertion = builtins.all (name: !(lib.hasInfix name config.wayland.windowManager.hyprland.extraConfig))
+        [ "wacom-hid-5430-finger" "wacom-hid-5430-pen" ];
+      message = "Declare built-in touch/pen overrides in Hyprland settings.device, not extraConfig, so tablet orientation can restore them.";
+    }];
 
-  wayland.windowManager.hyprland.settings.bind = lib.mkAfter [
-    "$mod CTRL, T, exec, ${tabletChat}/bin/tablet-chat toggle"
-  ];
+    # A transform-only monitor command is a no-op without a named rule on this
+    # Hyprland build. Keep the generic rule for other displays unchanged.
+    wayland.windowManager.hyprland.settings.monitor = lib.mkAfter [
+      "eDP-1, preferred, auto, 1.25"
+    ];
+
+    xdg.desktopEntries.tablet-workspace = {
+      name = "Tablet workspace";
+      comment = "Open Tablet Home without moving or closing desktop windows";
+      exec = if nativeAutomatic then "${tabletNative}/bin/tablet-native start" else "${tabletChat}/bin/tablet-chat start-home";
+      icon = "input-tablet";
+      terminal = false;
+      categories = [ "Utility" ];
+    };
+
+    # Shared guarded tablet namespace, also reused by native stage/app surfaces.
+    # Keep this deployed policy: Hyprland's layers IPC exposes alpha.goal(), not
+    # current fade opacity. Qt animates content inside these opaque surfaces.
+    # Do not rename/remove the rule independently of the tablet presentation gate.
+    wayland.windowManager.hyprland.settings.layerrule = lib.mkAfter [
+      "match:namespace ^tablet-rotation-fade$, no_anim on"
+    ];
+
+    wayland.windowManager.hyprland.settings.exec-once = lib.mkAfter [
+      "${tabletFoldWatch}/bin/tablet-fold-watch >> \"$XDG_RUNTIME_DIR/tablet-fold-watch.log\" 2>&1"
+    ];
+
+    wayland.windowManager.hyprland.settings.bind = lib.mkAfter [
+      (if nativeAutomatic then "$mod CTRL, T, exec, ${tabletNative}/bin/tablet-native toggle"
+       else "$mod CTRL, T, exec, ${tabletChat}/bin/tablet-chat toggle")
+    ];
+  };
 }

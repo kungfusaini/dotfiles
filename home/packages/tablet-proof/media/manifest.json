@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "Tablet media companion",
+  "version": "0.1.0",
+  "description": "Pause YouTube media only in the registered tablet window.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAq++avHvoN2WCNjaggrLNGpqEZ+3GVLdx6nzqL9yCfGOA3wgSfyOaOb8s4GSLgYh/2N6HYbFiP/BZMOMEvgvZRHSR2hmiYFWBhtUBwXculMv2aB0KIevTQmRuISPtEtSiAewv1likyGjrbAmcOhC9UpiS0N/YzrrXc+Oj1Ufri/WywLte3fEUzUxv5Iklwo3ET01yUUBqNykCS3MV8Z03cNJWj8gRyKHkriH3LjrnEeRDqGuRbG3CI5MvNdC7RDJhI/Rw7hyZo6rU/wEUuYWT1V+hZDYMWm1K3CH4XnjweO4Snvw1lCI3BZgZ38uJjY6VWBdK1O7LMIb5n5PxY4/mNwIDAQAB",
+  "permissions": ["nativeMessaging", "scripting", "storage"],
+  "host_permissions": ["https://*.youtube.com/*", "https://*.youtube-nocookie.com/*", "http://tablet.localhost/*"],
+  "background": {"service_worker": "background.js"},
+  "action": {"default_title": "Pair this tablet window for media pause"},
+  "options_ui": {"page": "pair.html", "open_in_tab": true},
+  "content_scripts": [
+    {"matches": ["http://tablet.localhost/register/*"], "js": ["register.js"], "run_at": "document_end"},
+    {"matches": ["https://*.youtube.com/*", "https://*.youtube-nocookie.com/*"], "js": ["media.js"], "run_at": "document_start", "all_frames": true}
+  ]
+}

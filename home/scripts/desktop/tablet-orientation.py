@@ -176,7 +176,9 @@ class Backend:
         names = [self.monitor] + [d["name"] for d in self.policy["devices"]]
         if not all(SAFE_NAME.fullmatch(name) for name in names):
             raise ValueError("Unsafe monitor/device identifier")
-        self.journal = self.runtime / "tablet-orientation.json"
+        self.native = os.environ.get("TABLET_ORIENTATION_SESSION") == "native"
+        self.prefix = "tablet-native-orientation" if self.native else "tablet-orientation"
+        self.journal = self.runtime / (self.prefix + ".json")
         self.config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home()/".config"))) / "hypr/hyprland.conf"
 
     def hypr(self, *args, json_output=False, timeout=3):
@@ -198,17 +200,33 @@ class Backend:
                      if m["name"] == self.monitor and not m.get("disabled", False) and m.get("dpmsStatus", True)), None)
 
     def active(self, timeout=3):
+        native = getattr(self, "native", False)
         try:
-            state = json.loads((self.runtime / "tablet-workspace.json").read_text())
-        except (FileNotFoundError, ValueError):
+            path = self.runtime / ("tablet-proof/recovery.json" if native else "tablet-workspace.json")
+            state = json.loads(path.read_text())
+            if native:
+                state = state["window"]
+                owner = state["owner"]
+                # A journal is not a live session: require the exact backend
+                # lifetime, not a recycled PID or a leftover recovery record.
+                actual = Path(f'/proc/{int(owner["pid"])}/stat').read_text().rsplit(')', 1)[1].split()[19]
+                if actual != owner["start"] or not state.get("native"):
+                    return False
+        except (OSError, ValueError, KeyError, TypeError, IndexError):
             return False
         if not isinstance(state, dict):
             return False
-        if state.get("enabled") is not True or state.get("instance") != self.instance or self.headless():
+        enabled = state.get("rotation_enabled") if native else state.get("enabled")
+        if enabled is not True or state.get("instance") != self.instance or self.headless():
             return False
         workspace = self.hypr("activeworkspace", "-j", json_output=True, timeout=timeout)
-        if workspace.get("name") != WORKSPACE or workspace.get("monitor") != self.monitor:
+        expected = state.get("workspace") if native else WORKSPACE
+        if workspace.get("name") != expected or workspace.get("monitor") != self.monitor:
             return False
+        if native and not state.get("home_only"):
+            focus = self.hypr("activewindow", "-j", json_output=True, timeout=timeout)
+            if focus.get("address") != state.get("address") or focus.get("stableId") != state.get("stableId"):
+                return False
         panel = self.panel(timeout=timeout)
         if not panel or panel.get("specialWorkspace", {}).get("id", 0):
             return False
@@ -447,7 +465,7 @@ STOP = False
 
 
 def claim_daemon(backend, lock):
-    owner = backend.runtime / "tablet-orientation-owner.json"
+    owner = backend.runtime / (getattr(backend, "prefix", "tablet-orientation") + "-owner.json")
     deadline = time.monotonic() + 10
     while True:
         try:
@@ -475,7 +493,8 @@ def main():
     args = parser.parse_args()
     backend = Backend()
     runtime = backend.runtime
-    with (runtime / "tablet-orientation-daemon.lock").open("w") as daemon_lock:
+    prefix = getattr(backend, "prefix", "tablet-orientation")
+    with (runtime / (prefix + "-daemon.lock")).open("w") as daemon_lock:
         if args.command == "daemon" and not claim_daemon(backend, daemon_lock):
             return 0
         def stop(*_):
@@ -517,7 +536,7 @@ def main():
                     controller.restore()
             finally:
                 if args.command == "daemon":
-                    (runtime / "tablet-orientation-owner.json").unlink(missing_ok=True)
+                    (runtime / (prefix + "-owner.json")).unlink(missing_ok=True)
 
 
 if __name__ == "__main__":
