@@ -78,6 +78,11 @@ check_recovery() {
       # Never queue another restore (or another notification) behind the first.
       nohup flock -n "$runtime/headless-mode/emergency.lock" headless-mode restore \
         >>"$runtime/headless-emergency-restore.log" 2>&1 </dev/null &
+    elif [[ $state == active ]]; then
+      # A config reload can re-enable the internal panel without changing the
+      # separate root controller state. Reconcile under the transition lock;
+      # the helper rechecks state and never disables our only usable output.
+      headless-mode reconcile >>"$runtime/headless-reconcile.log" 2>&1 || true
     fi
   fi
 }
@@ -107,6 +112,7 @@ while true; do
   if [[ -S "$socket" ]]; then
     while IFS= read -r event; do
       case "$event" in
+        configreloaded\>\>*) check_recovery ;;
         monitorremoved\>\>*) check_recovery; refresh_outputs ;;
         monitoradded\>\>*) monitor_added "${event#*>>}" ;;
       esac

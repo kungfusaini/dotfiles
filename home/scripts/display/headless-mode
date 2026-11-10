@@ -141,6 +141,47 @@ raise SystemExit(not (i and e and ((i.get("x"),i.get("y"))!=(ix,iy) or (e.get("x
   return "$recovery_failed"
 }
 
+# Use Hyprland's native rule as well as the atomic wlr transaction. The
+# latter alone is transient and can be undone by a compositor config reload.
+panel_off() {
+  timeout -k 1 2 hyprctl keyword monitor 'eDP-1,disable' >/dev/null || return 1
+  local attempt
+  for ((attempt=0; attempt<20; attempt++)); do
+    if timeout -k 1 2 hyprctl monitors all -j | python3 -c '
+import json, sys
+ms=json.load(sys.stdin)
+raise SystemExit(not (
+    not any(m["name"] == "eDP-1" and not m.get("disabled", False) for m in ms)
+    and any(m["name"] != "eDP-1" and not m.get("disabled", False)
+            and m.get("mirrorOf", "none") == "none" for m in ms)))
+'; then return 0; fi
+    sleep 0.1
+  done
+  return 1
+}
+
+reconcile_mode() {
+  # Caller holds the shared transition lock; queued reload/hotplug events
+  # must never undo an intentional restore or interfere with entry.
+  [[ $(status) == active ]] || return 0
+  local action
+  action=$(timeout -k 1 2 hyprctl monitors all -j | python3 -c '
+import json, sys
+ms=json.load(sys.stdin)
+external=any(m["name"] != "eDP-1" and not m.get("disabled", False)
+             and m.get("mirrorOf", "none") == "none" for m in ms)
+panel=any(m["name"] == "eDP-1" and not m.get("disabled", False) for m in ms)
+print("restore" if not external else "disable" if panel else "ok")
+') || return 1
+  [[ $action != ok ]] || return 0
+  if [[ $action == disable ]] && timeout 8 "$sudo" -n "$control" probe-external; then
+    log_timing 'reconcile: laptop panel re-enabled while headless active; disabling'
+    if panel_off; then return 0; fi
+  fi
+  log_timing 'reconcile: cannot safely maintain headless outputs; restoring'
+  restore_mode
+}
+
 prime_mode() {
   # Clamshell owns the saved layout until reopening. It is not a normal
   # two-screen desktop from which folded mode can safely save state.
@@ -223,6 +264,10 @@ print(("name:" if not w.isdecimal() else "")+w if w and w!="-1" else "")
     restore_mode
     return 1
   fi
+  if ! panel_off; then
+    restore_mode
+    return 1
+  fi
   # Do not hold the controller lock across wallpaper cleanup or notifications.
   # A disconnected external display must be able to restore eDP-1 immediately.
   flock -u 9
@@ -252,11 +297,16 @@ case "${1:-toggle}" in
     ;;
 esac
 
-log_timing "${1:-toggle}: requesting controller lock"
+[[ ${1:-toggle} == reconcile ]] || log_timing "${1:-toggle}: requesting controller lock"
 exec 9>"$lock_file"
-flock 9
+# Watcher reconciliation is best-effort while a real transition owns the lock.
+if [[ ${1:-toggle} == reconcile ]]; then
+  flock -n 9 || exit 0
+else
+  flock 9
+fi
 export DISPLAY_TRANSITION_LOCKED=1
-log_timing "${1:-toggle}: controller lock acquired"
+[[ ${1:-toggle} == reconcile ]] || log_timing "${1:-toggle}: controller lock acquired"
 case "${1:-toggle}" in
   toggle)
     case "$(status)" in
@@ -266,5 +316,6 @@ case "${1:-toggle}" in
     esac
     ;;
   restore) restore_mode ;;
-  *) echo 'usage: headless-mode {toggle|restore|status}' >&2; exit 2 ;;
+  reconcile) reconcile_mode ;;
+  *) echo 'usage: headless-mode {toggle|restore|status|reconcile}' >&2; exit 2 ;;
 esac

@@ -7,6 +7,12 @@ if [[ ${DISPLAY_TRANSITION_LOCKED:-0} != 1 ]]; then
   export DISPLAY_TRANSITION_LOCKED=1
 fi
 
+# Never re-enable the laptop panel behind the folded-mode controller's back.
+if [[ -r /run/headless-mode/state && $(</run/headless-mode/state) != off ]]; then
+  hyprctl notify -1 3000 'rgb(ff5555)' 'Restore headless mode before changing display layout' >/dev/null || true
+  exit 0
+fi
+
 if [[ -e "${XDG_RUNTIME_DIR:-/tmp}/clamshell-mode/state.json" ]]; then
   hyprctl notify -1 3000 'rgb(ff5555)' 'Open the lid before changing display layout' >/dev/null || true
   exit 0

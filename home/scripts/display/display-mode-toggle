@@ -9,6 +9,11 @@ if [[ ${DISPLAY_TRANSITION_LOCKED:-0} != 1 ]]; then
   export DISPLAY_TRANSITION_LOCKED=1
 fi
 
+if [[ -r /run/headless-mode/state && $(</run/headless-mode/state) != off ]]; then
+  hyprctl notify -1 3000 'rgb(ff5555)' 'Restore headless mode before changing mirror/extended mode' >/dev/null || true
+  exit 0
+fi
+
 # Clamshell owns the layout while the lid is closed. Do not mirror an
 # external screen onto the disabled laptop panel through F7.
 if [[ -e "${XDG_RUNTIME_DIR:-/tmp}/clamshell-mode/state.json" ]]; then

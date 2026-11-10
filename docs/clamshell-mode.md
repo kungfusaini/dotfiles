@@ -71,6 +71,23 @@ The lid helper, folded-mode controller and F7/layout mutations share the existin
 from their caller. Lid handling defers whenever the privileged folded-mode state
 is not `off`.
 
+### Folded mode and configuration reloads
+
+Folded/headless mode disables `eDP-1` with both the atomic output transaction
+and Hyprland's native monitor rule, then verifies an independent external output
+remains active. The existing watcher handles Hyprland's
+[`configreloaded` event](https://wiki.hypr.land/IPC/) and periodically reconciles
+output state. If a reload re-enables the laptop panel, it disables it again under
+the shared transition lock, after rechecking controller state and external health.
+A missing/mirrored-only external output, failed physical probe, or failed panel
+disable takes the normal restoration path instead of blanking the only usable
+screen. An intentional restore always takes precedence over reconciliation.
+Single F7 and layout application refuse changes until folded mode is restored.
+
+Reconciliation diagnostics live in `$XDG_RUNTIME_DIR/headless-mode/timing.log`
+and `$XDG_RUNTIME_DIR/headless-reconcile.log`. This uses the existing watcher,
+not another display daemon or mutable compositor configuration include.
+
 ## Implementation and recovery
 
 - `hosts/kirax1/modules/hardware/clamshell-mode.nix` explicitly declares logind's
@@ -104,6 +121,7 @@ system-wide sensor or input changes need undoing.
 ## Verification
 
 ```sh
+PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_headless_mode.py
 PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p test_clamshell_mode.py
 nix eval --impure --json .#nixosConfigurations.kirax1.config --apply \
   'config: import ./tests/clamshell-mode.nix { inherit config; }'
