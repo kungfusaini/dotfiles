@@ -116,6 +116,25 @@ let
     "1s5xylizl4nqcm16lmn99pay6yfcp9b3b63c99j1l60idj4vl14m";
 
   # Official Steam library assets, pinned independently of the running client.
+  itTakesTwoCover = fetch "it-takes-two-cover.jpg"
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1426210/library_600x900.jpg"
+    "14zbq58vav67zm94xl4bvhja12rqbhi818nwrvxlhr81d2nagn2a";
+  itTakesTwoBackground = fetch "it-takes-two-background.jpg"
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1426210/library_hero.jpg"
+    "1729g11sywdrjaq2cr8lb9zs3xa1h75ln94dd14qbs59950wrafw";
+  itTakesTwoLogo = fetch "it-takes-two-logo.png"
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1426210/logo.png"
+    "05adn9f4vbpngxdsysiwznp8mysqgi0rsdsm0d3k0fgg32fdfn70";
+  itTakesTwoScreenshot1 = fetch "it-takes-two-screenshot-1.jpg"
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1426210/ss_3e59753eefaba9a7704a18e902b48e8d38e95e0b.1920x1080.jpg?t=1777395376"
+    "13s0d48yajxiqa7n78mhbjkyw6ab8x7jy37f9ih7s457x86bnjx0";
+  itTakesTwoScreenshot2 = fetch "it-takes-two-screenshot-2.jpg"
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1426210/ss_6e987a0678b013bfd0073a9ac4703e1f04ca4dea.1920x1080.jpg?t=1777395376"
+    "1z1x697j1jrjl5xbfw643icy2s73vnfk87v5i6n50vp7sk0absgm";
+  itTakesTwoScreenshot3 = fetch "it-takes-two-screenshot-3.jpg"
+    "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1426210/ss_fdac523e3ea4d2f32a44449bb8c224857563bd7d.1920x1080.jpg?t=1777395376"
+    "0zg42vxc1fhjz1cc6k40bycg5a5gabznp7hwb354j7lnf3rs48q4";
+
   persona5Cover = fetch "persona-5-royal-cover.jpg"
     "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/1687950/library_600x900.jpg"
     "0py3i095amjnr23ahyhhn61451d66gnjd0d8an8p881kjif26ijr";
@@ -154,6 +173,7 @@ pkgs.runCommand "pegasus-curated-artwork" {
     "$out/switch/super-mario-3d-world-bowsers-fury" \
     "$out/ps2/crazy-taxi" \
     "$out/pc/symphony-of-the-night" \
+    "$out/steam/it-takes-two" \
     "$out/steam/rayman-legends" \
     "$out/steam/persona-5-royal" \
     "$out/steam/civilization-vi"
@@ -219,6 +239,13 @@ pkgs.runCommand "pegasus-curated-artwork" {
   make_screenshot ${raymanScreenshot1} "$out/steam/rayman-legends/screenshot-1.jpg"
   make_screenshot ${raymanScreenshot2} "$out/steam/rayman-legends/screenshot-2.jpg"
   make_screenshot ${raymanScreenshot3} "$out/steam/rayman-legends/screenshot-3.jpg"
+
+  make_box ${itTakesTwoCover} "$out/steam/it-takes-two/boxFront.jpg"
+  make_background ${itTakesTwoBackground} "$out/steam/it-takes-two/background.jpg"
+  make_logo ${itTakesTwoLogo} "$out/steam/it-takes-two/logo.png"
+  make_screenshot ${itTakesTwoScreenshot1} "$out/steam/it-takes-two/screenshot-1.jpg"
+  make_screenshot ${itTakesTwoScreenshot2} "$out/steam/it-takes-two/screenshot-2.jpg"
+  make_screenshot ${itTakesTwoScreenshot3} "$out/steam/it-takes-two/screenshot-3.jpg"
 
   make_box ${persona5Cover} "$out/steam/persona-5-royal/boxFront.jpg"
   make_background ${persona5Background} "$out/steam/persona-5-royal/background.jpg"
