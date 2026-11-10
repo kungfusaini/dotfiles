@@ -7,9 +7,11 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 import steamctl as steam
@@ -39,6 +41,54 @@ def notify(message):
                            check=False, timeout=5)
         except (OSError, subprocess.SubprocessError) as exc:
             print(f"steam-session: notification failed: {exc}", file=sys.stderr)
+
+
+def report_error(message):
+    """Pegasus drops child stderr; retain pre-dispatch failures in the journal."""
+    print(f"steam-session: {message}", file=sys.stderr)
+    try:
+        subprocess.run(["systemd-cat", "--identifier=steam-session", "--priority=err"],
+                       input=message + "\n", text=True, check=False, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        pass  # The original stderr and desktop notification remain available.
+    notify(message)
+
+
+def needs_eula(text, appid):
+    """Only the latest action for this exact requested game can require consent."""
+    actions = re.findall(rf"GameAction \[AppID {appid}, ActionID \d+\] : LaunchApp ([^\r\n]*)", text)
+    return bool(actions and actions[-1].startswith("waiting for user response to ShowEula"))
+
+
+def watch_launch_prompt(appid, marker, done):
+    """Show required consent UI, never accept it or automate human input."""
+    try:
+        while not done.wait(1):
+            if needs_eula(steam.file_text_since(steam.LOGS / "console_log.txt", marker), appid):
+                status(appid, "needs-consent", "Steam requires a licence agreement; showing its UI.")
+                # Reuse the verified manual takeover path: it releases the hider,
+                # routes exact Steam-owned windows and protects human interaction.
+                executable = shutil.which("steam-manual")
+                if not executable:
+                    raise steam.SteamError("steam-manual is unavailable; cannot show the licence agreement.")
+                result = subprocess.run([executable], check=False, timeout=75)
+                if result.returncode:
+                    raise steam.SteamError("Could not show Steam's licence agreement on the invoking workspace.")
+                return
+    except (OSError, subprocess.SubprocessError, steam.SteamError) as exc:
+        report_error(str(exc))
+
+
+def launch_with_prompts(appid):
+    marker = steam.file_marker(steam.LOGS / "console_log.txt")
+    done = threading.Event()
+    watcher = threading.Thread(target=watch_launch_prompt, args=(appid, marker, done), daemon=True)
+    watcher.start()
+    try:
+        return steam.request_url(f"steam://rungameid/{appid}", approved=True)
+    finally:
+        done.set()
+        watcher.join(timeout=80)
 
 
 def parent_pid(pid):
@@ -145,9 +195,12 @@ def dispatch(appid):
     # No --pipe: closing Pegasus/the invoking terminal must not break the worker's
     # stdout or kill monitoring. Worker output and failures remain in the journal.
     args.extend([sys.executable, str(SCRIPT), "--worker", str(appid)])
-    result = subprocess.run(args, check=False)
+    result = subprocess.run(args, check=False, stderr=subprocess.PIPE, text=True)
+    if result.stderr:
+        print(result.stderr, end="", file=sys.stderr)
     if result.returncode:
-        print(f"steam-session: inspect journalctl --user -u {UNIT}", file=sys.stderr)
+        detail = (result.stderr or f"systemd-run exited {result.returncode}").strip()[-2000:]
+        report_error(f"Steam session worker failed: {detail}. Inspect journalctl --user -u {UNIT}.")
     return result.returncode
 
 
@@ -205,7 +258,7 @@ def worker(appid):
             status(appid, "starting")
             steam.start_steam(120)
             steam.wait_steam_ready(120)
-            steam.request_url(f"steam://rungameid/{appid}", approved=True)
+            launch_with_prompts(appid)
             status(appid, "waiting-for-game")
             steam.wait_game(appid, 86400, startup_timeout=180)
             status(appid, "game-exited")
@@ -244,7 +297,7 @@ def main():
             return 0
         return worker(args.appid) if args.worker else dispatch(args.appid)
     except (steam.SteamError, OSError, ValueError, subprocess.SubprocessError) as exc:
-        print(f"steam-session: {exc}", file=sys.stderr)
+        report_error(str(exc))
         return 1
 
 

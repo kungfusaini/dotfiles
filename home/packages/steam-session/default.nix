@@ -19,6 +19,7 @@ stdenvNoCC.mkDerivation {
     mkdir -p "$out/bin" "$out/libexec/steam-session"
     cp scripts/*.py "$out/libexec/steam-session/"
     makeWrapper ${python3}/bin/python3 "$out/bin/steam-session" \
+      --prefix PATH : "$out/bin" \
       --prefix PATH : ${lib.makeBinPath [ systemd libnotify ]} \
       --add-flags "$out/libexec/steam-session/session.py"
     makeWrapper ${python3}/bin/python3 "$out/bin/steam-library" \

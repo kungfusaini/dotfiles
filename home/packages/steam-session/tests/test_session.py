@@ -6,7 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'scripts'))
 import session
@@ -26,6 +26,53 @@ class SessionTests(unittest.TestCase):
         self.addCleanup(m.stop)
         self.game = dict(appid=1687950, state_flags=6)
 
+    def test_eula_requires_latest_action_for_exact_requested_game(self):
+        waiting = 'GameAction [AppID 1426210, ActionID 1] : LaunchApp waiting for user response to ShowEula ""\n'
+        self.assertTrue(session.needs_eula(waiting, 1426210))
+        self.assertFalse(session.needs_eula(waiting, 1687950))
+        self.assertFalse(session.needs_eula('', 1426210))
+        self.assertFalse(session.needs_eula(waiting +
+            'GameAction [AppID 1426210, ActionID 1] : LaunchApp continues with user response "ShowEula"\n', 1426210))
+        self.assertFalse(session.needs_eula(waiting +
+            'GameAction [AppID 1426210, ActionID 2] : LaunchApp changed task to CreatingProcess with ""\n', 1426210))
+
+    def test_prompt_watcher_shows_existing_ui_without_accepting_or_relaunching(self):
+        done = Mock()
+        done.wait.return_value = False
+        text = 'GameAction [AppID 1426210, ActionID 1] : LaunchApp waiting for user response to ShowEula ""'
+        with patch.object(session.steam, 'file_text_since', return_value=text), \
+             patch.object(session.shutil, 'which', return_value='/immutable/bin/steam-manual'), \
+             patch.object(session.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
+            session.watch_launch_prompt(1426210, {'offset': 123}, done)
+        run.assert_called_once_with(['/immutable/bin/steam-manual'], check=False, timeout=75)
+        self.assertEqual(json.loads(session.STATE.read_text())['phase'], 'needs-consent')
+
+    def test_prompt_watcher_does_not_reveal_ui_after_launch_finishes(self):
+        done = Mock()
+        done.wait.return_value = True
+        with patch.object(session.steam, 'file_text_since') as read, \
+             patch.object(session.subprocess, 'run') as run:
+            session.watch_launch_prompt(1426210, {}, done)
+        read.assert_not_called()
+        run.assert_not_called()
+
+    def test_prompt_placement_failure_is_reported(self):
+        done = Mock()
+        done.wait.return_value = False
+        with patch.object(session, 'needs_eula', return_value=True), \
+             patch.object(session.steam, 'file_text_since', return_value=''), \
+             patch.object(session.shutil, 'which', return_value=None), \
+             patch.object(session, 'report_error') as report:
+            session.watch_launch_prompt(1426210, {}, done)
+        self.assertIn('cannot show', report.call_args.args[0])
+
+    def test_pre_dispatch_errors_survive_pegasus_dropping_stderr(self):
+        with patch.object(session.subprocess, 'run') as run, patch.object(session, 'notify') as notify:
+            session.report_error('Cannot safely identify the invoking workspace; nothing launched.')
+        self.assertEqual(run.call_args.args[0][0], 'systemd-cat')
+        self.assertIn('Cannot safely identify', run.call_args.kwargs['input'])
+        notify.assert_called_once()
+
     def test_dispatch_independent_service_retains_workspace_and_waits(self):
         with patch.object(session, 'invoking_workspace', return_value='Machine · Games'), \
              patch.object(session.subprocess, 'run', return_value=subprocess.CompletedProcess([], 0)) as run:
@@ -37,6 +84,14 @@ class SessionTests(unittest.TestCase):
         self.assertIn('--setenv=PROJECT_OBJECT_WORKSPACE_NAME=Machine · Games', args)
         self.assertEqual(args[-2:], ['--worker', '1687950'])
         self.assertFalse(any('TOKEN' in arg or 'SECRET' in arg for arg in args))
+
+    def test_dispatch_nonzero_exit_is_journaled_and_notified(self):
+        with patch.object(session, 'invoking_workspace', return_value='Machine · Games'), \
+             patch.object(session.subprocess, 'run', return_value=subprocess.CompletedProcess(
+                 [], 1, stderr='Unit pegasus-steam-session.service already exists.\n')), \
+             patch.object(session, 'report_error') as report:
+            self.assertEqual(session.dispatch(1426210), 1)
+        self.assertIn('already exists', report.call_args.args[0])
 
     def test_full_launch_exit_cleanup_order_and_pending_installed_update(self):
         events = []
