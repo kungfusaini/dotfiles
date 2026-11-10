@@ -22,7 +22,11 @@ assert identity == 'cfepbdnljmjhpbaoephifiehkdahpgll'
 assert host['allowed_origins'] == ['chrome-extension://' + identity + '/']
 assert host['type'] == 'stdio'
 assert set(extension['permissions']) == {'nativeMessaging', 'scripting', 'storage'}
-assert set(extension['host_permissions']) == {'https://*.youtube.com/*', 'https://*.youtube-nocookie.com/*', 'http://tablet.localhost/*'}
+assert set(extension['host_permissions']) == {'http://*/*', 'https://*/*'}
+assert extension['version'] == '0.2.0'
+assert extension['content_scripts'][1]['matches'] == ['http://*/*', 'https://*/*']
+assert extension['content_scripts'][1]['all_frames']
+assert extension['content_scripts'][1]['match_origin_as_fallback']
 assert extension.get('externally_connectable') is None
 PY
   ${pkgs.gnugrep}/bin/grep -Fq -- '-tablet-fold-watch.py' ${watcher}/bin/tablet-fold-watch

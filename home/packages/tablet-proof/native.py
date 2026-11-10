@@ -246,7 +246,7 @@ class Native(p.Proof):
             try:
                 self.media.resume(self.record)  # Unblock only; never auto-play.
             except (OSError, ValueError, RuntimeError):
-                self.error = 'Pair the tablet media companion to pause YouTube on exit.'
+                self.error = 'Pair the tablet media companion to pause web media on exit.'
         self.remember()
         with (p.runtime() / 'orientation.log').open('a') as log:
             self.orientation = subprocess.Popen([os.environ['TABLET_NATIVE_ORIENTATION_BIN'], 'daemon'], stdout=log, stderr=log)
@@ -426,7 +426,7 @@ class Native(p.Proof):
                 self.journal()
                 try:
                     p.run('notify-send', 'Tablet playback was not paused',
-                          'Pair the tablet media companion. No other browser window was paused.')
+                          'Check companion pairing and website access. No other browser window was paused.')
                 except (OSError, subprocess.SubprocessError):
                     pass
             raise RuntimeError('Tablet-only media pause could not be verified; recovery retained') from None

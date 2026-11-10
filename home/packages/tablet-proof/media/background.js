@@ -20,10 +20,10 @@ function request(op, data = {}) {
 
 function permitted(tab) {
   if (!tab.url) return false;
-  const url = new URL(tab.url);
-  return (url.protocol === "https:" && ["youtube.com", "youtube-nocookie.com"]
-    .some(host => url.hostname === host || url.hostname.endsWith("." + host)))
-    || TEST_ORIGINS.some(origin => tab.url.startsWith(origin));
+  try {
+    const url = new URL(tab.url);
+    return url.protocol === "http:" || url.protocol === "https:";
+  } catch (_) { return false; }
 }
 
 async function refreshTab(tabId, expectedWindow = undefined) {
@@ -52,16 +52,27 @@ async function setBlocked(windowId, value) {
   let elements = 0;
   let playing = 0;
   let unsupportedAudible = 0;
+  let failedTabs = 0;
   for (const tab of tabs) {
     if (!permitted(tab)) { if (tab.audible) unsupportedAudible++; continue; }
-    const frames = await refreshTab(tab.id, windowId);
-    for (const frame of frames) {
-      if (frame.blocked !== value) throw new Error("Media helper has stale window state");
-      elements += frame.elements;
-      playing += frame.playing;
+    try {
+      const frames = await refreshTab(tab.id, windowId);
+      // An audible custom player with no reachable HTML media is not evidence
+      // of a successful pause (e.g. Web Audio or inaccessible shadow media).
+      if (value && tab.audible && frames.reduce((total, frame) => total + frame.elements, 0) === 0)
+        unsupportedAudible++;
+      for (const frame of frames) {
+        if (frame.blocked !== value) throw new Error("Media helper has stale window state");
+        elements += frame.elements;
+        playing += frame.playing;
+      }
+    } catch (_) {
+      // Protected pages, missing grants or a tab closing must not prevent
+      // attempts on the remaining tablet tabs. Still fail the overall ACK.
+      failedTabs++;
     }
   }
-  return {elements, playing, unsupportedAudible};
+  return {elements, playing, unsupportedAudible, failedTabs};
 }
 
 async function handleHost(message) {
@@ -76,12 +87,11 @@ async function handleHost(message) {
   }
   if (!["pause", "resume"].includes(message.op)) throw new Error("Unsupported operation");
   const result = await setBlocked(window.id, message.op === "pause");
+  if (result.failedTabs) throw new Error("Some tablet media helpers could not be verified");
   if (message.op === "pause" && (result.playing || result.unsupportedAudible))
     throw new Error("Some tablet media could not be paused with the granted site access");
   return result; // Resume only refreshes/unblocks; never calls play().
 }
-
-const TEST_ORIGINS = []; // Build-time private-fixture substitution, never a runtime permission switch.
 
 function connect() {
   const connection = chrome.runtime.connectNative(HOST);

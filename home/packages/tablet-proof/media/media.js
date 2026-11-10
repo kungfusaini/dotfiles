@@ -5,8 +5,23 @@
   try { globalThis[name]?.dispose(); } catch (_) {}
   let blocked = false;
   let generation = 0;
+  const roots = new Set();
+  function watchRoot(root) {
+    if (roots.has(root)) return;
+    roots.add(root);
+    root.addEventListener('play', play, true);
+  }
   function pauseHere() {
-    const media = [...document.querySelectorAll('audio,video')];
+    const found = new Set();
+    function scan(root) {
+      watchRoot(root);
+      for (const item of root.querySelectorAll('audio,video')) found.add(item);
+      for (const element of root.querySelectorAll('*')) {
+        if (element.shadowRoot) scan(element.shadowRoot);
+      }
+    }
+    scan(document);
+    const media = [...found];
     for (const item of media) item.pause();
     return {elements: media.length, playing: media.filter(item => !item.paused && !item.ended).length};
   }
@@ -36,13 +51,13 @@
     refresh().then(reply);
     return true;
   };
-  document.addEventListener('play', play, true);
+  watchRoot(document);
   chrome.runtime.onMessage.addListener(message);
   globalThis[name] = {
     refresh,
     dispose() {
       blocked = false; ++generation;
-      document.removeEventListener('play', play, true);
+      for (const root of roots) root.removeEventListener('play', play, true);
       chrome.runtime.onMessage.removeListener(message);
     }
   };

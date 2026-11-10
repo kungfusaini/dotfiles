@@ -43,7 +43,13 @@ def outer():
                QT_QPA_PLATFORM='wayland',QT_QUICK_CONTROLS_STYLE='Basic',QT_FORCE_STDERR_LOGGING='1',
                DBUS_SYSTEM_BUS_ADDRESS='unix:path='+str(root/'no-system-bus'),VIVALDI_FFMPEG_AUTO='0',PYTHONDONTWRITEBYTECODE='1')
     print('Private proof artifacts:',root,flush=True)
-    return subprocess.call(['dbus-run-session','--',sys.executable,__file__],env=env)
+    headless=root/'headless-state';headless.write_text('off')
+    # The host may deliberately be in external-display/headless posture. Mask
+    # only this file in a mount namespace; never change host display state or
+    # weaken the production awake-internal-panel guard for the private proof.
+    return subprocess.call(['bwrap','--bind','/','/','--dev-bind','/dev','/dev','--tmpfs','/tmp/.X11-unix','--tmpfs','/run/headless-mode',
+                            '--ro-bind',str(headless),'/run/headless-mode/state',
+                            'dbus-run-session','--',sys.executable,__file__],env=env)
 
 
 def inner():
@@ -113,7 +119,29 @@ def inner():
                 self.wfile.write(b'''<!doctype html><title>Native proof fixture</title>
 <style>body{margin:0;background:#c5314c;color:white}input{position:fixed;left:20px;top:20px;width:80%;height:60px;background:#e8f0fa;border:0;font-size:28px}button{position:fixed;left:30%;top:40%;width:40%;height:20%;background:#ffd42a;border:0}video{width:100vw;height:100vh;object-fit:fill}video:not(:fullscreen){display:none}</style>
 <input id=text placeholder="Private input"><button id=full>Fullscreen video</button><video id=video src=/video.webm muted loop></video>
-<script>const role=location.pathname==='/desktop'?'desktop':'tablet';if(role==='desktop'){video.style.display='block';video.play();full.remove();text.remove()}document.onclick=e=>{fetch('/clicked-'+e.target.tagName);if(e.target.id==='full'){video.play();video.requestFullscreen()}};if(role!=='desktop'){text.onfocus=()=>fetch('/focused');text.oninput=()=>fetch('/typed-'+encodeURIComponent(text.value))}document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);let attempted=false;setInterval(()=>{fetch('/state/'+role+'/'+(video.paused?'paused':'playing'));fetch('/attempt/'+role).then(r=>r.json()).then(s=>{if(s.attempt&&!attempted){attempted=true;video.play();fetch('/attempted-'+role)}})},200);</script>''')
+<script>
+const role=location.pathname==='/'?'tablet':location.pathname.slice(1);
+function report(element,name){let attempted=false;setInterval(()=>{
+  fetch('/state/'+name+'/'+(element.paused?'paused':'playing'));
+  fetch('/attempt/'+name).then(r=>r.json()).then(s=>{if(s.attempt&&!attempted){
+    attempted=true;element.play();fetch('/attempted-'+name)}})},200)}
+if(role!=='tablet'){document.title='Media '+role+' fixture';video.style.display='block';video.play();full.remove();text.remove()}
+if(__NATIVE__&&role==='tablet'){
+  const cross=document.createElement('iframe');cross.src=location.origin.replace('127.0.0.1','localhost')+'/frame';
+  cross.style='position:fixed;right:0;bottom:0;width:100px;height:60px';document.body.append(cross);
+  const blank=document.createElement('iframe');blank.src='about:blank';blank.style='position:fixed;left:0;bottom:0;width:100px;height:60px';
+  blank.onload=()=>{const media=blank.contentDocument.createElement('video');media.src=location.origin+'/video.webm';
+    media.muted=true;media.loop=true;blank.contentDocument.body.append(media);media.play();report(media,'blank')};document.body.append(blank);
+}
+if(role==='frame'){
+  const host=document.createElement('div');document.body.append(host);const shadow=host.attachShadow({mode:'open'});
+  const media=document.createElement('video');media.src='/video.webm';media.muted=true;media.loop=true;shadow.append(media);
+  media.play();report(media,'frame-shadow');
+}
+document.onclick=e=>{fetch('/clicked-'+e.target.tagName);if(e.target.id==='full'){video.play();video.requestFullscreen()}};
+if(role==='tablet'){text.onfocus=()=>fetch('/focused');text.oninput=()=>fetch('/typed-'+encodeURIComponent(text.value))}
+document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);report(video,role);
+</script>'''.replace(b'__NATIVE__',b'true' if native else b'false'))
             def log_message(self,*args):pass
         server=ThreadingHTTPServer(('127.0.0.1',0),Page)
         threading.Thread(target=server.serve_forever,daemon=True).start()
@@ -155,7 +183,7 @@ def inner():
             manifests.mkdir(parents=True, exist_ok=True)
             (manifests/'org.machine.tablet_media.json').write_text(Path(os.environ['TABLET_TEST_MEDIA_MANIFEST']).read_text())
         flags=['--user-data-dir='+str(root/'config/vivaldi' if native else root/'browser-profile'),'--ozone-platform=wayland','--enable-wayland-ime','--wayland-text-input-version=3','--no-first-run','--no-default-browser-check','--password-store=basic',
-               '--disable-background-networking','--disable-component-update','--disable-sync','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE tablet.localhost']
+               '--disable-background-networking','--disable-component-update','--disable-sync','--host-resolver-rules=MAP * ~NOTFOUND, EXCLUDE 127.0.0.1, EXCLUDE localhost, EXCLUDE tablet.localhost']
         if native:
             flags += ['--load-extension='+os.environ['TABLET_TEST_MEDIA_EXTENSION'], '--disable-extensions-except='+os.environ['TABLET_TEST_MEDIA_EXTENSION']]
         start([os.environ['TABLET_TEST_VIVALDI'],*flags,'--new-window','about:blank'],'browser')
@@ -212,17 +240,24 @@ def inner():
             until(lambda:any(c['address']==address and 'Pair tablet media' in c.get('title','') for c in clients()),'registration tab removed')
             keys('-M','ctrl','-k','w','-m','ctrl')
             until(lambda:any(c['address']==address and 'Native proof fixture' in c.get('title','') for c in clients()),'own pairing page closed')
+            other_url=url.replace('127.0.0.1','localhost')+'other-site'
+            start([os.environ['TABLET_TEST_VIVALDI'],*flags,other_url],'other-site-tab-launch')
+            until(lambda:any(c['address']==address and 'Media other-site fixture' in c.get('title','') for c in clients()),'different-site tablet tab')
+            until(lambda:playback.get('other-site'),'second tablet site playing')
+            keys('-M','ctrl','-M','shift','-k','Tab','-m','shift','-m','ctrl')
+            until(lambda:any(c['address']==address and 'Native proof fixture' in c.get('title','') for c in clients()),'original media tab restored')
         active=next(c for c in clients() if c['address']==address)
         assert not active['floating'] and active['fullscreen']==2 and active['fullscreenClient']==1,active
         assert active['workspace']==before[address]['workspace']
         target=lambda:next(c for c in clients() if c['address']==address)
         until(lambda:target()['size']==[960,640],'native app fills output')
-        app=snapshot('app')
-        button=color_center(app,(255,212,42));assert button,'fixture button missing'
+        button=until(lambda:color_center(snapshot('app'),(255,212,42)),
+                     'original fixture rendered after tab switch')
         previous=len(requests);click(*button)
         until(lambda:'/media-true' in requests,'browser client fullscreen request')
         if native:
-            until(lambda:playback.get('tablet') and playback.get('desktop'),'two browser windows playing simultaneously')
+            until(lambda:all(playback.get(role) for role in ('tablet','desktop','frame','frame-shadow','blank','other-site')),
+                  'different sites, cross-origin/inherited frames, shadow media and separate window playing')
         until(lambda:target()['fullscreen']==2 and target()['fullscreenClient']==2,'true native media fullscreen')
         move(500,300)
         time.sleep(3.5)  # Let the browser's own video controls/bubble fade.
@@ -296,18 +331,20 @@ def inner():
         assert not (runtime/'tablet-proof/recovery.json').exists()
         if native:
             assert 'recovery retained' not in (runtime/'tablet-proof/supervisor.log').read_text(), 'normal close silently fell back to supervisor recovery'
-            until(lambda:playback.get('tablet') is False and playback.get('desktop') is True,'only tablet media paused on exit')
-            attempts['tablet'] = True
-            until(lambda:'/attempted-tablet' in requests,'background autoplay attempt')
+            tablet_roles=('tablet','frame','frame-shadow','blank','other-site')
+            until(lambda:all(playback.get(role) is False for role in tablet_roles) and playback.get('desktop') is True,
+                  'all tablet sites/frames paused while other window keeps playing')
+            for role in tablet_roles:attempts[role]=True
+            until(lambda:all('/attempted-'+role in requests for role in tablet_roles),'background replay attempted across sites/frames')
             time.sleep(1)
-            assert playback.get('tablet') is False and playback.get('desktop') is True,'background replay escaped tablet-only pause'
-            attempts['tablet'] = False
+            assert all(playback.get(role) is False for role in tablet_roles) and playback.get('desktop') is True,'background replay escaped tablet-only pause'
+            for role in tablet_roles:attempts[role]=False
         if native:
             # Losing the stage must establish a fresh verified cover before a
             # normal release/return, not silently fall through to recovery.
             proof('start','--address',address)
             time.sleep(.5)
-            assert playback.get('tablet') is False and playback.get('desktop') is True,'return unexpectedly resumed playback'
+            assert all(playback.get(role) is False for role in tablet_roles) and playback.get('desktop') is True,'return unexpectedly resumed playback'
             journal=json.loads((runtime/'tablet-proof/recovery.json').read_text())
             stage=next(child for child in journal['children']
                        if any(arg.endswith(b'/stage.qml') for arg in (Path('/proc')/str(child['pid'])/'cmdline').read_bytes().split(b'\0')))

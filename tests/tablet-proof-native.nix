@@ -26,7 +26,7 @@ let
   '';
   media = pkgs.callPackage ../home/packages/tablet-proof/media {
     inherit hyprland;
-    testOrigins = [ "http://127.0.0.1/*" ];
+    preloadedTestOrigins = [ "http://127.0.0.1/*" "http://localhost/*" ];
   };
   proof = if native then pkgs.callPackage ../home/packages/tablet-proof/native.nix { inherit hyprland orientation media; }
     else pkgs.callPackage ../home/packages/tablet-proof { inherit hyprland; };
@@ -60,7 +60,7 @@ let
   '';
 in pkgs.writeShellApplication {
   name = if native then "tablet-native-fold-test" else "tablet-proof-native-test";
-  runtimeInputs = [python hyprland pkgs.quickshell pkgs.labwc pkgs.dbus pkgs.glib pkgs.dconf pkgs.wtype pkgs.grim pkgs.squeekboard pkgs.vivaldi];
+  runtimeInputs = [python hyprland pkgs.quickshell pkgs.labwc pkgs.bubblewrap pkgs.dbus pkgs.glib pkgs.dconf pkgs.wtype pkgs.grim pkgs.squeekboard pkgs.vivaldi];
   text = ''
     export TABLET_TEST_NATIVE_FOLD=${if native then "1" else "0"}
     export TABLET_TEST_NATIVE_SOURCE=${../home/packages/tablet-proof/native.py}

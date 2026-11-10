@@ -18,10 +18,12 @@ workspace implementation remains live until that gate is satisfied.
   suspended-window gate but **never calls `play()`**. A later explicit user/site
   play action can run while tablet mode is active; this is not a browser-wide
   autoplay-policy change.
-- Initially supported sites are HTTPS YouTube and YouTube-nocookie origins.
-  Unpermitted audible tabs produce an explicit failure, not a fake claim that
-  all media paused. Other sites, Web Audio-only players and new native app
-  adapters are not claimed supported by this proof.
+- Supported sites are HTTP and HTTPS pages, across all tabs in the registered
+  window. HTML audio/video in cross-origin frames, inherited-origin frames and
+  existing open shadow roots is included. Closed shadow roots, Web Audio-only
+  players, protected browser pages, local files and native app adapters are not
+  guaranteed. Unpermitted audible tabs produce an explicit failure, not a fake
+  claim that every possible player paused.
 
 ## Why a companion
 
@@ -38,12 +40,18 @@ framework or borrowing a third-party extension's broad permissions.
 ## Permissions and data
 
 The production manifest grants `nativeMessaging`, `scripting`, `storage` and
-explicit YouTube plus `http://tablet.localhost/*` host access. There is **no**
-`tabs`, history, cookies, debugger, webRequest, all-URLs or ordinary loopback-host
-permission. Page-access grants still mean the browser permits read/modify access
-on those sites; the implemented scripts only find/pause media and maintain a
-pause gate. They do not collect text, HTML, titles, history, cookies, credentials
-or video URLs. This is an audited operation scope, not a security sandbox against
+`http://*/*` / `https://*/*` host access, including local HTTP services and the
+registration origin. This broadened page-access scope requires explicit user
+approval and browser consent. Chrome grants site access profile-wide, not per
+window: the browser permits reading/modifying any matching site, although our
+fixed implementation only pauses media in the exactly paired tablet window.
+There is **no** `tabs`, history, cookies, debugger or webRequest API permission,
+no `<all_urls>` pattern, and no top-level file/internal-browser-page grant.
+The helper is installed at document start across matching pages, but unpaired
+windows have no blocked state; it does not scan their DOM or pause their media.
+Only while blocked does it traverse audio/video elements and open shadow roots,
+attach their play guards and pause them. It does not collect text, HTML, titles,
+history, cookies, credentials or video URLs. This is an audited operation scope, not a security sandbox against
 other programs running as the same Unix user.
 
 The dedicated local origin serves one-time registration pages from an ephemeral
@@ -94,14 +102,21 @@ The extension enumerates only the bound window. Before acknowledging a pause it
 explicitly installs and verifies the fixed idempotent media helper in permitted
 frames, including documents loaded **before** companion installation/reload.
 Missing receivers are not treated as proof of a working gate. Reinstallation
-removes prior listeners rather than accumulating them.
+removes prior listeners, including shadow-root listeners, rather than accumulating
+them. Static [Chrome content scripts](https://developer.chrome.com/docs/extensions/develop/concepts/content-scripts)
+use `all_frames` and `match_origin_as_fallback` for frames created by granted
+HTTP(S) origins; top-level browser/file pages remain outside the grant.
 
 The helper pauses existing media and rechecks Chrome's current sender-window
 state on subsequent play events. Tab detach clears old gate state; attachment
 refreshes/installs the gate in the new window. A moved tab does not retain its
 old tablet blocking state in a laptop window, and a tab moved into a suspended
 tablet window receives the gate. Tab/window state is checked again after
-injection; movement during an operation is an explicit error. Browser event
+injection; movement during an operation is an explicit error. An injection failure
+is collected per tab so remaining tablet tabs are still attempted; the overall
+acknowledgement fails afterward. An audible tab with no reachable HTML media
+also fails conservatively. Mixed/custom audio graphs are not proven stopped by
+an HTML-element count. Browser event
 handling is asynchronous, not an atomic cross-process window transaction.
 
 Native exit records suspended/pending state and requests verified pause before
@@ -124,22 +139,26 @@ source is not reclaimed. No automatic playback resume is sent on later entry.
   and production permission bounds.
 - The real private Labwc → Hyprland → Vivaldi suite loads the actual native host
   and companion in a disposable profile, opens its real Options UI, clicks Pair,
-  and confirms registration-tab removal. Two real local WebM players run in
-  distinct windows. Tablet exit pauses only the tablet; the second keeps playing.
-  A later background play attempt is re-paused; reentry does not restart playback.
+  and confirms registration-tab removal. Real local WebM players run across two
+  tablet site origins/tabs, a cross-origin iframe, an inherited-origin blank
+  frame and an open shadow root. A separate browser window also plays. Exit
+  pauses every tablet player while the other window continues. Background play
+  attempts in all tablet documents are re-paused; reentry restarts none.
   Existing native fullscreen/global controls/IME, workspace resume, rotation and
   stage/backend/focus-loss recovery checks run alongside it.
-- The test derivation adds only its private fixture origin. **It deliberately
-  adds no declarative script for fixture pages**, proving the explicit helper
-  path works on preloaded documents. Production has no fixture origin or runtime
-  permission-bypass switch. No real website/profile, credentials, CDP, global
+- The test derivation uses the production HTTP(S) permissions unchanged. It
+  **excludes declarative scripts on fixture HTTP pages**, proving the explicit
+  helper path works on preloaded documents. There is no test-origin permission
+  exception or runtime permission-bypass switch. A private mount namespace masks
+  the host headless-posture file and isolates X11 sockets, so host display posture neither
+  invalidates tests nor has to be changed. Production panel guards stay intact. No real website/profile, credentials, CDP, global
   input, physical sensor, audio or backlight is used by this suite. The players
   are real media elements but muted; assertions measure actual playing/paused
   state rather than claiming a physical sound test.
 
 ## Managed installation and activation gate
 
-Home Manager installs the read-only extension directory at
+Home Manager installs the immutable extension directory at
 `~/.local/share/tablet-media-companion`, the whitelisted manifest at
 `~/.config/vivaldi/NativeMessagingHosts/org.machine.tablet_media.json`, and the
 packaged `tablet-native` CLI. The normal Vivaldi wrapper, Project Object bridge,
@@ -148,11 +167,20 @@ required for a human to load the unpacked companion into the existing normal
 profile. Vivaldi's extension UI requires its Developer mode / Load unpacked
 consent; choose the managed directory above. The agent must not enable personal
 profile debugging or edit profile preferences to bypass that permission UI.
+Vivaldi's directory picker resolves this directory symlink to its Nix-store
+target. For an existing installation pointing directly into the old store,
+select the managed folder again with Load unpacked after deployment and accept
+the broader access. Reload on the old entry alone reloads the **old** generation.
+Verify the entry's own version/path before activation. A private comparison
+found that a real folder of per-file symlinks did not run the registration
+content script in this Vivaldi build, whereas identical regular files worked;
+do not switch to recursive per-file links or assume that layout is equivalent.
+No mutable extension copy or preference edit is introduced to bypass consent.
 
 `programs.tablet-native.automatic` defaults to `false`: installing the host and
 assets does not prematurely replace fold/entry/shortcut routes. After the
 companion is loaded, pair the existing tablet window through its companion
-button or Options page and verify actual YouTube pause on the temporary native
+button or Options page and verify actual site-media pause on the temporary native
 watcher. Only then enable the accepted native default. Existing sign-ins, tabs,
 profiles, legacy Pi data and extension state are preserved.
 

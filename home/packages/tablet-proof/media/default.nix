@@ -1,23 +1,18 @@
-{ pkgs, hyprland ? pkgs.hyprland, testOrigins ? [] }:
+{ pkgs, hyprland ? pkgs.hyprland, preloadedTestOrigins ? [] }:
 let
   extensionId = "cfepbdnljmjhpbaoephifiehkdahpgll";
   original = builtins.fromJSON (builtins.readFile ./manifest.json);
   manifest = original // {
-    host_permissions = original.host_permissions ++ testOrigins;
-    # Deliberately do not add fixture content scripts: those already-loaded
-    # pages must acquire the autoplay gate through the explicit injection path.
-    content_scripts = original.content_scripts;
+    # Fixture documents must still prove the explicit helper injection path.
+    # Tests can only exclude declarative injection, never grant extra access.
+    content_scripts = map (script: if builtins.elem "media.js" script.js then
+      script // { exclude_matches = (script.exclude_matches or []) ++ preloadedTestOrigins; }
+      else script) original.content_scripts;
   };
-  # Test-origin prefixes are explicit build inputs, never a runtime bypass.
-  prefixes = map (origin: if origin == "http://127.0.0.1/*" then "http://127.0.0.1:" else throw "Unsupported private fixture origin") testOrigins;
-  script = pkgs.writeText "tablet-media-background.js" (builtins.replaceStrings
-    [ "const TEST_ORIGINS = [];" ]
-    [ ("const TEST_ORIGINS = " + builtins.toJSON prefixes + ";") ]
-    (builtins.readFile ./background.js));
   extension = pkgs.runCommand "tablet-media-extension" {} ''
     mkdir -p "$out"
     cp ${pkgs.writeText "manifest.json" (builtins.toJSON manifest)} "$out/manifest.json"
-    cp ${script} "$out/background.js"
+    cp ${./background.js} "$out/background.js"
     cp ${./media.js} "$out/media.js"
     cp ${./register.js} "$out/register.js"
     cp ${./pair.html} "$out/pair.html"

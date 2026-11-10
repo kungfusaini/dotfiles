@@ -20,6 +20,11 @@ class NativeTests(unittest.TestCase):
         self.env = patch.dict(os.environ, {'XDG_RUNTIME_DIR': self.tmp.name, 'XDG_STATE_HOME': self.tmp.name + '/state',
             'HYPRLAND_INSTANCE_SIGNATURE': 'instance', 'TABLET_NATIVE_ORIENTATION_BIN': '/native/orientation'})
         self.env.start()
+        read_text = Path.read_text
+        self.headless = patch.object(Path, 'read_text', lambda path, *args, **kwargs:
+            'off' if str(path) == '/run/headless-mode/state' else read_text(path, *args, **kwargs))
+        self.headless.start()
+        self.addCleanup(self.headless.stop)
         self.keyboard = Mock(process=None, settings=[])
         self.controls = Mock()
         self.controls.read.return_value = {'volume': 30, 'brightness': 40}
@@ -79,6 +84,12 @@ class NativeTests(unittest.TestCase):
         with ExitStack() as stack:
             for patcher in self.runtime(): stack.enter_context(patcher)
             self.native.setup(address)
+
+    def test_real_headless_posture_is_rejected_before_tablet_entry(self):
+        with patch.object(Path, 'read_text', return_value='on'):
+            with self.assertRaisesRegex(RuntimeError, 'awake internal display'):
+                self.enter()
+        self.assertEqual(self.events, [])
 
     def test_fold_from_laptop_browser_enters_empty_tablet_home_without_borrowing(self):
         before = copy.deepcopy(self.laptop)
