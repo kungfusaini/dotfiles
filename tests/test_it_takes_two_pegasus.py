@@ -35,9 +35,9 @@ class ItTakesTwoPegasusTests(unittest.TestCase):
         for field in ("assets.box_front", "assets.background", "assets.logo", "assets.screenshot"):
             for path in self.fields[field]:
                 self.assertTrue(path.startswith(prefix + "steam/it-takes-two/"))
-                self.assertIn(f'"$out/{path.removeprefix(prefix)}"', artwork)
+                self.assertTrue((ROOT / "home/config/pegasus/media" / path.removeprefix(prefix)).is_file())
         self.assertEqual(len(self.fields["assets.screenshot"]), 3)
-        self.assertIn('"$out/steam/it-takes-two"', artwork)
+        self.assertIn("${../config/pegasus/media}", artwork)
         module = (ROOT / "home/modules/pegasus.nix").read_text()
         self.assertIn('"pegasus-frontend/media".source = pegasusArtwork;', module)
         self.assertIn('../config/pegasus/steam.metadata.pegasus.txt;', module)

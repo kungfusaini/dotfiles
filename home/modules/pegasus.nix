@@ -104,8 +104,8 @@ in
       config.lib.file.mkOutOfStoreSymlink "${config.home.homeDirectory}/matrix/data/emulation/saves/switch";
   };
 
-  # Reserve the durable data roots without putting ROMs, saves, BIOS files, or
-  # downloaded artwork in the Nix repository.
+  # Reserve durable data roots without putting ROMs, saves, or BIOS files in
+  # the repository. Curated launcher artwork is versioned separately in media/.
   home.activation.createPegasusDataRoot = ''
     mkdir -p \
       "$HOME/matrix/data/emulation/bios/ps2" \

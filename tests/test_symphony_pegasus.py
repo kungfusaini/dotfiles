@@ -46,7 +46,8 @@ class SymphonyPegasusTests(unittest.TestCase):
             path, = self.fields[key]
             self.assertTrue(path.startswith(prefix))
             relative = path.removeprefix(prefix)
-            self.assertIn(f'"$out/{relative}"', artwork)
+            self.assertTrue((ROOT / "home/config/pegasus/media" / relative).is_file())
+        self.assertIn("${../config/pegasus/media}", artwork)
         self.assertIn('"pegasus-frontend/media".source = pegasusArtwork;', module)
         self.assertIn('../config/pegasus/custom.metadata.pegasus.txt;', module)
 

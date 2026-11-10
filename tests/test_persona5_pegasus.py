@@ -43,11 +43,10 @@ class Persona5PegasusTests(unittest.TestCase):
         for field in ("assets.box_front", "assets.background", "assets.logo"):
             path, = self.fields[field]
             self.assertTrue(path.startswith(prefix + "steam/persona-5-royal/"))
-            self.assertIn(f'"$out/{path.removeprefix(prefix)}"', artwork)
+            self.assertTrue((ROOT / "home/config/pegasus/media" / path.removeprefix(prefix)).is_file())
         self.assertIn('"pegasus-frontend/media".source = pegasusArtwork;', module)
         self.assertIn('../config/pegasus/steam.metadata.pegasus.txt;', module)
-        for asset in ("library_600x900.jpg", "library_hero.jpg", "logo.png"):
-            self.assertIn(f"steam/apps/1687950/{asset}", artwork)
+        self.assertIn("${../config/pegasus/media}", artwork)
 
     def test_existing_curated_games_and_provider_policy_preserved(self):
         self.assertIn("game: Rayman Legends\nfile: steam:242550\n", self.text)
