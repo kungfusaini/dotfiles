@@ -1,0 +1,3 @@
+# Intentionally replace upstream's Pro Controller interception with no rules.
+# Exact Joy-Con hidraw restrictions live in 71-joycond-hidraw.rules, BEFORE
+# 73-seat-late.rules queues the uaccess builtin and grants a user ACL.

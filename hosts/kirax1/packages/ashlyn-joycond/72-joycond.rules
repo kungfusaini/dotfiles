@@ -1,0 +1,13 @@
+# Only Ashlyn's exact Bluetooth Joy-Cons; leave every Pro Controller untouched.
+ACTION!="add|change", GOTO="ashlyn_joycond_end"
+SUBSYSTEM!="input", GOTO="ashlyn_joycond_end"
+KERNEL!="event*|js*", GOTO="ashlyn_joycond_end"
+ATTRS{id/vendor}!="057e", GOTO="ashlyn_joycond_end"
+ATTRS{uniq}!="58:B0:3E:4B:7E:DD|58:B0:3E:4B:83:C2", GOTO="ashlyn_joycond_end"
+ATTRS{name}=="*IMU*", GOTO="ashlyn_joycond_end"
+
+# Hide both evdev and legacy joystick halves; applications see the virtual pair.
+TAG-="uaccess", MODE:="0600", GROUP:="root"
+KERNEL=="event*", TAG+="joycond"
+
+LABEL="ashlyn_joycond_end"

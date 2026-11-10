@@ -1,0 +1,7 @@
+# SDL/Steam must not open the raw halves behind joycond's evdev grab.
+# HID_UNIQ lives on the immediate HID parent and uses lower-case addresses.
+ACTION!="add|change", GOTO="ashlyn_joycond_raw_end"
+SUBSYSTEM!="hidraw", GOTO="ashlyn_joycond_raw_end"
+IMPORT{parent}="HID_UNIQ"
+ENV{HID_UNIQ}=="58:b0:3e:4b:7e:dd|58:b0:3e:4b:83:c2", TAG-="uaccess", MODE:="0600", GROUP:="root"
+LABEL="ashlyn_joycond_raw_end"
