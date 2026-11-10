@@ -421,10 +421,26 @@ class RoundupTests(unittest.TestCase):
         self.assertFalse(self.calls)
         self.assertNotIn("sk-", json.dumps(self.notices))
 
-    def test_no_silent_input_truncation(self):
-        with patch.object(r, "MAX_PACKET", 20):
-            self.assertEqual(self.run_job()["status"], "pending")
-        self.assertFalse(self.calls)
+    def test_large_day_reaches_draft_and_review_without_truncation(self):
+        summaries = [f"Recorded achievement {i}: " + "Completed work. " * 700 for i in range(40)]
+        self.events(self.log, [self.event("2026-11-03T10:00:00Z", text) for text in summaries])
+        events, sources = r.collect(self.source, dt.date(2026, 11, 3), "Europe/London")
+        self.assertGreater(len(json.dumps(events, ensure_ascii=False).encode("utf-8")), 400_000)
+        self.assertEqual([e["summary"] for e in events[:-1]], summaries)
+        self.assertEqual(sum(len(s["events"]) for s in sources), 41)
+        def model(stage, payload):
+            self.calls.append((stage, payload))
+            if stage == "review":
+                return {"verdict": "pass", "issues": []}
+            return {"overview": "Recorded achievements.", "sections": [{"title": "Project", "items": [
+                {"text": "Completed the recorded work.", "sources": [e["id"] for e in payload["events"]]}
+            ]}], "unfinished": []}
+        self.assertEqual(self.run_job(model=model)["published"], ["2026-11-03"])
+        self.assertEqual([stage for stage, _ in self.calls], ["draft", "review"])
+        for _, payload in self.calls:
+            self.assertEqual(payload["events"], events)
+        path = r.day_path(Path(self.config["archiveRoot"]), dt.date(2026, 11, 3))
+        self.assertEqual(r.read_json(path / "sources.json")["event_count"], 41)
 
     def test_symlinked_source_file_and_parent_rejected(self):
         target = self.root / "outside"

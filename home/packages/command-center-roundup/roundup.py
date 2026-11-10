@@ -20,7 +20,6 @@ from zoneinfo import ZoneInfo
 
 UTC = dt.timezone.utc
 TEXT_FIELDS = ("summary", "task", "result", "reason", "lesson", "blocker", "next")
-MAX_PACKET = 400_000
 MAX_FILE = 64 * 1024 * 1024
 FAST_RETRY_SECONDS = 120
 SLOW_RETRY_SECONDS = 3600
@@ -219,9 +218,6 @@ def collect(root, day, timezone):
             selected.append({"id": eid, "line": line, "time": event["time"], "sha256": digest(event)})
         if selected:
             sources.append({"path": str(path), "project_id": pid, "stream_id": sid, "events": selected})
-    packet = json.dumps(events, ensure_ascii=False)
-    if len(packet.encode("utf-8")) > MAX_PACKET:
-        raise Problem("day_requires_larger_input_review")
     return events, sources
 
 
