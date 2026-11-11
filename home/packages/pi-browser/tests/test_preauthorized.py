@@ -130,6 +130,8 @@ class PreauthorizedTests(unittest.TestCase):
                 self.assertEqual(browser.connect_manual('cli', root, {}, 'vivaldi'), 0)
                 self.assertEqual(json.loads(output.getvalue()), {'status': 'connecting', 'connected': False})
                 spawn.assert_called_once(); external.assert_not_called()
+                self.assertEqual(spawn.call_args.kwargs['env']['PI_BROWSER_OWNED_DOWNLOADS'], '1')
+                self.assertEqual(spawn.call_args.kwargs['env']['PI_BROWSER_METADATA_ONLY'], '1')
             with patch.object(browser, 'managed_state', return_value=state), \
                     patch.object(browser, 'preauthorized_endpoint', return_value=None), \
                     patch.object(browser.subprocess, 'run') as external, \

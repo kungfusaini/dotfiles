@@ -172,9 +172,9 @@ def without_manual_option(args):
 def launch_options(browser_executable, args):
     options = {"executablePath": browser_executable, "headless": not headed_requested(args),
                "chromiumSandbox": True}
-    # Keep the pinned Vivaldi binary/profile/extensions, but use its Chromium
-    # interface. Vivaldi's custom UI deadlocks on automated popup creation.
-    options["args"] = ["--disable-vivaldi"]
+    # Use Chromium directly: Vivaldi's --disable-vivaldi interface avoids its
+    # popup stall but prevents downloads, even with explicit CDP permission.
+    options["args"] = []
     if not options["headless"]:
         options["args"].append("--force-dark-mode")
     return options
@@ -216,9 +216,12 @@ def child_env(env, root):
     result = {k: v for k, v in env.items()
               if not k.startswith(("PLAYWRIGHT_", "PWTEST_"))}
     result.pop("PI_BROWSER_METADATA_ONLY", None)
+    result.pop("PI_BROWSER_OWNED_DOWNLOADS", None)
     result.update({
         "NO_UPDATE_NOTIFIER": "1",
         "PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD": "1",
+        # Personal CLI defaults must not select a legacy authentication profile.
+        "PWTEST_CLI_GLOBAL_CONFIG": str(root / "global-config"),
         "VIVALDI_FFMPEG_AUTO": "0",
         "XDG_CACHE_HOME": str(root / "cache"),
         "TMPDIR": str(runtime_root(root)),
@@ -235,6 +238,8 @@ def process_start(pid):
         return None
 
 
+# Keep the legacy state filename, log name and placement class so deployment
+# does not strand an already-running Vivaldi browser or replace its ownership.
 def read_state(root):
     try:
         state = json.loads((root / "vivaldi-process.json").read_text())
@@ -280,7 +285,7 @@ def placement_rule(root, env):
         return {}
     if (not workspace or any(c in workspace for c in ";[],\r\n\0")
             or not re.fullmatch(r"[a-f0-9]{32}", launch_id or "")):
-        raise ValueError("Invalid native Vivaldi workspace launch context")
+        raise ValueError("Invalid native browser workspace launch context")
     rule = "windowrule[pi-browser-" + root.name + "]"
     browser_class = "pi-vivaldi-" + launch_id
     hyprctl = env.get("PROJECT_PICKER_HYPRCTL", "@HYPRCTL@")
@@ -292,7 +297,7 @@ def placement_rule(root, env):
             result = subprocess.run([hyprctl, "keyword", rule + ":" + key, value],
                                     env=env, capture_output=True, text=True, timeout=5, check=False)
             if result.returncode or result.stdout.strip() != "ok":
-                raise ValueError("Could not install the native Vivaldi placement rule")
+                raise ValueError("Could not install the native browser placement rule")
         return state
     except BaseException:
         release_rule(state)
@@ -365,7 +370,7 @@ ws.onclose=()=>{clearTimeout(timer);process.exit(0)};ws.onerror=()=>process.exit
             time.sleep(0.05)
         else:
             if process_start(state["pid"]) == state["start"]:
-                raise ValueError("Managed Vivaldi has not exited; refusing to replace it")
+                raise ValueError("Managed browser has not exited; refusing to replace it")
     if state and state.get("bound", True):
         remove_temporary_profile(root, state)
         release_rule(state)
@@ -378,13 +383,13 @@ def validate_native_settings(config, args):
     if (browser.get("contextOptions") or browser.get("initPage") or browser.get("initScript")
             or option_value(args, "--device") or boolean_option(args, "mobile")
             or option_value(args, "--browser") not in (None, "chromium")):
-        raise ValueError("Native Vivaldi does not apply emulation/context/init settings; use headless mode or an external endpoint")
+        raise ValueError("Native browser does not apply emulation/context/init settings; use headless mode or an external endpoint")
     unsupported = set(launch) - {"executablePath", "headless", "chromiumSandbox", "args"}
     if unsupported or launch.get("chromiumSandbox") is False:
-        raise ValueError("Unsupported native Vivaldi launch setting; use explicit browser args or an external endpoint")
+        raise ValueError("Unsupported native browser launch setting; use explicit browser args or an external endpoint")
     extra = launch.get("args", [])
     if any(arg.startswith(("--user-data-dir", "--remote-debugging", "--no-sandbox", "--class")) for arg in extra):
-        raise ValueError("Native Vivaldi owns its profile, sandbox and endpoint; use attach for external endpoints")
+        raise ValueError("Native browser owns its profile, sandbox and endpoint; use attach for external endpoints")
     target = open_target(args)
     if not (re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", target)
             or re.match(r"^(about|data|blob|javascript):", target, re.I)):
@@ -432,7 +437,7 @@ def open_manual_tab(process, state, executable, target, root, env):
         if any(c.get("mapped") and c.get("pid") == process.pid for c in clients):
             break
         if process.poll() is not None or time.monotonic() >= deadline:
-            raise ValueError("Manual Vivaldi window did not map")
+            raise ValueError("Manual browser window did not map")
         time.sleep(0.05)
     # A fresh Vivaldi profile initially selects its own welcome tab. Hand the
     # task URL to that already-running instance, rather than inspecting pages
@@ -441,12 +446,13 @@ def open_manual_tab(process, state, executable, target, root, env):
         subprocess.run([executable, "--user-data-dir=" + state["profile"], "--new-tab", target],
                        cwd=root, env=env, stdout=log, stderr=log, timeout=15, check=True)
     if process.poll() is not None:
-        raise ValueError("Manual Vivaldi exited during URL handoff")
+        raise ValueError("Manual browser exited during URL handoff")
 
 
 def shared_profile(root):
     """Only native headed defaults share human login state; headless stays isolated."""
-    return root.parent / "shared-profile"
+    # Do not open or migrate the old Vivaldi shared-profile with Chromium.
+    return root.parent / "shared-chromium-profile"
 
 
 @contextmanager
@@ -459,40 +465,10 @@ def profile_launch_lock(profile):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            raise ValueError("Vivaldi profile is starting in another session; do not replace it") from None
+            raise ValueError("Browser profile is starting in another session; do not replace it") from None
         if profile_locked(profile):
-            raise ValueError("Vivaldi profile is already open; use its owning chat, or --no-persistent for an isolated browser")
+            raise ValueError("Browser profile is already open; use its owning chat, or --no-persistent for an isolated browser")
         yield
-
-
-def seed_appearance(profile):
-    """Set managed chrome preferences only while the browser is stopped.
-
-    Never touch cookies, extension storage, vault settings or native debugging
-    consent. Malformed or redirected preferences fail closed, not get replaced.
-    """
-    directory = profile / "Default"
-    private_dir(directory)
-    path = directory / "Preferences"
-    if path.is_symlink():
-        raise ValueError("Refusing redirected browser preferences")
-    data = json.loads(path.read_text()) if path.exists() else {}
-    for keys in ((), ("vivaldi",), ("vivaldi", "themes"), ("vivaldi", "theme"),
-                 ("vivaldi", "theme", "schedule"), ("vivaldi", "status_bar"),
-                 ("vivaldi", "panels"), ("vivaldi", "panels", "window_defaults")):
-        value = data
-        for key in keys:
-            value = value.get(key, {})
-        if not isinstance(value, dict):
-            raise ValueError("Invalid browser appearance preferences; refusing replacement")
-    vivaldi = data.setdefault("vivaldi", {})
-    vivaldi.setdefault("themes", {})["current"] = "Vivaldi2"
-    vivaldi.setdefault("theme", {}).setdefault("schedule", {})["enabled"] = 0
-    vivaldi.setdefault("status_bar", {})["display"] = 1  # Vivaldi enum: off
-    panels = vivaldi.setdefault("panels", {})
-    panels["show_toggle"] = False
-    panels.setdefault("window_defaults", {})["barVisible"] = False
-    write_json(path, data)
 
 
 def start_headed(root, config, args, env):
@@ -503,7 +479,7 @@ def start_headed(root, config, args, env):
     extra = launch.get("args", [])
     profile = option_value(args, "--profile") or browser.get("userDataDir")
     if not profile and boolean_option(args, "persistent"):
-        profile = str(root / "profile")
+        profile = str(root / "profile-chromium")
     temporary = not profile
     if temporary:
         profile = tempfile.mkdtemp(prefix="headed-", dir=runtime_root(root))
@@ -512,8 +488,6 @@ def start_headed(root, config, args, env):
     profile = (root / profile).resolve()
     private_dir(profile)
     with profile_launch_lock(profile):
-        if profile == shared_profile(root):
-            seed_appearance(profile)
         return launch_headed_profile(root, config, args, env, target, manual, profile, temporary)
 
 
@@ -634,7 +608,7 @@ def launch_headed_profile(root, config, args, env, target, manual, profile, temp
             # --native-consent instead leaves startup debugging disabled.
             while not profile_locked(profile):
                 if process.poll() is not None or time.monotonic() >= deadline:
-                    raise ValueError("Manual Vivaldi did not acquire its profile; see vivaldi.log")
+                    raise ValueError("Manual browser did not acquire its profile; see vivaldi.log")
                 time.sleep(0.05)
             if preauthorized:
                 while True:
@@ -653,12 +627,12 @@ def launch_headed_profile(root, config, args, env, target, manual, profile, temp
             return process, None
         while not port_file.exists():
             if process.poll() is not None or time.monotonic() >= deadline:
-                raise ValueError("Vivaldi did not publish its owned endpoint; see vivaldi.log")
+                raise ValueError("Browser did not publish its owned endpoint; see vivaldi.log")
             time.sleep(0.05)
         port_info = port_file.read_text().splitlines()
         port = int(port_info[0])
         if not 0 < port < 65536 or process.poll() is not None:
-            raise ValueError("Invalid managed Vivaldi endpoint")
+            raise ValueError("Invalid managed browser endpoint")
         # Use the official CLI over CDP, not Playwright's Chromium startup pipe:
         # Vivaldi's extension-backed UI does not complete that startup handshake.
         browser["cdpEndpoint"] = f"http://127.0.0.1:{port}"
@@ -683,7 +657,7 @@ def launch_headed_profile(root, config, args, env, target, manual, profile, temp
             if any(page.get("id") == target_info.get("id") and page.get("title") for page in targets):
                 break
             if process.poll() is not None or time.monotonic() >= deadline:
-                raise ValueError("Vivaldi web target is not ready; its workspace may not have rendered yet")
+                raise ValueError("Browser web target is not ready; its workspace may not have rendered yet")
             time.sleep(0.1)
         with opener.open(browser["cdpEndpoint"] + "/json/activate/" + target_info["id"], timeout=5) as response:
             response.read()
@@ -711,7 +685,8 @@ def connect_headed(cli, root, config, args, env, target_id):
         if value is not None:
             options.append("--" + name + "=" + value)
     with (root / "daemon.log").open("a") as log:
-        daemon = subprocess.Popen(["@NODE@", "@DAEMON@", "agent", *options], cwd=root, env=env,
+        daemon = subprocess.Popen(["@NODE@", "@DAEMON@", "agent", *options], cwd=root,
+                                  env={**env, "PI_BROWSER_OWNED_DOWNLOADS": "1"},
                                   stdout=subprocess.PIPE, stderr=log, text=True, start_new_session=True)
     deadline = time.monotonic() + 45
     try:
@@ -734,14 +709,14 @@ def connect_headed(cli, root, config, args, env, target_id):
     script = """async(page)=>{const pages=page.context().pages();for(let i=0;i<pages.length;i++){
 const s=await page.context().newCDPSession(pages[i]);try{const info=await s.send('Target.getTargetInfo');
 if(info.targetInfo.targetId===""" + json.dumps(target_id) + """)return i;}finally{await s.detach();}}
-throw new Error('Owned Vivaldi target not found');}"""
+throw new Error('Owned browser target not found');}"""
     index = subprocess.run([cli, "-s=agent", "run-code", script, "--json"],
                            cwd=root, env=env, text=True, capture_output=True, timeout=15, check=False)
     if index.returncode:
-        raise ValueError("Could not select the owned Vivaldi tab")
+        raise ValueError("Could not select the owned browser tab")
     tab = int(json.loads(index.stdout)["result"])
     if tab < 0:
-        raise ValueError("Invalid owned Vivaldi tab index")
+        raise ValueError("Invalid owned browser tab index")
     command = [cli, "-s=agent", "tab-select", str(tab)]
     for name in ("json", "raw"):
         if boolean_option(args, name):
@@ -758,7 +733,15 @@ throw new Error('Owned Vivaldi target not found');}"""
     for name in ("json", "raw"):
         if boolean_option(args, name):
             navigation.append("--" + name)
-    return subprocess.run(navigation, cwd=root, env=env, check=False).returncode
+    result = subprocess.run(navigation, cwd=root, env=env, check=False).returncode
+    if result == 0:
+        # An extension onboarding tab can activate after the initial bootstrap.
+        # Re-select only our exact target, without global window focus/input.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        endpoint = json.loads(config.read_text())["browser"]["cdpEndpoint"]
+        with opener.open(endpoint + "/json/activate/" + target_id, timeout=5) as response:
+            response.read(1024)
+    return result
 
 
 def stop_runtime_daemon(state):
@@ -812,7 +795,7 @@ def private_cli_result(cli, root, env, *args):
 def connect_manual(cli, root, env, browser_executable):
     state = managed_state(root)
     if not state or not state.get("bound", True) or not (state.get("manual") or state.get("runtime")):
-        raise ValueError("No owned manual Vivaldi is running; open --headed --manual first")
+        raise ValueError("No owned manual browser is running; open --headed --manual first")
     profile = Path(state["profile"])
     try:
         host, pid = os.readlink(profile / "SingletonLock").rsplit("-", 1)
@@ -851,7 +834,7 @@ def connect_manual(cli, root, env, browser_executable):
         # Merely show the native setting. Only Sumeet may enable it.
         with (root / "vivaldi.log").open("a") as log:
             subprocess.run([browser_executable, "--user-data-dir=" + str(profile), "--new-tab",
-                            "vivaldi://inspect/#remote-debugging"], env=env, cwd=root,
+                            "chrome://inspect/#remote-debugging"], env=env, cwd=root,
                            stdout=log, stderr=log, timeout=15, check=True)
         print(json.dumps({"status": "enable-debugging", "connected": False}))
         return 0
@@ -866,7 +849,7 @@ def connect_manual(cli, root, env, browser_executable):
             offset = log.tell()
             process = subprocess.Popen(["@NODE@", "@DAEMON@", "agent",
                                         "--config=" + str(root / "runtime-config.json"), "--cdp=" + endpoint, "--headed"],
-                                       cwd=root, env={**env, "PI_BROWSER_METADATA_ONLY": "1"},
+                                       cwd=root, env={**env, "PI_BROWSER_METADATA_ONLY": "1", "PI_BROWSER_OWNED_DOWNLOADS": "1"},
                                        stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
         start = process_start(process.pid)
         if not start:
@@ -931,7 +914,7 @@ def run(args, *, cli, browser_executable):
     args = absolute_inputs(args, Path.cwd())
     os.umask(0o077)
     root = session_root(os.environ)
-    for name in (".playwright", "cache", "artifacts"):
+    for name in (".playwright", "cache", "artifacts", "global-config"):
         private_dir(root / name)
     runtime = runtime_root(root)
     private_dir(runtime.parent)
@@ -947,7 +930,7 @@ def run(args, *, cli, browser_executable):
         fcntl.flock(lock, fcntl.LOCK_EX)
         config = root / "config.json"
         settings = {
-            # Vivaldi is the executable; chromium is Playwright's engine name.
+            # Chromium is Nix-managed; keep the official Playwright backend.
             "browser": {"browserName": "chromium",
                         "launchOptions": launch_options(browser_executable, args)},
             "outputDir": str(root / "artifacts"),
@@ -962,8 +945,11 @@ def run(args, *, cli, browser_executable):
             except json.JSONDecodeError as error:
                 if contents.lstrip().startswith("{"):
                     raise ValueError("Invalid JSON browser configuration") from error
-                # Non-JSON configs remain entirely on the upstream path. They
-                # must never trigger native-mode selection from our defaults.
+                # Forward INI unchanged only with an explicit checked profile:
+                # upstream gives --profile precedence over config userDataDir.
+                # Without it, we cannot safely exclude the retained Vivaldi profile.
+                if not option_value(args, "--profile"):
+                    raise ValueError("Non-JSON configs require an explicit --profile; use JSON for profile-free configs")
                 supplied = None
             if isinstance(supplied, dict):
                 settings = supplied
@@ -982,6 +968,10 @@ def run(args, *, cli, browser_executable):
                       and not configured.get("cdpEndpoint") and not configured.get("remoteEndpoint"))
         if native:
             validate_native_settings(settings, args)
+        if args and args[0] == "open" and not help_only:
+            profile = option_value(args, "--profile") or configured.get("userDataDir")
+            if profile and (root / profile).resolve() == (root.parent / "shared-profile").resolve():
+                raise ValueError("Legacy Vivaldi shared profile is retained; use the new Chromium default profile instead")
         env = child_env(os.environ, root)
         operation = args[0] if args else ""
         if operation == "connect":
@@ -996,7 +986,7 @@ def run(args, *, cli, browser_executable):
             raise ValueError("--native-consent requires --headed --manual")
         if manual and not help_only:
             if not native:
-                raise ValueError("--manual requires native Vivaldi with --headed")
+                raise ValueError("--manual requires the managed Chromium browser with --headed")
             if any(arg.startswith(("--enable-automation", "--headless")) for arg in launch.get("args", [])):
                 raise ValueError("Manual mode does not accept automation/headless launch flags")
         current = managed_state(root)
@@ -1023,11 +1013,11 @@ def run(args, *, cli, browser_executable):
                 and operation not in {"", "open", "close", "detach", "delete-data", "list"}):
             raise ValueError("Manual browser has no agent connection; use connect after explicit handback")
         if args and args[0] == "attach" and not help_only and managed_state(root):
-            raise ValueError("Close or detach the managed Vivaldi before attaching another browser")
+            raise ValueError("Close or detach the managed browser before attaching another browser")
         if operation == "delete-data" and not help_only:
             previous = json.loads(config.read_text()) if config.exists() else {}
             profile = (read_state(root) or {}).get("profile") or previous.get("browser", {}).get("userDataDir")
-            if profile and Path(profile) == shared_profile(root):
+            if profile and Path(profile) in (shared_profile(root), root.parent / "shared-profile"):
                 raise ValueError("Shared sign-in profile is retained; use close, not delete-data")
         if native and not custom and not option_value(args, "--profile") and boolean_option(args, "persistent", True):
             profile = shared_profile(root)
@@ -1043,7 +1033,7 @@ def run(args, *, cli, browser_executable):
             stop_managed(root)
         if not native and not custom and boolean_option(args, "persistent"):
             # Headless persistence stays session-local; never inherit human auth.
-            configured["userDataDir"] = str(root / "profile")
+            configured["userDataDir"] = str(root / "profile-chromium")
         process = None
         target_id = None
         if native:
@@ -1079,7 +1069,7 @@ def run(args, *, cli, browser_executable):
             if args and args[0] in ("close", "delete-data"):
                 stop_managed(root)
                 if args[0] == "delete-data" and result == 0:
-                    profile = root / "profile"
+                    profile = root / "profile-chromium"
                     if profile.is_symlink():
                         raise ValueError("Refusing persistent-profile symlink deletion")
                     if profile_locked(profile):

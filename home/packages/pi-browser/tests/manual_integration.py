@@ -18,6 +18,7 @@ import urllib.parse
 
 sys.path.insert(0, str(Path(__file__).parent))
 import headed_integration as headed
+import download_fixture
 
 PAGE = b'''<!doctype html><title>Human-first fixture</title><p id="status">Signed in</p>
 <button id="continue" onclick="document.querySelector('#status').textContent='Agent continued'">Continue</button>
@@ -29,6 +30,7 @@ localStorage.setItem('login','synthetic-user');</script>'''
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if download_fixture.serve(self):return
         if self.path == '/pixel':
             self.server.pixels += 1
             self.send_response(200);self.send_header('Content-Type','image/gif');self.end_headers()
@@ -36,7 +38,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path.startswith('/phase?'):
             self.server.phases.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,keep_blank_values=True))
             self.send_response(204);self.end_headers();return
-        self.send_response(200);self.send_header('Content-Type','text/html');self.end_headers();self.wfile.write(PAGE)
+        self.send_response(200);self.send_header('Content-Type','text/html');self.end_headers();self.wfile.write(PAGE + download_fixture.CONTROLS)
     def log_message(self,*_args):
         pass
 
@@ -44,6 +46,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 def worker(arguments):
     root,helper,browser,strip=arguments;root=Path(root)
     headed.wait_for_file(root/'go')
+    download_fixture.prepare_native_home(root)
     shared_runtime=os.environ.get('PI_BROWSER_TEST_SHARED_RUNTIME')=='1'
     port_file=root.parent/'runtime-fixture-port'
     port=int(port_file.read_text()) if shared_runtime and port_file.exists() else 0
@@ -160,10 +163,9 @@ await popup.close(); return {popup:true};}''')
         flags=[x.decode() for x in (Path('/proc')/str(state['pid'])/'cmdline').read_bytes().split(b'\0') if x]
         if len(flags)==1:
             flags=shlex.split(flags[0])  # Vivaldi can replace argv with one display string.
-        classic_ui='--disable-vivaldi' in flags
-        assert classic_ui is (os.environ.get('PI_BROWSER_TEST_NATIVE_UI') != '1')
-        if classic_ui:
-            assert '--force-dark-mode' in flags
+        classic_ui=True  # Chromium's native interface, including its consent dialog.
+        assert '--disable-vivaldi' not in flags
+        assert '--force-dark-mode' in flags
         assert not any(f.startswith(('--enable-automation','--headless','--no-sandbox')) for f in flags)
         if native_consent:
             assert not any(f.startswith('--remote-debugging') for f in flags)
@@ -260,11 +262,14 @@ await popup.close(); return {popup:true};}''')
         assert connected['pid']==state['pid'] and connected['profile']==state['profile']
         assert not connected['manual'] and connected['runtime']
         assert 'synthetic-user' in call('localstorage-get','login')
+        if not shared_runtime or strip=='no':
+            download_fixture.settle_first_install(call)
         call('click','#continue')
         assert 'Agent continued' in call('eval',"document.querySelector('#status').textContent")
         assert 'false' in call('eval','navigator.webdriver')  # Unmodified native runtime behavior, not a JS override.
         assert not list((session/'artifacts').glob('page-*.yml')),'automatic page snapshot during consent'
         call('snapshot')  # Explicit authorized fixture snapshots remain supported.
+        download_fixture.check(call, root/'verified-downloads')
         before_reuse=(session/'vivaldi-process.json').read_bytes()
         for _ in range(2):
             assert json.loads(call('connect'))=={'connected':True,'reused':True}

@@ -91,6 +91,7 @@ class BrowserTests(unittest.TestCase):
     def test_environment_keeps_graphical_routing_but_not_implicit_connections(self):
         result = browser.child_env({"DISPLAY": ":1", "WAYLAND_DISPLAY": "wayland-1",
                                    "PLAYWRIGHT_MCP_CDP_ENDPOINT": "evil", "PWTEST_X": "evil",
+                                   "PI_BROWSER_OWNED_DOWNLOADS": "1",
                                    "XAUTHORITY": "x", "HOME": "/home/test", "PATH": "/bin",
                                    "PROJECT_OBJECT_LAUNCH_ID": "test", "HL_EXEC_RULE_TOKEN": "token"}, Path("/tmp/test"))
         self.assertEqual(result["DISPLAY"], ":1")
@@ -99,18 +100,20 @@ class BrowserTests(unittest.TestCase):
         self.assertEqual(result["HL_EXEC_RULE_TOKEN"], "token")
         self.assertNotIn("PLAYWRIGHT_MCP_CDP_ENDPOINT", result)
         self.assertNotIn("PWTEST_X", result)
+        self.assertNotIn("PI_BROWSER_OWNED_DOWNLOADS", result)
+        self.assertEqual(result['PWTEST_CLI_GLOBAL_CONFIG'], '/tmp/test/global-config')
         self.assertEqual(result["NO_UPDATE_NOTIFIER"], "1")
         self.assertEqual(result["VIVALDI_FFMPEG_AUTO"], "0")
 
-    def test_vivaldi_mode_compatibility(self):
-        headless = browser.launch_options("vivaldi", ["open"])
+    def test_chromium_mode_compatibility(self):
+        headless = browser.launch_options("chromium", ["open"])
         self.assertTrue(headless["headless"])
-        self.assertEqual(headless["args"], ["--disable-vivaldi"])
-        headed = browser.launch_options("vivaldi", ["open", "--headed"])
+        self.assertEqual(headless["args"], [])
+        headed = browser.launch_options("chromium", ["open", "--headed"])
         self.assertFalse(headed["headless"])
         self.assertTrue(headed["chromiumSandbox"])
-        self.assertEqual(headed["args"], ["--disable-vivaldi", "--force-dark-mode"])
-        manual = browser.launch_options("vivaldi", ["open", "--headed", "--manual"])
+        self.assertEqual(headed["args"], ["--force-dark-mode"])
+        manual = browser.launch_options("chromium", ["open", "--headed", "--manual"])
         self.assertEqual(manual, headed)  # Interface selection does not enable automation.
         for args in (["open", "--headed", "false"], ["open", "--headed", "--no-headed"],
                      ["fill", "e1", "--", "--headed"]):
@@ -153,35 +156,40 @@ class BrowserTests(unittest.TestCase):
             a = browser.session_root({"XDG_STATE_HOME": temp, "PI_SESSION_ID": "a"})
             b = browser.session_root({"XDG_STATE_HOME": temp, "PI_SESSION_ID": "b"})
             self.assertEqual(browser.shared_profile(a), browser.shared_profile(b))
-            self.assertNotEqual(a / "profile", browser.shared_profile(a))
+            self.assertNotEqual(a / "profile-chromium", browser.shared_profile(a))
+            self.assertEqual(browser.shared_profile(a).name, 'shared-chromium-profile')
             self.assertFalse(browser.boolean_option(["open", "--headed", "--no-persistent"], "persistent", True))
 
-    def test_appearance_preserves_unrelated_data_and_refuses_redirects(self):
-        with tempfile.TemporaryDirectory() as temp:
-            profile = Path(temp)
-            browser.seed_appearance(profile)
-            path = profile / "Default" / "Preferences"
-            data = json.loads(path.read_text())
-            data["unrelated"] = {"keep": True}
-            data["vivaldi"]["unrelated"] = 42
-            path.write_text(json.dumps(data))
-            browser.seed_appearance(profile)
-            data = json.loads(path.read_text())
-            self.assertEqual(data["unrelated"], {"keep": True})
-            self.assertEqual(data["vivaldi"]["unrelated"], 42)
-            self.assertEqual(data["vivaldi"]["themes"]["current"], "Vivaldi2")
-            self.assertEqual(data["vivaldi"]["theme"]["schedule"]["enabled"], 0)
-            self.assertEqual(data["vivaldi"]["status_bar"]["display"], 1)
-            self.assertFalse(data["vivaldi"]["panels"]["window_defaults"]["barVisible"])
-            self.assertFalse(data["vivaldi"]["panels"]["show_toggle"])
-            path.write_text("malformed")
-            with self.assertRaises(ValueError):
-                browser.seed_appearance(profile)
-            self.assertEqual(path.read_text(), "malformed")
-            path.unlink()
-            path.symlink_to(profile / "elsewhere")
-            with self.assertRaises(ValueError):
-                browser.seed_appearance(profile)
+    def test_legacy_shared_profile_is_not_opened_or_deleted(self):
+        with tempfile.TemporaryDirectory() as temp, patch.dict(os.environ, {
+                'XDG_STATE_HOME': temp, 'PI_SESSION_ID': 'legacy-profile'}, clear=True), \
+                patch.object(browser, 'runtime_root', return_value=Path(temp)/'runtime'), \
+                patch.object(browser.subprocess, 'run') as call, \
+                patch.object(browser, 'start_headed') as start:
+            root = browser.session_root(os.environ)
+            legacy = root.parent/'shared-profile'
+            legacy.mkdir()
+            sentinel = legacy/'Preferences'
+            sentinel.write_bytes(b'preserve legacy profile')
+            for flags in ([], ['--headed']):
+                with self.assertRaisesRegex(ValueError, 'Legacy Vivaldi'):
+                    browser.run(['open', *flags, '--profile='+str(legacy)], cli='cli', browser_executable='chromium')
+                config = root/'explicit.json'
+                config.write_text(json.dumps({'browser': {'userDataDir': str(legacy)}}))
+                with self.assertRaisesRegex(ValueError, 'Legacy Vivaldi'):
+                    browser.run(['open', *flags, '--config='+str(config)], cli='cli', browser_executable='chromium')
+            browser.write_json(root/'config.json', {'browser': {'userDataDir': str(legacy)}})
+            with self.assertRaisesRegex(ValueError, 'retained'):
+                browser.run(['delete-data'], cli='cli', browser_executable='chromium')
+            config = root/'explicit.ini'
+            config.write_text('browser.userDataDir='+str(legacy)+'\n')
+            with self.assertRaisesRegex(ValueError, 'explicit --profile'):
+                browser.run(['open', '--config='+str(config)], cli='cli', browser_executable='chromium')
+            with self.assertRaisesRegex(ValueError, 'Legacy Vivaldi'):
+                browser.run(['open', '--config='+str(config), '--profile='+str(legacy)], cli='cli', browser_executable='chromium')
+            call.assert_not_called()
+            start.assert_not_called()
+            self.assertEqual(sentinel.read_bytes(), b'preserve legacy profile')
 
     def test_profile_launch_lock_serializes_and_refuses_live_browser(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -303,13 +311,17 @@ class BrowserTests(unittest.TestCase):
         results = [subprocess.CompletedProcess([], 0, '{"result":"1"}', ""),
                    subprocess.CompletedProcess([], 0, '{"result":"internal-selection"}', ""),
                    subprocess.CompletedProcess([], 0)]
-        with tempfile.TemporaryDirectory() as temp, patch.object(browser.subprocess, "Popen", return_value=daemon), \
+        with tempfile.TemporaryDirectory() as temp, patch.object(browser.subprocess, "Popen", return_value=daemon) as spawn, \
                 patch.object(browser.select, "select", return_value=([ready], [], [])), \
-                patch.object(browser.subprocess, "run", side_effect=results) as run, patch("sys.stdout", output):
+                patch.object(browser.subprocess, "run", side_effect=results) as run, patch("sys.stdout", output), \
+                patch.object(browser.urllib.request, 'build_opener') as opener:
+            browser.write_json(Path(temp)/'config.json', {'browser': {'cdpEndpoint': 'http://127.0.0.1:12345'}})
             result = browser.connect_headed("cli", Path(temp), Path(temp) / "config.json",
                                             ["open", "--headed", "--json", "https://example.com"], {}, "owned-id")
         self.assertEqual(result, 0)
+        self.assertEqual(spawn.call_args.kwargs['env']['PI_BROWSER_OWNED_DOWNLOADS'], '1')
         self.assertEqual(output.getvalue(), "")
+        opener.return_value.open.assert_called_once_with('http://127.0.0.1:12345/json/activate/owned-id', timeout=5)
         self.assertTrue(run.call_args_list[1].kwargs["capture_output"])
         self.assertNotIn("capture_output", run.call_args_list[2].kwargs)
         self.assertIn("goto", run.call_args_list[2].args[0])
@@ -337,7 +349,11 @@ class BrowserTests(unittest.TestCase):
                 patch.object(browser, "start_headed") as native:
             config = Path(temp) / "explicit.ini"
             config.write_text("cdp-endpoint=http://127.0.0.1:9222\n")
-            browser.run(["open", "--headed", "--config=" + str(config)], cli="cli", browser_executable="vivaldi")
+            with self.assertRaisesRegex(ValueError, 'explicit --profile'):
+                browser.run(["open", "--headed", "--config=" + str(config)], cli="cli", browser_executable="vivaldi")
+            run.assert_not_called()
+            browser.run(["open", "--headed", "--config=" + str(config), '--profile='+str(Path(temp)/'safe-profile')],
+                        cli="cli", browser_executable="vivaldi")
             native.assert_not_called()
             self.assertEqual(sum(arg.startswith("--config=") for arg in run.call_args.args[0]), 1)
             self.assertIn("--config=" + str(config), run.call_args.args[0])
@@ -366,7 +382,7 @@ class BrowserTests(unittest.TestCase):
             self.assertNotIn("userDataDir", start.call_args.args[1]["browser"])
             browser.run(["open", "--persistent"], cli="cli", browser_executable="vivaldi")
             config = json.loads((root / "config.json").read_text())
-            self.assertEqual(config["browser"]["userDataDir"], str(root / "profile"))
+            self.assertEqual(config["browser"]["userDataDir"], str(root / "profile-chromium"))
             browser.run(["open"], cli="cli", browser_executable="vivaldi")
             self.assertNotIn("userDataDir", json.loads((root / "config.json").read_text())["browser"])
 

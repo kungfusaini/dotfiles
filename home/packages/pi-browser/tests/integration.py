@@ -13,6 +13,8 @@ import threading
 import time
 import urllib.request
 
+import download_fixture
+
 PAGE = b'''<!doctype html><title>Pi browser fixture</title>
 <label>Name <input id="name"></label><button id="save" onclick="
 localStorage.setItem('name', document.querySelector('#name').value);
@@ -23,10 +25,12 @@ document.querySelector('#result').textContent='Saved '+localStorage.getItem('nam
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if download_fixture.serve(self):
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
-        self.wfile.write(PAGE)
+        self.wfile.write(PAGE + download_fixture.CONTROLS)
 
     def log_message(self, *_args):
         pass
@@ -108,7 +112,7 @@ def main():
                 sessions = list((directory / "cache").rglob("*.session"))
                 assert len(sessions) == 1
                 config = json.loads(sessions[0].read_text())
-                assert Path(config["browser"]["launchOptions"]["executablePath"]).name == "vivaldi"
+                assert Path(config["browser"]["launchOptions"]["executablePath"]).name == "chromium"
                 assert config["browser"]["launchOptions"]["headless"] is True
                 assert config["browser"]["launchOptions"]["chromiumSandbox"] is True
                 assert not config.get("attached")
@@ -119,13 +123,14 @@ def main():
                 ps = subprocess.check_output(["ps", "-eo", "args"], text=True)
                 processes = [line.split() for line in ps.splitlines()
                              if "--user-data-dir=" + runtime + "/" in line]
-                assert processes, f"No Vivaldi process for {identity}"
-                assert any("vivaldi-bin" in command[0] for command in processes), processes
+                assert processes, f"No Chromium process for {identity}"
+                assert any("chromium" in command[0] for command in processes), processes
                 assert all("--no-sandbox" not in command for command in processes)
                 assert any(any(arg.startswith("--headless") for arg in command) for command in processes)
             assert not list(first_cwd.iterdir()) and not list(second_cwd.iterdir())
             failed = run("acceptance-a", "click", "#nonexistent", ok=False)
             assert failed.returncode != 0 and "### Error" in failed.stdout
+            download_fixture.check(lambda *args: run('acceptance-a', *args), work / 'downloads')
             run("acceptance-a", "close")
             run("acceptance-a", "open", url)
             assert "Alice" not in run("acceptance-a", "localstorage-get", "name").stdout
@@ -157,7 +162,7 @@ def main():
             run("acceptance-b", "close")
             # User configs replace wrapper defaults and resolve from caller cwd.
             config = json.loads((root("acceptance-a") / "config.json").read_text())
-            vivaldi = config["browser"]["launchOptions"]["executablePath"]
+            chromium = config["browser"]["launchOptions"]["executablePath"]
             (first_cwd / "custom.json").write_text(json.dumps(config))
             run("acceptance-a", "open", "--config=custom.json", url)
             assert "Pi browser fixture" in run("acceptance-a", "eval", "document.title").stdout
@@ -170,7 +175,7 @@ def main():
             external_env["TMPDIR"] = str(temporary)
             external_env["VIVALDI_FFMPEG_AUTO"] = "0"
             with (work / "external.log").open("w") as log:
-                external = subprocess.Popen([vivaldi, "--headless", "--disable-vivaldi", "--remote-debugging-address=127.0.0.1",
+                external = subprocess.Popen([chromium, "--headless", "--remote-debugging-address=127.0.0.1",
                                              "--remote-debugging-port=0", "--user-data-dir=" + str(external_profile),
                                              "--no-first-run", "--no-default-browser-check", url],
                                             env=external_env, stdout=log, stderr=log, start_new_session=True)
@@ -194,7 +199,7 @@ def main():
                 finally:
                     os.killpg(external.pid, signal.SIGTERM)
                     external.wait(timeout=10)
-            print("PASS: actual Vivaldi headless interaction and isolation, persistent close/reopen login state,")
+            print("PASS: actual Chromium headless interaction and isolation, persistent close/reopen login state,")
             print("cross-session explicit profiles, custom config, external CDP attach/drive/detach,")
             print("tabs/screenshots/diagnostics, failure visibility and actual sandbox/headless flags")
         finally:

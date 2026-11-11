@@ -19,6 +19,8 @@ import threading
 import time
 import urllib.request
 
+import download_fixture
+
 PAGE = b'''<!doctype html><title>Manual handoff fixture</title>
 <input id="name" aria-label="Name"><button id="login" onclick="
 localStorage.setItem('login','synthetic-user');document.querySelector('#status').textContent='Signed in'
@@ -29,10 +31,12 @@ document.querySelector('#status').textContent='Agent continued'
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        if download_fixture.serve(self):
+            return
         self.send_response(200)
         self.send_header("Content-Type", "text/html")
         self.end_headers()
-        self.wfile.write(PAGE)
+        self.wfile.write(PAGE + download_fixture.CONTROLS)
 
     def log_message(self, *_args):
         pass
@@ -49,6 +53,7 @@ def worker(arguments):
     root, helper, browser, strip = arguments
     root = Path(root)
     wait_for_file(root / "go")
+    download_fixture.prepare_native_home(root)
     port_file = root.parent / "fixture-port"
     server = http.server.ThreadingHTTPServer(("127.0.0.1", int(port_file.read_text()) if port_file.exists() else 0), Handler)
     port_file.write_text(str(server.server_port))
@@ -127,7 +132,7 @@ ws.onerror=()=>process.exit(1);});"""
         installed = json.loads(metadata.stdout)
         assert installed == {"id": "nngceckbapebfimnlniiiahkandclblb", "version": "2026.10.2", "nativePermission": False}, installed
         if shared_profile:
-            assert Path(state["profile"]) == session.parent / "shared-profile"
+            assert Path(state["profile"]) == session.parent / "shared-chromium-profile"
             assert not state["temporary"]
             # Only synthetic extension data in this harness's fresh private profile.
             # Proves MV3 storage survives cross-chat restarts without real vault access.
@@ -160,11 +165,13 @@ ws.onerror=()=>process.exit(1);});"""
         assert manifest["allowed_origins"] == [bitwarden]
         assert Path(manifest["path"]).is_file() and os.access(manifest["path"], os.X_OK)
         ps = subprocess.check_output(["ps", "-p", str(state["pid"]), "-o", "args="], text=True)
-        assert "vivaldi-bin" in ps and "--disable-vivaldi" in ps and "--force-dark-mode" in ps
+        assert "chromium" in ps and "--disable-vivaldi" not in ps and "--force-dark-mode" in ps
         assert "--no-sandbox" not in ps and "--headless" not in ps
         extensions = [arg for arg in ps.split() if arg.startswith("--load-extension=")]
         assert len(extensions) == 1 and "pi-browser-bitwarden-extension" in extensions[0], extensions
         assert "project-object-browser-extension" in extensions[0], "existing browser bridge was replaced"
+        if strip == 'no' or temporary_profile:
+            download_fixture.settle_first_install(call)
         if strip == "yes" and not temporary_profile:
             assert "synthetic-user" in call("localstorage-get", "login"), "profile login did not persist"
         else:
@@ -173,6 +180,7 @@ ws.onerror=()=>process.exit(1);});"""
             call("click", "#login")
             assert "Signed in" in call("eval", "document.querySelector('#status').textContent")
         # Agent resumes in the same live browser after the simulated handback.
+        download_fixture.check(call, root / 'verified-downloads')
         call("snapshot")
         call("click", "#continue")
         assert "Agent continued" in call("eval", "document.querySelector('#status').textContent")

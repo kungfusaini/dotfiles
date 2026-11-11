@@ -5,11 +5,11 @@ description: Use the Microsoft Playwright CLI through pi-browser for browser nav
 
 # Browser tools
 
-`pi-browser` is the packaged Microsoft Playwright CLI with a Pi-session-specific
-workspace, cache and command lock. It supports headless and headed browsing,
-persistent profiles, and attachment. Behavioral rules live in `AGENTS.md`.
+`pi-browser` packages Microsoft's Playwright CLI with Pi-session-specific state,
+cache, artifacts and command lock. It supports headless/headed Chromium,
+persistent profiles and attachment. Behavioral permissions live in `AGENTS.md`.
 
-## Commands and observation
+## Commands and paths
 
 ```bash
 pi-browser --help
@@ -19,262 +19,192 @@ pi-browser snapshot
 pi-browser fill e3 'Example text'
 pi-browser click e4
 pi-browser screenshot
-```
-
-Snapshots are inline YAML or a reported file containing element refs such as `e3`.
-Refs represent the DOM at snapshot time; a new snapshot obtains current refs.
-`find 'text'` and `snapshot --depth=4` produce smaller views. Pi's `read` tool reads
-snapshot files and displays screenshot images.
-
-```bash
 pi-browser paths
 ```
 
+Snapshots are inline YAML or a reported file containing element refs such as `e3`.
+Refs belong to that snapshot; refresh when the page changes. `find 'text'` and
+`snapshot --depth=4` reduce output. Pi's `read` tool reads files/images.
 `paths` returns absolute `session`, `artifacts` and `temporary` directories.
-Reported relative artifact paths resolve against `session`, not the shell cwd.
-Config/profile inputs resolve against the shell cwd; absolute paths work for all
-file arguments. Other relative file arguments resolve against `session`.
-Use `--` before dash-prefixed positional text: `pi-browser fill e3 -- '--help'`.
+Relative artifact/file arguments resolve against `session`, not shell cwd;
+config/profile inputs resolve against shell cwd. Use absolute paths when useful.
+Use `--` before dash-prefixed literal text: `pi-browser fill e3 -- '--help'`.
 
-## Browser modes
+## Browser modes and profiles
 
 ```bash
-# Default: temporary, headless Nix Vivaldi.
+# Default: temporary isolated headless Nix Chromium.
 pi-browser open https://example.com
 
-# Immediately connected visible browser; for human sign-in, use the manual example below.
+# Immediately connected headed browser. For new human sign-in, use manual below.
 project-workspace-exec pi-browser open --headed https://example.com
-
-# Native headed defaults reuse the same agent profile across chats.
 project-workspace-exec pi-browser open --headed --persistent https://example.com
 
-# Explicitly isolated temporary browser (no saved human logins).
+# Separate temporary or explicit profile: authenticated work needs approval.
 project-workspace-exec pi-browser open --headed --no-persistent https://example.com
-
-# Explicit profile path; the same path can be reused by a later Pi session.
 project-workspace-exec pi-browser open --headed --profile=/absolute/profile https://example.com
-
-# Explicit configuration, including alternate browser/launch/context settings.
 pi-browser open --config=/absolute/config.json https://example.com
 ```
 
-Native headed defaults (with or without `--persistent`) reuse
-`$XDG_STATE_HOME/pi-browser/shared-profile` across chats. This profile starts Dark,
-using the bundled Chromium interface: no Vivaldi left panel or bottom status bar;
-tabs/address bar and the packaged extensions remain.
-`--no-persistent` explicitly uses a temporary profile. Headless defaults remain
-temporary and isolated; headless `--persistent` stays session-local. Explicit
-`--config` retains its own profile semantics and does not select the shared default.
-`--profile` selects an explicit profile path. A profile can only be open in one
-browser process at a time; an occupied shared profile fails, never silently
-replaces another agent's browser or falls back to a fresh signed-out profile.
-Use the owning chat, or explicitly authorize a separate isolated browser. Reusing
-a profile does not grant access to its other authenticated tabs or vault.
-No cookies are imported and everyday Vivaldi is untouched.
-The default config selects Nix Vivaldi with its Chromium sandbox enabled; explicit
-configs select their own browser/launch settings. Native headed Vivaldi is launched
-with its own temporary loopback debugging endpoint, then connected to the pinned
-official Playwright daemon/CLI. Headless mode uses the same Vivaldi executable with
-`--disable-vivaldi` to bypass the custom UI bootstrap. Headed defaults also use
-`--disable-vivaldi`, plus `--force-dark-mode`, for the tested Chromium interface.
-The Vivaldi executable, shared profile, sandbox and extensions are unchanged;
-there is no cookie/profile migration or new automation backend. Existing windows
-keep their launch mode until explicitly reopened; never restart another chat's
-browser merely to apply the default. The adapter selects the exact task tab, not a restored unrelated tab.
-Vivaldi needs an initial rendered frame before native UI automation is ready; a
-completely hidden workspace can delay startup. This does not require focusing its
-window. Session diagnostics are private `vivaldi.log`/`daemon.log` files.
-Native launch fields are `executablePath`, `headless`, `chromiumSandbox` and `args`;
-other launch fields fail explicitly. Native custom configs use JSON; INI configs
-are forwarded unchanged to upstream without this native-launch adapter. Malformed
-JSON fails before launch. Native context/device emulation and init
-callbacks are not applied to existing CDP contexts, so those settings are rejected
-rather than silently ignored; headless mode retains upstream support. External
-endpoints retain upstream behavior.
-`--idle-timeout=<milliseconds>` controls CLI-session inactivity (`0` disables it).
-For native headed sessions it disconnects automation; `close` stops the owned
-Vivaldi process.
-Upstream defaults headless sessions to one hour; headed sessions do not idle-close.
-The workspace launcher verifies window mapping; daemon registration can follow a
-moment later. `pi-browser list` reports session readiness before page commands.
+Native headed defaults reuse
+`$XDG_STATE_HOME/pi-browser/shared-chromium-profile` across chats. They use Chromium's
+native tabs/address bar, dark mode, Chromium sandbox and packaged Bitwarden/Project
+Object extensions. No Vivaldi custom interface is involved. `--no-persistent`
+explicitly uses a temporary profile. Headless defaults are temporary; headless
+`--persistent` uses session-local `profile-chromium`, never the human sign-in profile.
+Explicit `--config` retains its own profile semantics and browser settings.
 
-`open` refuses to replace a live owned headed browser, even when requesting a
-headless open. For an existing manual browser, use `connect` only after human
-handback. For an already connected browser, use task-authorized `goto` or `tab-new`
-instead of reopening it. Navigating changes its page. Deliberate replacement needs
-an authorized `close` first; do not close/reopen merely to get around this guard.
-Untracked headless/external session behavior is unchanged. A running headed
-session can be used directly by a human: login or other manual actions take effect
-in the same page/context. No cookie export is needed.
-After manual interaction, `pi-browser snapshot` observes the resulting page and
-the usual click/fill commands operate in that same browser.
+**Backend migration:** Sumeet approved Chromium with a new dedicated shared profile
+and fresh website/Bitwarden sign-ins. The former Vivaldi `shared-profile` and
+headless `session/profile` are retained, not migrated/copied. The old shared profile
+is refused as an explicit launch or deletion target. Do not copy cookies/vault
+state, open the old profile with Chromium, or close another chat's existing Vivaldi
+browser to apply the fix. Existing browsers keep their backend until an authorized,
+coordinated replacement; deployment does not restart them. Legacy runtime names
+`vivaldi-process.json`, `vivaldi.log` and `pi-vivaldi-*` classes intentionally remain.
 
-## Manual handback with preauthorized localhost debugging
+A profile can be open in only one process. An occupied profile fails closed, never
+silently replaces another chat or falls back to a fresh signed-out profile. Use
+its owning chat or obtain explicit approval for a separate profile. Reuse does not
+authorize unrelated signed-in tabs or vault access. Everyday Vivaldi is untouched.
 
-For a new human-assisted sign-in, `AGENTS.md` requires the manual launch below,
-then explicit human handback before `connect`. A plain `open --headed` attaches
-automation immediately; merely pausing commands does not make it manual mode.
-`connect` attaches to the existing manual browser: do not run `open` again to
-resume automation. An already connected browser can continue authorized work
-without a restart; profile ownership and approval rules still apply.
+Headed launch starts an owned Chromium process with a temporary loopback endpoint,
+then the pinned official Playwright daemon. The exact task tab is selected, not a
+restored unrelated tab. Immediately connected startup navigates only after upstream
+file/network policy is applied. Workspace helpers verify mapping without host
+focus/input. Native launch fields are `executablePath`, `headless`, `chromiumSandbox`
+and `args`; unsupported settings fail. JSON native configs reject context/device
+emulation and init callbacks on existing CDP contexts; headless mode supports them.
+INI configs require an explicit checked `--profile` to override any opaque
+profile selection; use JSON for profile-free configs. External endpoints retain
+upstream behavior. Personal global CLI config is isolated per session so it cannot
+silently select the old profile. Malformed JSON fails before launch. `--idle-timeout=<milliseconds>` ends native automation, not the owned
+browser; `close` stops that browser. Upstream headless idle timeout is one hour;
+headed sessions have no default idle-close. `list` reports readiness metadata.
+
+`open` refuses to replace a live owned headed browser, even with headless open.
+For a manual browser use `connect` after handback. For an already connected browser,
+use task-authorized `goto` or `tab-new`, not reopen. Deliberate replacement needs an
+authorized `close` first. Help and untracked headless/external behavior are unchanged.
+An old Vivaldi manual browser awaiting connection may need its original packaged
+launcher; do not restart it merely to evade an executable-identity refusal.
+
+## Human-first manual handback
+
+For a new human-assisted sign-in, `AGENTS.md` requires manual launch, explicit human
+handback, then connection to the **same browser**, without closing/reopening it:
 
 ```bash
-# Dedicated browser: localhost debugging enabled, no agent attached before handback.
 project-workspace-exec pi-browser open --headed --manual --persistent https://mail.google.com/
-
-# After explicit handback; no native Allow click is needed in the default mode.
+# After explicit handback:
 pi-browser connect
-
-# Optional per-connection native approval instead of preauthorized debugging.
-project-workspace-exec pi-browser open --headed --manual --native-consent https://example.com
+# Optional per-connection native permission rather than preauthorized debugging:
+project-workspace-exec pi-browser open --headed --manual --native-consent https://example.com/
 ```
 
-Sumeet explicitly approved always-authorized debugging for the dedicated agent
-browser. It starts a standard server bound to `127.0.0.1` on a nonzero OS-selected
-port. **Any local program able to reach it can control the signed-in browser
-without another Allow prompt**, even after Pi detaches. This is not a security
-sandbox. Everyday Vivaldi/profile is unchanged; do not enable this mode on other
-browsers/profiles without authorization or share its endpoint.
+A plain headed open attaches immediately; pausing commands is not manual mode.
+Keep an already connected browser for authorized work rather than restart it.
+Sumeet approved preauthorized debugging for this dedicated agent browser: it uses
+`127.0.0.1` and a nonzero OS-selected port. **Any local program reaching it can
+control the signed-in browser without another Allow prompt**, even after detach.
+This is not a sandbox. Do not expose the endpoint or enable it on everyday browsers.
 
-`--manual` means **no agent attachment/page observation until handback**, not
-"debugging disabled". Pause all browser actions/observations during human login,
-vault unlock or credential entry, despite the server already being enabled.
-`list` reports manual/not connected with `debugging: preauthorized`; page commands
-refuse until handback. Startup verifies PID/start, listening-socket ownership,
-loopback address and endpoint identity. Port conflicts fail closed. No native
-checkbox/dialog is automated, and native preferences are not overwritten.
+`--manual` means no agent attachment/page observation until handback, not debugging
+disabled. Pause browser actions, snapshots, screenshots, DOM/traffic/console reads
+while Sumeet enters credentials, handles MFA or uses Bitwarden. Wait for explicit
+handback; inspect only the task website's non-sensitive login outcome, not filled
+credential fields, extension storage or vault data. Manual page commands refuse
+before connection. Initial automatic handoff snapshots are disabled; explicit
+snapshots remain available for task-authorized work afterward.
 
-`connect` returns JSON status, without restarting or navigating the task page:
+Startup verifies PID/start, socket ownership, IPv4 loopback binding and endpoint
+identity, rejecting foreign/wildcard listeners and changed endpoints without a
+fallback. No webdriver/UA spoofing or stealth overrides. `connect` returns only
+status and validated origin, not raw tab/page/credential metadata:
 
-- `connecting`: the default preauthorized-mode daemon is starting. Retry with a
-  bounded wait after handback; no native permission action is required.
-- Only with `--native-consent`, `enable-debugging`: the native `vivaldi://inspect/#remote-debugging` page is open.
-  Its **Allow remote debugging for this browser instance** checkbox belongs to the
-  human, not the agent.
-- Only with `--native-consent`, `approve-connection`: a background request is pending. Vivaldi's native
-  **Allow remote debugging?** dialog requires human confirmation.
-- Only with `--native-consent`, `awaiting-approval`: that request is still pending. It has no automatic expiry;
-  there is no need to poll while the human uses the browser.
-- `connected: true`: a later `connect`, after explicit handback, selects the single
-  HTTP(S) tab matching the original task origin. Missing/ambiguous task tabs fail
-  closed. Output contains only the origin, never page content or raw CLI metadata.
-- `connected: true, reused: true`: an additional `connect` on this chat's existing
-  approved runtime connection reuses it after browser/profile ownership, daemon
-  PID/start and endpoint checks. It creates no debugger WebSocket, permission
-  request, tab, navigation or page observation, and does not change the task.
-  Owned endpoint version metadata may be checked.
-  This is connection metadata, **not** a page-health or task-success check. A dead,
-  changed or detached connection fails closed; it is never silently reconnected.
+- `connecting`: daemon starting; use a bounded retry after handback. No native
+  permission action is needed in the default preauthorized mode.
+- Only with `--native-consent`, `enable-debugging`: `chrome://inspect/#remote-debugging`
+  is open. The human enables **Allow remote debugging for this browser instance**.
+- Only with `--native-consent`, `approve-connection`/`awaiting-approval`: the native
+  **Allow remote debugging?** dialog needs human confirmation. Never automate it.
+  It has no automatic expiry; do not poll while the human uses it.
+- `connected:true`: the single HTTP(S) task-origin tab was selected without restart,
+  navigation or a new tab. Missing/ambiguous tabs fail closed.
+- `connected:true,reused:true`: this chat's existing approved connection is still
+  owned/live. No new debugger connection, tab command, page read or prompt. This
+  is connection metadata, **not** page-health/account/permission verification.
 
-Keep the owned browser/connection open between authorized operations to avoid
-unnecessary new prompts. This reuse is scoped to the owning Pi chat, not automatic
-cross-chat access. Default preauthorized connections need no Allow prompt, including
-new connections after a browser restart. New connections in `--native-consent`
-mode still need approval; never automate its checkbox/dialog.
+Keep the live browser/approved daemon open between authorized operations. Reuse is
+scoped to its owning Pi chat, not cross-chat attachment. New preauthorized connections
+need no Allow prompt; new opt-in native-consent connections still do. Ownership
+checks remain mandatory. Declined/dead/changed connections fail without silent
+replacement. `close` stops only the owned browser/daemon; `detach` relinquishes
+ownership and leaves the debugging server running until that browser exits.
 
-The browser PID, profile, page and login stay unchanged. No cookies are copied,
-exported or imported. Automatic snapshots are disabled in this manual handoff connection;
-explicit `snapshot` remains available for authorized tasks. Native permission grants
-browser-wide debugging capability, not a hard tab-only sandbox; task scope and
-password-manager rules still apply. `close` stops only the owned browser/daemon;
-`detach` releases them without deleting profiles or closing the browser. The
-preauthorized debugging server remains enabled until that browser exits.
+The earlier real Cloudflare manual-login/connection success used the old Vivaldi
+backend. It is not proof of Chromium acceptance or a universal challenge fix.
+Synthetic tests preserve unmodified `navigator.webdriver=false` in manual mode,
+but do not prove provider acceptance. [Cloudflare does not support automation
+frameworks for solving production challenges](https://developers.cloudflare.com/cloudflare-challenges/reference/supported-browsers/).
+If verification loops recur, stop retries and diagnose rather than reset profiles
+or promise a bypass. Never repeat an uncertain submission or infer task success
+from process/listener liveness.
 
-Preauthorized mode validates the owned HTTP `/json/version` endpoint and selects/
-activates the exact existing task tab, without global desktop input or focus.
-It never probes foreign listeners or falls back to native approval on failure.
-The opt-in native-consent mode instead reads its owned `DevToolsActivePort` direct
-WebSocket; that endpoint has no HTTP version route. Existing windows retain their
-launch mode until explicitly reopened. Real provider acceptance still needs human
-confirmation; synthetic tests do not establish it. Everyday Vivaldi is untouched.
+## Downloads, popup compatibility and Bitwarden
 
-### Observed Cloudflare handoff
+The former `--disable-vivaldi` workaround avoided Vivaldi's custom-interface popup
+stall but failed dummy HTTP/blob/sandbox downloads, even with CDP allow. Restoring
+full Vivaldi UI is not an accepted fix because it revives known regressions. The
+Chromium default passes local popup/image/navigation/reconnect and byte-checked
+download tests. This does not prove that any particular website export succeeds,
+or fix a server's HTTP404. Known upstream routed-popup limitations remain unproven.
 
-In the verified 2026-11-09 attempt, Cloudflare security verification looped in an
-immediately automated headed browser. Sumeet confirmed login succeeded after an
-approved restart into `--headed --manual --persistent` using the same shared
-profile. After explicit handback, `connect` succeeded and a read-only check of the
-same Cloudflare page responded without detected challenge text. No account
-settings, DNS writes or broader authenticated workflows were verified by that
-check; this is an observed login/connection success, not a universal fix.
+Before agent attachment, manual Chromium uses its ordinary native Downloads
+behavior. Once attached, the owned daemon enables Playwright's normal download
+events/storage; automatic CLI copies are session artifacts, not a promised
+`~/Downloads` destination. Use `saveAs()` for the authorized durable/private copy.
+External attachment retains upstream's browser-default download handling.
+A fresh Bitwarden install may open its welcome tab asynchronously; after human
+handback, select the authorized task tab rather than infer a login failure or
+restart the browser. Never inspect vault state to resolve this tab behavior.
 
-Local isolated tests show immediately automated headed mode uses
-`--remote-debugging-port=0` and exposes `navigator.webdriver=true`; the default
-manual/preauthorized mode uses a nonzero port and retains unmodified
-`navigator.webdriver=false` before and after connection. This difference is a
-plausible contributor, not proof of Cloudflare's exact detection reason. No
-webdriver/UA spoofing, stealth patches or security-policy weakening is needed for
-the observed sequence. [Cloudflare does not support automation frameworks for
-solving production challenges](https://developers.cloudflare.com/cloudflare-challenges/reference/supported-browsers/).
-If verification loops recur, stop retries and diagnose with approval rather than
-resetting profiles or promising a challenge bypass.
+Use the normal [Playwright download flow](https://playwright.dev/docs/downloads)
+when authorized to save a file. `run-code` accepts a snippet such as:
 
-## Popup compatibility and legacy custom interface
+```javascript
+async page => {
+  const pending = page.waitForEvent('download');
+  await page.getByRole('link', {name: 'Download', exact: true}).click();
+  const download = await pending;
+  await download.saveAs('/approved/absolute/destination/file.csv');
+  return {saved: (await download.failure()) === null};
+}
+```
 
-The managed Chromium-interface default passes the local popup/image, navigation,
-native-consent/reconnect and synthetic profile/extension persistence tests. This
-avoids the reproduced `window.open('')` + `document.write()` freeze in Vivaldi's
-custom interface; it is not an engine patch or proof of every website workflow.
-An explicit `--config` that restores the custom Vivaldi UI retains that known
-popup stall, including possible blank pages and reconnect failure. Do not select
-that legacy interface for popup-dependent automation. The internal UI switch is
-version-pinned; upgrades require the private acceptance suite again.
+Wait before clicking, save to the approved destination, and verify the file before
+claiming completion. Temporary downloads may be removed on context close; `saveAs`
+preserves the requested copy. A missing save dialog alone is not failure. Do not
+change account/site/download security policy as a workaround without authorization.
 
-Saved sign-ins are separate from debugging mode. Default preauthorized connections
-need no native approval; opt-in native-consent connections still require it. Real Google/Bitwarden login outcomes still need human
-confirmation. Never repeat a submission whose dispatch/outcome is unknown, equate
-process/listener liveness with page health, remove request/file policy, or restart
-an existing browser without authorization. Known upstream routed-popup limitations
-are not declared solved. Tests and comparison evidence are in the packaged
-`share/doc/pi-browser/README.md`.
+Bitwarden is packaged under official ID `nngceckbapebfimnlniiiahkandclblb`, available
+from Extensions. Popup: `chrome-extension://nngceckbapebfimnlniiiahkandclblb/popup/index.html`.
+The new persistent Chromium profile starts with its own account state; Desktop
+being signed in does not sign in the extension. Normal locking, organization policy,
+logout/revocation remain authoritative. Sumeet signs in/unlocks/autofills manually.
+Never change vault timeout or inspect extension account/vault storage to keep
+sign-ins alive. [Bitwarden lock versus logout](https://bitwarden.com/help/vault-timeout/).
+The native-host manifest points to the packaged Desktop proxy, but optional
+nativeMessaging/Desktop integration permissions still need normal human prompts.
+Existing user/app-owned manifests are preserved. No real vault/proxy access in tests.
 
-## Bitwarden in native Vivaldi
-
-The managed native browser includes the official Bitwarden extension, pinned by
-Nix, under its normal Chrome extension ID `nngceckbapebfimnlniiiahkandclblb`.
-It is available from the browser's Extensions menu; the popup entry is
-`chrome-extension://nngceckbapebfimnlniiiahkandclblb/popup/index.html`.
-
-The extension starts with that profile's own account state. A persistent profile
-retains its Bitwarden sign-in/settings; a fresh temporary profile does not inherit
-the everyday browser's vault or login. Bitwarden Desktop being logged in does not
-automatically sign in the browser extension. The shared headed profile retains
-its own Bitwarden sign-in across chats and restarts, subject to Bitwarden's normal
-session rules. Signed in is not unlocked: normal locking, organization policies,
-explicit logout and session revocation still apply. Never change vault timeout or
-read extension account/vault storage to implement persistence; Sumeet handles
-login and unlock manually. See [Bitwarden's lock versus logout guide](https://bitwarden.com/help/vault-timeout/).
-
-A per-profile native-messaging manifest points to the packaged Bitwarden Desktop
-proxy. Desktop integration/unlock features still require Bitwarden's own settings
-and permission prompts; nativeMessaging is not granted automatically. Existing
-user/app-owned native-host manifests are preserved. Extension updates are Nix
-package updates, not profile copying or runtime installation.
-
-## Existing-browser attachment
+## Attachment and lifecycle
 
 ```bash
 pi-browser attach --cdp=http://localhost:9222
 pi-browser attach --endpoint=ws://localhost:3000/playwright
 pi-browser attach --extension=chrome
 pi-browser detach
-```
-
-CDP requires an existing debugging endpoint. Extension mode requires the official
-Playwright browser extension and a supported browser; its connection UI may need
-manual confirmation. These commands do not install an extension, enable debugging
-or copy profiles. Chrome/Edge extension support is documented upstream; Vivaldi
-extension compatibility is not established here. Vivaldi launch and CDP attachment
-are tested independently of extension mode. CDP/extension connections can access the
-attached browser's authenticated pages, not just a fresh isolated profile.
-`detach` releases an attachment without closing its browser. For a managed headed
-Vivaldi this explicitly hands process ownership back; later `close` does not kill
-that detached browser. Use a concrete
-endpoint rather than an upstream named-session attachment across private caches.
-
-## Tabs, state and lifecycle
-
-```bash
 pi-browser tab-list
 pi-browser tab-new https://example.com
 pi-browser tab-select 0
@@ -284,17 +214,20 @@ pi-browser eval 'document.title'
 pi-browser close
 ```
 
-`state-save /absolute/state.json` and `state-load /absolute/state.json` export/import
-authentication state; these files may contain credentials. `run-code` executes a
-Playwright snippet. Upload, evaluation and network inspection use the process's
-normal file/network permissions; this wrapper is not a sandbox.
+External attachment needs authorization for that concrete browser/profile and task.
+CDP needs an existing verified endpoint. Extension mode needs the official Playwright
+extension, supported browser and coordinated human approval; these commands do not
+install it or grant access to unrelated signed-in tabs. Do not attach by another
+chat's cached session name. Detach from externally owned browsers, do not close them.
 
-Pi supplies `PI_SESSION_ID` (or `PI_SESSION_FILE`) for browser ownership across shell
-calls and cwd changes. Artifacts, caches and automation ownership stay session-local;
-only the native headed default profile is shared across chats. `close` stops this
-session's owned browser and removes its temporary profile; persistent profiles
-and artifacts remain. `delete-data` refuses the shared sign-in profile; it can
-remove the session-local headless persistent profile, not explicit profiles. Global close/kill
-commands and runtime installation are unavailable: package installation is Nix-managed.
+`state-save`/`state-load` export/import authentication and can contain credentials;
+separate explicit authorization is needed. `run-code`, upload and evaluation retain
+the user's normal file/network permissions; neither wrapper nor skill is a sandbox.
+Pi's `PI_SESSION_ID` (or `PI_SESSION_FILE`) supplies ownership across cwd changes.
+Only headed defaults share the profile; caches/artifacts remain session-local.
+`delete-data` refuses the new and legacy shared profiles and removes only the
+current headless persistent profile, never explicit profiles. No global kill/close
+or runtime installation; dependencies are Nix-managed. Packaged test/comparison
+evidence is in `share/doc/pi-browser/README.md`.
 
 Upstream reference: https://github.com/microsoft/playwright-cli
