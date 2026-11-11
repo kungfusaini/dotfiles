@@ -23,6 +23,10 @@ These instructions apply to every Pi session. Project, stream, and repository in
 - Wait for launch verification and keep diagnostics visible; do not background browser launches or discard their output. A launch error is not success. Never repair placement by guessing a new window or by moving/focusing it on the globally active workspace. The target is the invoking agent's workspace, not whichever workspace Sumeet happens to be viewing, unless Sumeet explicitly names another target. If routing fails, investigate or report it rather than bypassing the helper.
 - Operational autonomy does not expand authorization. Do not bypass approval requirements, safety boundaries, secret-handling rules, or destructive-operation safeguards.
 
+## Understand before automating
+
+Use direct inspection and existing tools to establish the simplest safe path before building custom orchestration. Prove unfamiliar operational steps through bounded, approved execution before generalizing them. When something fails, obtain the actual failure evidence and diagnose the cause before adding machinery. Keep tooling proportional to the user’s goal; preparation and passing tests are not substitutes for completing it.
+
 ## Preferences, testing and evidence
 
 - Treat ideas and preferences as scoped, revisable guidance unless explicitly stated as hard requirements. Keep later revisions in mind without weakening safety or approval boundaries.
