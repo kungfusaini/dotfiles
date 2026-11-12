@@ -178,6 +178,36 @@ def context_for(db, session, parent):
     return tuple(row) if row else (None, None, None)
 
 
+def request_key(entry, source, provider, model, kind):
+    """Shared immutable identity for collection and read-only attribution."""
+    identity = source.get("responseId") or [entry.get("id"), source.get("timestamp", entry.get("timestamp")),
+                                           provider, model, kind, source["usage"]]
+    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+
+
+def usage_record(entry, session, provider, model):
+    """Collector eligibility and inheritance; explicit null never means inherit."""
+    if not session or not entry.get("id"):
+        return None
+    kind = entry.get("type")
+    message = entry.get("message") or {}
+    if kind == "message" and message.get("role") == "assistant":
+        source, request_kind = message, "response"
+        status = label(message.get("stopReason", "unknown"))
+    elif kind == "usage":
+        source, request_kind, status = entry, "usage", "recorded"
+    elif kind in ("compaction", "branch_summary") and entry.get("usage"):
+        source, request_kind, status = entry, kind, "recorded"
+    else:
+        return None
+    provider, model = source.get("provider", provider), source.get("model", model)
+    if provider != "openai-codex" or not model:
+        return None
+    if not isinstance(source.get("usage"), dict):
+        raise ValueError("Missing usage")
+    return source, request_kind, status, provider, model
+
+
 def ingest_entry(db, entry, session):
     """Count all branches as real usage; deduplicate copied/forked responses."""
     kind, entry_id = entry.get("type"), entry.get("id")
@@ -192,33 +222,14 @@ def ingest_entry(db, entry, session):
         effort = label(entry.get("thinkingLevel"))
     db.execute("INSERT OR REPLACE INTO contexts VALUES (?,?,?,?,?)",
                (session, entry_id, provider, model, effort))
-    message = entry.get("message") or {}
-    if kind == "message" and message.get("role") == "assistant":
-        source = message
-        request_kind = "response"
-        status = label(message.get("stopReason", "unknown"))
-    elif kind == "usage":
-        source = entry
-        request_kind = "usage"
-        status = "recorded"
-    elif kind in ("compaction", "branch_summary") and entry.get("usage"):
-        source = entry
-        request_kind = kind
-        status = "recorded"
-    else:
+    record = usage_record(entry, session, provider, model)
+    if record is None:
         return session, 0
-    provider = source.get("provider", provider)
-    model = source.get("model", model)
-    if provider != "openai-codex" or not model:
-        return session, 0
-    usage = source.get("usage")
-    if not isinstance(usage, dict):
-        raise ValueError("Missing usage")
+    source, request_kind, status, provider, model = record
+    usage = source["usage"]
     ts = stamp(source.get("timestamp", entry.get("timestamp")))
     # responseId is stable across forks; older logs lack it, so use immutable metadata.
-    identity = source.get("responseId") or [entry_id, source.get("timestamp", entry.get("timestamp")),
-                                           provider, model, request_kind, usage]
-    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    key = request_key(entry, source, provider, model, request_kind)
     tokens = [number(usage.get(k)) for k in ("input", "cacheRead", "cacheWrite", "output", "reasoning", "totalTokens")]
     cursor = db.execute("INSERT OR IGNORE INTO requests VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                        (key, ts, label(model), label(source.get("responseModel")),
@@ -352,7 +363,212 @@ def iso(value):
     return dt.datetime.fromtimestamp(value, UTC).strftime("%Y-%m-%d %H:%M UTC")
 
 
-def report(db, start=None):
+def scope_names():
+    root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "project-object"
+    projects, streams = {}, {}
+    issues = 0
+    def records(path, key):
+        nonlocal issues
+        try:
+            if path.is_symlink() or path.stat().st_size > MAX_LINE:
+                raise ValueError("unsafe registry")
+            data = json.loads(path.read_text())[key]
+            if not isinstance(data, list):
+                raise ValueError("invalid registry")
+            return data
+        except (OSError, ValueError, KeyError, TypeError):
+            issues += 1
+            return []
+    for project in records(root / "projects.json", "projects"):
+        if not isinstance(project, dict):
+            issues += 1
+            continue
+        pid = project.get("id")
+        # IDs become path components; never accept arbitrary registry paths.
+        if not valid_scope_id(pid):
+            issues += 1
+            continue
+        projects[pid] = label(project.get("name")) or pid
+        path = root / "projects" / pid / "streams.json"
+        if path.exists():
+            for stream in records(path, "streams"):
+                if isinstance(stream, dict) and valid_scope_id(stream.get("id")):
+                    streams[pid, stream["id"]] = label(stream.get("name")) or stream["id"]
+                else:
+                    issues += 1
+    return projects, streams, issues
+
+
+def valid_scope_id(value):
+    import uuid
+    try:
+        return isinstance(value, str) and str(uuid.UUID(value)) == value
+    except ValueError:
+        return False
+
+
+def source_scope(path):
+    root = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "project-object/projects"
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        return (None, None)
+    if len(parts) == 3 and valid_scope_id(parts[0]) and parts[1] == "pi-sessions":
+        return (parts[0], None)
+    if (len(parts) == 5 and valid_scope_id(parts[0]) and parts[1] == "streams"
+            and valid_scope_id(parts[2]) and parts[3] == "pi-sessions"):
+        return (parts[0], parts[2])
+    return (None, None)
+
+
+def attribution_snapshot(db, since, until):
+    owned = not db.in_transaction
+    if owned:
+        db.execute("BEGIN")
+    try:
+        requests = {r["key"]: r["output"] for r in db.execute(
+            "SELECT key,output FROM requests WHERE timestamp>=? AND timestamp<?", (since, until))}
+        sources = db.execute("SELECT path,offset,device,inode FROM sources ORDER BY mtime DESC,path").fetchall()
+        return requests, sources
+    finally:
+        if owned:
+            db.rollback()
+
+
+def attribution(db, since, until, budget=4 * 1024**3, seconds=30, snapshot=None):
+    """Join frozen tracked identities to registered logs without persisting content.
+
+    Bounded, local and on demand. Missing/conflicting identities remain explicit.
+    Parent context comes from the collector, including compaction/usage fallbacks.
+    """
+    requests, sources = snapshot if snapshot is not None else attribution_snapshot(db, since, until)
+    owners, ambiguous = {}, set()
+    issues = read = 0
+    deadline = time.monotonic() + seconds
+    limited = False
+    for row in sources if requests else []:
+        if read >= budget or time.monotonic() >= deadline:
+            limited = True
+            break
+        path = Path(row["path"])
+        scope = source_scope(path)
+        try:
+            fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+            with os.fdopen(fd, "rb") as log:
+                st = os.fstat(log.fileno())
+                if (not stat.S_ISREG(st.st_mode) or (st.st_dev, st.st_ino) != (row["device"], row["inode"])
+                        or st.st_size < row["offset"]):
+                    issues += 1
+                    continue
+                session = None
+                while log.tell() < row["offset"]:
+                    if read >= budget or time.monotonic() >= deadline:
+                        limited = True
+                        break
+                    raw = log.readline(min(MAX_LINE + 1, row["offset"] - log.tell(), budget - read))
+                    if not raw:
+                        issues += 1  # registered bytes are no longer available
+                        break
+                    read += len(raw)
+                    if len(raw) > MAX_LINE or not raw.endswith(b"\n"):
+                        issues += 1
+                        # Do not interpret a fragment of an oversized record as JSON.
+                        while raw and not raw.endswith(b"\n") and log.tell() < row["offset"]:
+                            if read >= budget or time.monotonic() >= deadline:
+                                limited = True
+                                break
+                            raw = log.readline(min(65536, budget-read, row["offset"]-log.tell()))
+                            read += len(raw)
+                        continue
+                    try:
+                        entry = json.loads(raw)
+                        kind = entry.get("type")
+                        if kind == "session":
+                            session = label(entry.get("id"))
+                            continue
+                        if kind not in ("message", "usage", "compaction", "branch_summary"):
+                            continue
+                        source = (entry.get("message") or {}) if kind == "message" else entry
+                        inherited = (None, None, None)
+                        if "provider" not in source or "model" not in source:
+                            inherited = context_for(db, session, entry.get("parentId"))
+                        record = usage_record(entry, session, *inherited[:2])
+                        if record is None:
+                            continue
+                        source, request_kind, _status, provider, model = record
+                        if not since <= stamp(source.get("timestamp", entry.get("timestamp"))) < until:
+                            continue
+                        key = request_key(entry, source, provider, model, request_kind)
+                        if key in requests:
+                            if key in owners and owners[key] != scope:
+                                ambiguous.add(key)
+                            else:
+                                owners[key] = scope
+                    except (ValueError, TypeError, AttributeError, OverflowError):
+                        issues += 1
+        except OSError:
+            issues += 1
+    groups = {}
+    matched_calls = matched_output = 0
+    for key, output in requests.items():
+        scope = owners.get(key, ("unmatched", None))
+        if key in ambiguous:
+            scope = ("ambiguous", None)
+        elif key in owners:
+            matched_calls += 1
+            matched_output += output or 0
+        totals = groups.setdefault(scope, [0, 0, 0])
+        totals[0] += 1
+        totals[1] += output or 0
+        totals[2] += output is None
+    return {"groups": groups, "calls": len(requests), "output": sum(v or 0 for v in requests.values()),
+            "matched_calls": matched_calls, "matched_output": matched_output,
+            "issues": issues, "limited": limited, "bytes": read}
+
+
+def report_attribution(db, since, until, all_streams=False, snapshot=None):
+    result = attribution(db, since, until, snapshot=snapshot)
+    projects, streams, registry_issues = scope_names()
+    def project_name(pid):
+        return {None: "Other / unattached", "unmatched": "Unmatched", "ambiguous": "Ambiguous"}.get(
+            pid, projects.get(pid, f"Unknown project {pid}"))
+    def stream_name(pid, sid):
+        return streams.get((pid, sid), f"Unknown stream {sid}") if sid else "Main / project sessions"
+    def share(output):
+        return f"{output / result['output'] * 100:.2f}%" if result["output"] else "N/A"
+    def show(name, totals):
+        print(f"{name} | {totals[0]:,} | {totals[1]:,} | {share(totals[1])}")
+    print("\nProjects | Calls | Output (includes reasoning) | Pi output share")
+    rollups = {}
+    for (pid, _sid), totals in result["groups"].items():
+        summed = rollups.setdefault(pid, [0, 0, 0])
+        for i in range(3):
+            summed[i] += totals[i]
+    for pid, totals in sorted(rollups.items(), key=lambda item: (-item[1][1], str(item[0]))):
+        show(project_name(pid), totals)
+    print("\nStreams (parent projects include these rows) | Calls | Output | Pi output share")
+    ranked = sorted(result["groups"].items(), key=lambda item: (-item[1][1], str(item[0])))
+    selected = ranked if all_streams else ranked[:12]
+    for (pid, sid), totals in sorted(selected, key=lambda item: (project_name(item[0][0]), -item[1][1], str(item[0]))):
+        show(f"{project_name(pid)} / {stream_name(pid, sid)}", totals)
+    if len(selected) < len(ranked):
+        show(f"Remaining {len(ranked)-len(selected)} streams/buckets (use --all-streams)",
+             [sum(t[i] for _, t in ranked[len(selected):]) for i in range(3)])
+    print(f"Attribution: {result['matched_calls']:,}/{result['calls']:,} calls matched; "
+          f"{share(result['matched_output'])} output-weighted coverage.")
+    print("Pi output shares are not subscription quota shares or measures of waste/productivity.")
+    if result["issues"] or result["limited"] or registry_issues:
+        print(f"WARNING: attribution incomplete: {result['issues']} source issues, "
+              f"{registry_issues} registry issues; read limit reached: {result['limited']}.")
+    if any(t[2] for t in result["groups"].values()):
+        print("WARNING: some output values are unknown; shares cover recorded output only.")
+
+
+def report(db, start=None, all_streams=False):
+    # One SQLite read snapshot keeps model totals, identities and coverage consistent.
+    owned_snapshot = not db.in_transaction
+    if owned_snapshot:
+        db.execute("BEGIN")
     latest = db.execute("SELECT * FROM snapshots ORDER BY sampled_at DESC,id DESC LIMIT 1").fetchone()
     now = int(time.time())
     if latest:
@@ -402,6 +618,9 @@ def report(db, start=None):
     print("Calls include tool-use responses and recorded compaction/other usage, not user messages.")
     print("Input excludes cached tokens; reasoning tokens are already included in output.")
     print("Pi-only token attribution; other Codex clients and missing/deleted logs are not included.")
+    cutoff = db.execute("SELECT MAX(timestamp) FROM requests WHERE timestamp>=? AND timestamp<?",
+                        (since, until)).fetchone()[0]
+    print(f"Recorded usage through: {iso(cutoff) if cutoff is not None else 'no records'}")
     if latest and not start and now < latest["reset_at"]:
         window = db.execute("""SELECT sampled_at,used FROM snapshots
             WHERE account=? AND plan=? AND reset_at=? ORDER BY sampled_at,id""",
@@ -412,6 +631,11 @@ def report(db, start=None):
         if continuous and span >= 21600 and now-latest["sampled_at"] <= 7200:
             projection = latest["used"] + (window[-1]["used"]-window[0]["used"]) / span * (latest["reset_at"]-now)
             print(f"Rough projection at reset: {projection:.0f}% (linear observed pace; not a guarantee).")
+    frozen = attribution_snapshot(db, since, until)
+    if owned_snapshot:
+        # Release the rollback-journal shared lock before the potentially long log scan.
+        db.rollback()
+    report_attribution(db, since, until, all_streams, snapshot=frozen)
 
 
 def history(db):
@@ -431,10 +655,13 @@ def main():
     sub = parser.add_subparsers(dest="command")
     p = sub.add_parser("collect", help="Take one quota snapshot and incrementally import local logs")
     p.add_argument("--local-only", action="store_true", help="Backfill logs without an API call")
-    sub.add_parser("refresh", help="Fetch the latest quota, import new logs, and show the report")
+    p = sub.add_parser("refresh", help="Fetch quota, import logs and report model/project/stream usage")
+    p.add_argument("--all-streams", action="store_true", help="Show every stream instead of the largest twelve")
+    parser.add_argument("--all-streams", action="store_true", help="Show every stream in the default report")
     for name in ("status", "week"):
-        p = sub.add_parser(name, help="Show quota and per-model weekly token usage")
+        p = sub.add_parser(name, help="Show quota and model/project/stream token usage")
         p.add_argument("--start", help="Start a seven-day report on YYYY-MM-DD (UTC)")
+        p.add_argument("--all-streams", action="store_true", help="Show every stream instead of the largest twelve")
     sub.add_parser("history", help="List observed quota windows and their peak percentages")
     args = parser.parse_args()
     directory = state_dir()
@@ -448,13 +675,13 @@ def main():
             if result:
                 print("WARNING: refresh incomplete; showing the latest saved data, which may not be fresh.")
             with database(directory, readonly=True) as db:
-                report(db)
+                report(db, all_streams=args.all_streams)
             return result
         with database(directory, readonly=True) as db:
             if args.command == "history":
                 history(db)
             else:
-                report(db, getattr(args, "start", None))
+                report(db, getattr(args, "start", None), args.all_streams)
     except (OSError, sqlite3.Error, ValueError):
         # Exceptions from HTTP/auth or session parsing can contain private data.
         print("codex-usage: unavailable state or invalid input; see README for troubleshooting.", file=sys.stderr)

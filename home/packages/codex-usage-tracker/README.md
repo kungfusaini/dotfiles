@@ -6,7 +6,8 @@ server, Pi extension, model requests, or new authentication setup.
 ## Use
 
 ```sh
-codex-usage                         # current quota window + per-model/effort tokens
+codex-usage                         # quota + model/project/stream usage
+codex-usage --all-streams           # include every stream, not just the largest twelve
 codex-usage refresh                 # fetch latest quota + new logs, then show report
 codex-usage week                    # same report
 codex-usage week --start 2026-10-26  # seven days from this date, UTC
@@ -17,7 +18,11 @@ systemctl --user status codex-usage.timer
 journalctl --user -u codex-usage.service
 ```
 
-Normal reports read the database only; they don't call OpenAI or rescan logs.
+Normal reports are offline and read-only: they read the database and join tracked
+request identities against registered retained logs for project/stream attribution.
+They never call OpenAI. The attribution reader is bounded to 4 GiB and 30 seconds;
+source gaps and read limits are reported explicitly. No report cache or extra
+collector is installed.
 `refresh` runs one collection on demand and then displays the updated report; it
 leaves the hourly schedule unchanged. It uses the same bounded incremental import
 and shared lock as the timer. If another collector is running, it skips and exits
@@ -37,6 +42,37 @@ inside 4 hours sends only the 4-hour reminder. Failed delivery is retried on the
 next fresh collection. Stale/offline reports and local-only imports never notify.
 These are normal desktop notifications and respect Do Not Disturb. Notification
 bodies contain allowance/reset metadata only, not prompts or account identities.
+
+## Project and stream usage
+
+Default, `status`, `week` and `refresh` reports include project totals and the largest
+twelve stream/project-session buckets. Add `--all-streams` to any of these commands
+for every recorded stream, e.g. `codex-usage week --start 2026-11-02 --all-streams`.
+Project totals include their streams: the two tables are separate views, not
+additive. Rows show calls, output including reasoning, and **Pi output share** of
+all tracked output in the interval, including unmatched usage. These shares are
+not subscription-quota percentages, cost estimates or judgments about waste.
+
+Reports freeze model totals, tracked identities and source offsets in one short
+SQLite read snapshot, releasing it before scanning so collectors can still commit.
+Parent-context lookups are short read-only queries; resulting identities must match
+the frozen set. They show
+the quota window (or explicit UTC calendar interval), newest tracked usage, import
+freshness, matched-call coverage and output-weighted coverage. Missing output is
+flagged; zero-output shares are N/A. The reader uses the collector's exact shared
+request identity, including fallback metadata and parent context for compaction and
+standalone usage. Copies count once; conflicting scope ownership is Ambiguous.
+Deleted/unreadable sources remain Unmatched, never subtracted from the denominator.
+
+Scope IDs come from canonical source paths below
+`$XDG_STATE_HOME/project-object/projects`; project/stream names, including archived
+scopes, come from `$XDG_DATA_HOME/project-object/{projects.json,projects/*/streams.json}`.
+Unknown registry names retain IDs. Ordinary sessions are Other / unattached, not
+inferred from conversation text. Only registered source bytes through imported
+offsets are read, line by line; symlink, replaced-inode and truncated files are
+refused, malformed/oversized lines
+are counted, and conversation content is neither printed nor persisted. The hourly
+`collect` service does not run this on-demand attribution scan.
 
 ## One dedicated Pi session, stopped at reset
 
