@@ -25,6 +25,7 @@
     ./modules/services/backup.nix
     ./modules/services/credential-store.nix
     ./modules/services/pi-secrets.nix
+    ./modules/services/x11-socket-audit.nix
 
     ./modules/hardware/clamshell-mode.nix
     ./modules/hardware/headless-mode.nix
