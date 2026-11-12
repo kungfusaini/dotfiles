@@ -377,6 +377,14 @@ in
   xdg.configFile."hypr/scripts".source = ../config/hypr/scripts;
   xdg.configFile."hypr/dms".source = ../config/hypr/dms;
   xdg.configFile."hypr/zapzap-whatsapp-title".source = ../config/hypr/zapzap-whatsapp-title;
+  # Default the picker to offering a restore token. Applications that reuse
+  # it can avoid repeated selection prompts; token-less Slack requests may
+  # still prompt separately for the preview and the actual stream.
+  xdg.configFile."hypr/xdph.conf".text = ''
+    screencopy {
+        allow_token_by_default = true
+    }
+  '';
   xdg.configFile."hypr/hyprsunset.conf".text = ''
     profile {
         time = 7:00
