@@ -72,7 +72,7 @@ try:
     expect("Item 1 of 2", mark)
     pump(0.5)
     # Verify Escape stays on the same item before accepting advancement.
-    mark = send("/next\r")
+    mark = send("/next carry\r")
     expect("Carry forward:", mark)
     send("\x1b")
     pump(0.5)
@@ -80,14 +80,12 @@ try:
     expect("Item 1 of 2", mark)
     pump(0.5)
     mark = send("/next\r")
-    expect("Carry forward:", mark)
-    mark = send("\x1b[B\x1b[B\r")
     expect("LAST ITEM", mark)
+    assert "Carry forward:" not in ansi.sub("", raw[mark:].decode("utf-8", "replace"))
     pump(0.5)
     mark = send("/next\r")
-    expect("Last item: finish the queue", mark)
-    mark = send("\x1b[B\x1b[B\r")
     expect("All 2 items covered", mark)
+    assert "finish the queue and return" not in ansi.sub("", raw[mark:].decode("utf-8", "replace"))
     pump(0.5)
     mark = send("/next\r")
     expect("No active enumeration", mark)
@@ -96,7 +94,7 @@ try:
     os.kill(process.pid, signal.SIGWINCH)
     pump(0.5)
     assert process.poll() is None, "TUI crashed after resizing"
-    print(f"PASS: hidden native TUI review/confirmation, Escape, /next, LAST, completion and resize ({root})")
+    print(f"PASS: hidden native TUI review/confirmation, optional carry Escape, processing-free /next, LAST, completion and resize ({root})")
 finally:
     if process.poll() is None:
         process.terminate()

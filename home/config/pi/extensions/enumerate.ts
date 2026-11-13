@@ -42,7 +42,7 @@ export function readQueue(ctx: ExtensionContext): Queue | undefined {
 
 // Use Pi's projection, never raw messages: respect context edits and compaction.
 // Return effective conversation content, not hidden reasoning or system prompts.
-export function transcript(ctx: ExtensionContext, leaf?: string, after?: string): any[] {
+function conversationContent(ctx: ExtensionContext, leaf?: string, after?: string): any[] {
   const branch = leaf ? ctx.sessionManager.getBranch(leaf) : ctx.sessionManager.getBranch();
   const afterIndex = after ? branch.findIndex((e) => e.id === after) : -1;
   if (after && afterIndex < 0) throw new Error("The saved item branch is missing its anchor.");
@@ -61,6 +61,13 @@ export function transcript(ctx: ExtensionContext, leaf?: string, after?: string)
       }
     }
   }
+  return content;
+}
+
+// Explicit carryover remains bounded. Agenda extraction must not share this
+// artificial cap: it reads the same full effective history as the active branch.
+export function transcript(ctx: ExtensionContext, leaf?: string, after?: string): any[] {
+  const content = conversationContent(ctx, leaf, after);
   if (JSON.stringify(content).length > 8_000_000 || content.filter((b) => b.type === "text").reduce((n, b) => n + b.text.length, 0) > MAX_TEXT) {
     throw new Error("This transcript is too large to carry safely. Compact the item first, or choose no carryover.");
   }
@@ -94,12 +101,12 @@ export default function enumerate(pi: ExtensionAPI) {
     }
   }
 
-  async function generate(ctx: ExtensionCommandContext, instruction: string, content: any[]): Promise<string | undefined> {
+  async function generate(ctx: ExtensionCommandContext, instruction: string, content: any[], bounded = true): Promise<string | undefined> {
     if (!ctx.model) throw new Error("Select a model first, or supply your own list with /enum item one; item two.");
     const model = ctx.model;
     const sessionId = ctx.sessionManager.getSessionId();
     const leaf = ctx.sessionManager.getLeafId();
-    if (content.filter((b) => b.type === "text").reduce((n, b) => n + b.text.length, 0) > MAX_TEXT) {
+    if (bounded && content.filter((b) => b.type === "text").reduce((n, b) => n + b.text.length, 0) > MAX_TEXT) {
       throw new Error("Selected context is too large. Compact first, select fewer items, or supply /enum item one; item two.");
     }
     const run = async (signal: AbortSignal) => {
@@ -173,7 +180,7 @@ export default function enumerate(pi: ExtensionAPI) {
       const sessionId = ctx.sessionManager.getSessionId();
       const initialLeaf = ctx.sessionManager.getLeafId();
       let proposed = args.trim() ? args.split(";").map((x) => x.trim()).join("\n") : await generate(ctx,
-        "Extract the outstanding topics the user wants to tackle one by one. Return ONLY a JSON array of concise, self-contained item titles, in the intended order. Do not invent tasks. Return [] if no outstanding items are identifiable.", transcript(ctx));
+        "Extract the outstanding topics the user wants to tackle one by one. Return ONLY a JSON array of concise, self-contained item titles, in the intended order. Do not invent tasks. Return [] if no outstanding items are identifiable. Prefer the latest agreed agenda over completed or superseded topics.", conversationContent(ctx), false);
       if (proposed === undefined) return;
       // Generation records usage, so capture the new leaf after it completes.
       const leaf = ctx.sessionManager.getLeafId();
@@ -200,8 +207,9 @@ export default function enumerate(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("next", {
-    description: "Leave the current enumeration item; choose context to carry, or finish the final item",
-    handler: async (_args, ctx) => command(ctx, async () => {
+    description: "Switch to the next item branch (or finish); /next carry offers optional context carryover",
+    handler: async (args, ctx) => command(ctx, async () => {
+      if (args.trim() && args.trim() !== "carry") throw new Error("Use /next to switch branches, or /next carry for optional context carryover.");
       const q = readQueue(ctx);
       if (!q || q.phase !== "active") { ctx.ui.notify("No active enumeration. Use /enum first.", "info"); return; }
       const sessionId = ctx.sessionManager.getSessionId();
@@ -209,7 +217,9 @@ export default function enumerate(pi: ExtensionAPI) {
       const last = q.index === q.items.length - 1;
       const options = last ? ["Decisions summary from all items", "Choose item summaries", "No item context — agenda only"] :
         ["Decisions summary", "Full effective conversation (including images)", "Nothing from this item — agenda only"];
-      const choice = await ctx.ui.select(last ? "Last item: finish the queue and return to the main conversation?" : `Leave item ${q.index + 1} and move to ${q.index + 2}? Carry forward:`, options, { signal: controller!.signal });
+      // Plain /next is just native tree navigation. No model call, transcript
+      // serialization or carryover dialog is needed to switch labeled branches.
+      const choice = args.trim() === "carry" ? await ctx.ui.select(last ? "Last item: finish the queue and return to the main conversation?" : `Leave item ${q.index + 1} and move to ${q.index + 2}? Carry forward:`, options, { signal: controller!.signal }) : options[2];
       if (!choice || !options.includes(choice)) return;
       check(ctx, sessionId, leaf);
       q.items[q.index].leafId = leaf!;
