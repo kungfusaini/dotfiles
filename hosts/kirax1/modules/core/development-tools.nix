@@ -6,6 +6,7 @@
   users.users.sumeet.extraGroups = [ "docker" ];
 
   environment.systemPackages = [
+    pkgs.android-tools
     pkgs.python3
     pkgs.htop
     pkgs.docker-compose
