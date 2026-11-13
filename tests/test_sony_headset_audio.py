@@ -53,6 +53,36 @@ prime_connection
         self.assertEqual(result.returncode, 3)
         self.assertNotIn("UNEXPECTED", result.stdout)
 
+    def test_notifications_follow_final_setup_outcome(self):
+        source = (ROOT / "home/scripts/microphone/sony-headset-prime").read_text()
+        functions, loop = source.split('\nstate_dir="${XDG_RUNTIME_DIR:-/tmp}/sony-headset-prime"', 1)
+        mocks = r'''
+export XDG_RUNTIME_DIR="$1"
+is_connected() { return 0; }
+mock_status="$2"
+prime_connection() { return "$mock_status"; }
+recover_controller() { :; }
+sony-headset-playback() { :; }
+notify-send() { printf '%s\n' "$*"; return 1; }
+sleep() { exit 0; }
+'''
+        for status, expected in [(0, "Headphones ready"), (1, "Headphone setup failed"),
+                                 (2, None), (3, None)]:
+            with self.subTest(status=status), tempfile.TemporaryDirectory() as directory:
+                result = subprocess.run(
+                    ["bash", "-e", "-c", functions + mocks +
+                     '\nstate_dir="${XDG_RUNTIME_DIR:-/tmp}/sony-headset-prime"' + loop,
+                     "test", directory, str(status)],
+                    text=True, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                if expected:
+                    self.assertEqual(result.stdout.count(expected), 1)
+                else:
+                    self.assertNotIn("--app-name=Sony headphones", result.stdout)
+                self.assertEqual(
+                    (Path(directory) / "sony-headset-prime/current-connection-primed").exists(),
+                    status == 0)
+
     def test_one_coordinator_and_existing_mic_policies_preserved(self):
         source = (ROOT / "home/scripts/microphone/sony-headset-prime").read_text()
         module = (ROOT / "home/modules/microphone.nix").read_text()

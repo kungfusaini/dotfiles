@@ -36,6 +36,7 @@ let
     name = "sony-headset-prime";
     runtimeInputs = with pkgs; [
       sonyPlaybackPolicy
+      libnotify
       bluez
       coreutils
       gawk
