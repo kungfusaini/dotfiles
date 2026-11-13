@@ -69,6 +69,9 @@ in
         "image/svg+xml" = "swayimg.desktop";
         "image/tiff" = "swayimg.desktop";
         "image/webp" = "swayimg.desktop";
+        "x-scheme-handler/mailto" = "thunderbird.desktop";
+        "x-scheme-handler/mid" = "thunderbird.desktop";
+        "message/rfc822" = "thunderbird.desktop";
         "text/calendar" = "thunderbird.desktop";
         "application/x-extension-ics" = "thunderbird.desktop";
         "text/html" = "vivaldi-stable.desktop";

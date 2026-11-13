@@ -60,7 +60,12 @@ in
     kitty
     slackX11
     teams-for-linux
-    thunderbird
+    (thunderbird.override {
+      # Home Manager owns the mail associations; do not prompt on each launch.
+      extraPrefs = ''
+        lockPref("mail.shell.checkDefaultClient", false);
+      '';
+    })
     unstable.zapzap
     bitwarden-desktop
     vivaldi
