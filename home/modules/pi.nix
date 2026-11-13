@@ -76,6 +76,7 @@ in
   xdg.configFile."pi/agent/extensions/command-terminal.ts".source = ../config/pi/extensions/command-terminal.ts;
   xdg.configFile."pi/agent/extensions/codex-imagegen.ts".source = ../config/pi/extensions/codex-imagegen.ts;
   xdg.configFile."pi/agent/extensions/model-modes.ts".source = ../config/pi/extensions/model-modes.ts;
+  xdg.configFile."pi/agent/extensions/enumerate.ts".source = ../config/pi/extensions/enumerate.ts;
   xdg.configFile."pi/agent/extensions/nanogpt.ts".source = ../config/pi/extensions/nanogpt.ts;
   xdg.configFile."pi/agent/extensions/reload-all.ts".source = ../config/pi/extensions/reload-all.ts;
   xdg.configFile."pi/agent/extensions/review.ts".source = ../config/pi/extensions/review.ts;
