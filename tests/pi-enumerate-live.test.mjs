@@ -11,7 +11,7 @@ registerHooks({ resolve(specifier, context, next) {
   return specifier === "@earendil-works/pi-coding-agent" ? { url: sdkUrl, shortCircuit: true } : next(specifier, context);
 } });
 
-test("live full-history extraction and three native topic branches; only explicit final carry generates a summary", { skip: process.env.PI_ENUM_LIVE !== "1", timeout: 240_000 }, async () => {
+test("live dialog-free full-history extraction, isolated topic branches and automatic final collection", { skip: process.env.PI_ENUM_LIVE !== "1", timeout: 240_000 }, async () => {
   const sdk = await import(sdkUrl);
   const { default: extension, readQueue } = await import("../home/config/pi/extensions/enumerate.ts");
   const runtime = await sdk.ModelRuntime.create({ allowModelNetwork: false });
@@ -37,8 +37,8 @@ test("live full-history extraction and three native topic branches; only explici
     isIdle: () => true, hasPendingMessages: () => false,
     ui: {
       setStatus() {}, setWidget() {}, notify: (message, type) => notes.push({ message, type }),
-      editor: async (_title, prefill) => prefill, confirm: async () => true,
-      select: async (_title, choices) => choices[0],
+      editor: async () => assert.fail("No agenda editor"), confirm: async () => assert.fail("No confirmation"),
+      select: async () => assert.fail("No carryover dialog"), custom: async () => assert.fail("No custom loader"),
     },
     navigateTree: async (id) => { manager.branch(id); await events.get("session_tree")({}, ctx); return { cancelled: false }; },
   };
@@ -51,10 +51,10 @@ test("live full-history extraction and three native topic branches; only explici
     assert.ok(JSON.stringify(manager.buildSessionProjection().messages).includes(JSON.stringify(baseline).slice(1, -1)));
     const identity = events.get("before_agent_start")({}, ctx).message.content;
     assert.match(identity, new RegExp(`Item ${i + 1} of 3`));
-    if (i === 2) assert.match(identity, /LAST ITEM/);
+    for (const previous of ["mango", "violet"].slice(0, i)) assert.ok(!JSON.stringify(manager.buildSessionProjection().messages).includes(previous), "No sibling-topic carryover");
     manager.appendMessage({ role: "user", content: `My answer is ${answer}.`, timestamp: Date.now() });
-    // Default switches do not generate summaries. Only final explicit carry does.
-    await commands.get("next")(i === 2 ? "carry" : "", ctx);
+    // Only the final /next collects topic results, automatically.
+    await commands.get("next")("", ctx);
   }
   assert.equal(readQueue(ctx).phase, "complete", JSON.stringify(notes));
   const conclusions = JSON.stringify(manager.buildSessionProjection().messages);

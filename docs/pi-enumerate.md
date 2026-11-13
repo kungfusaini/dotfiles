@@ -1,83 +1,60 @@
 # One-at-a-time Pi branches
 
-The managed `enumerate.ts` extension adds `/enum` and `/next`. It uses Pi's public
-command/tree APIs. Each item is a native, labeled conversation branch inheriting
-all the effective conversation before the agenda. No extra npm dependency is used.
+The managed `enumerate.ts` extension adds `/enum` and `/next`, using Pi's public
+command/tree APIs. No extra npm dependency is used.
 
 ## Use
 
 1. Discuss the topics, then run **`/enum`**. The current model extracts the agenda
    once from the **full effective active conversation**, including tool evidence.
-   Edit the proposed list (one item per line), then confirm. Escape cancels.
-   `/enum First topic; Second topic` can also supply an explicit list, but is not
-   required for long conversations.
-2. Item 1 becomes the focus. Ask questions or authorize work as usual. The widget,
-   footer and model context identify the current branch, e.g. **Item 2 of 3:
-   Which colour?** `/enum` or `/enum status` displays the queue.
-3. **`/next`** simply switches to the next item branch. No model call, transcript
-   copying, summary generation or carryover dialog occurs. The full shared
-   pre-agenda history stays inherited, just like native `/tree` navigation.
-4. The final branch is marked **LAST ITEM** immediately, including single-item
-   queues. `/next` there returns to an agenda-rooted main-conversation branch,
-   announces completion and turns pacing off. No additional task is invented.
+   It immediately says **“Okay, let's tackle: [first topic]”**. No agenda editor,
+   confirmation, menu or custom loading screen.
+2. Above the input bar, the only enumeration UI is **`Branch: 1 of 3`**. There is
+   no enumeration footer, topic widget or last-item decoration.
+3. **`/next`** switches to the next topic branch and acknowledges that topic.
+   No model call, transcript copying, summary or dialog occurs between topics.
+   Each branch inherits the shared pre-agenda conversation, but not discussion
+   added on sibling topic branches.
+4. **`/next` on the last topic** automatically brings together the results of
+   **all** topic branches in one model-generated summary. It returns to the
+   shared main conversation, displays that summary and removes the branch line.
+   No extra choice or carryover command is needed.
 
-Commands establish focus, but do not trigger an automatic agent turn or authorize
-implementation. Type your question/instruction after switching. The model receives
-a fresh reminder of its current item on every user turn, even after compaction.
-Only the user invoking `/next` advances. Queue navigation is deterministic;
-semantic on-topic behavior remains instruction-based, not a security boundary.
+Commands establish focus; they do not trigger an automatic work turn or authorize
+implementation. Ask your question or authorize work after switching. The model
+receives a hidden current-item reminder on every turn, including after compaction.
+Only `/next` advances. Semantic pacing is instruction-based, not a security boundary.
 
-`/enum cancel` confirms turning off pacing on the current branch without deleting
-anything or changing the filesystem.
+`/enum First topic; Second topic` optionally supplies an explicit list.
+While active, `/enum` repeats the current topic; `/enum status` explicitly shows
+the list. `/enum cancel` immediately turns pacing off without deleting branches
+or gathering results. `/next carry` and carryover dialogs have been removed.
 
-## Optional item-specific carryover
+## Persistence and safeguards
 
-Shared pre-agenda history is always inherited; it is never an opt-in copy.
-Discussion added within an item stays on that branch unless explicitly carried.
-Use **`/next carry`** instead of `/next` when you want carryover choices:
+Each topic is a native labeled conversation branch. Labels are
+`enum:<queue-id-prefix>:agenda` and `enum:<queue-id-prefix>:<number> <title>`.
+State follows the active branch through `/tree`, resume and reload, including
+queues created by the earlier extension. Revisiting an old branch and advancing
+creates an alternative progression; it does not change the one you left.
 
-- Between items: a decisions summary, full effective item conversation (including
-  earlier carried context, tool details and images), or agenda context only.
-- At the final item: summaries from all item branches, selected item summaries,
-  or agenda context only. This can gather answers even when earlier `/next`
-  switches did not carry them. For the fruit/colour/location story trial, use
-  plain `/next` between questions and `/next carry` with all-item summaries at the
-  end to bring the three answers into the main conversation for story writing.
+Pi's effective-history projection, context edits and compaction are honored.
+Collection reads effective item-local histories from the saved topic branches,
+not raw omitted messages or reasoning. Effective tools and images are included.
+Shared pre-agenda history is not duplicated in the final summary request.
 
-Escape from an optional carry dialog stays on the current item. Summary generation
-only happens when explicitly selected. Full carry is reference material, not
-native replay of assistant/tool message roles. Hidden reasoning, system prompts,
-omitted context-edit entries and context-excluded `!!` output are not copied.
+There is no arbitrary 180,000-character limit or silent truncation. The selected
+model's context window still applies to extraction and collection. Requests have
+a 120-second timeout and 4096-token output limit; agendas have at most 30 items.
+A failed collection leaves the last topic active, preserving all branches for a
+retry. Busy/queued sessions refuse navigation; stale responses and shutdown
+cannot move a changed session. Print/JSON modes cannot start or advance a queue.
 
-## Tree, persistence and limits
+Nested usage is saved in `enumerate-model-usage` entries. The standard Pi session
+totals do not include it because the public API has no appendUsage method.
 
-Labels are `enum:<queue-id-prefix>:agenda` and
-`enum:<queue-id-prefix>:<item-number> <title>`. Branches and raw history are never
-deleted. State follows the active branch: `/tree`, resume and reload restore that
-branch's item. Revisiting an old item and advancing creates an alternative
-progression; it does not mutate the progression you left.
-
-Pi's own effective-history projection, context edits and compaction are honored.
-Neither initial extraction nor inherited branch context has the old 180,000-
-character carryover cap. There is no recent-only window or silent truncation.
-The selected model's context window and Pi's existing compaction still apply;
-compacted or abandoned history is not resurrected into active context.
-
-Optional carryover requests remain bounded (180,000 text characters, 8 MB
-transcript). Extraction/summary output is limited to 4096 tokens and requests to
-120 seconds. Oversized optional carryover or failed requests stop without
-navigation. Agendas contain at most 30 items. TUI model requests have an
-Escape-cancellable loader; RPC uses native dialogs. Print/JSON modes cannot start
-or advance a queue because they lack confirmation UI.
-
-Nested request usage is retained in `enumerate-model-usage` custom entries. Pi's
-standard session totals do not include these: the public extension API has no
-appendUsage method. The footer is therefore not complete billing for extraction
-or explicitly requested summaries.
-
-**Conversation branches are not Git branches/worktrees. Switching items does not
-undo, isolate or roll back files, commands or external changes. Existing approval
-and safety rules still apply.**
+**Conversation branches do not isolate, undo or roll back files, commands or
+external changes. Existing approval and safety rules still apply.**
 
 ## Verification
 
@@ -86,21 +63,19 @@ PI_ENUM_SDK=/path/to/pi-monorepo/dist/index.js node --test tests/pi-enumerate*.t
 python3 tests/pi-enumerate-tui.py
 ```
 
-Synthetic tests cover long-history extraction beyond the old limit, unchanged
-shared-history inheritance, model-visible branch identity, processing-free
-switches/completion, optional carryover, actual SDK command dispatch/native tree
-navigation, projection, persistence, cancellation and races. The hidden PTY test
-uses an empty private agent directory and no provider requests. Pass a deployed
-extension path to test the installed file.
+Synthetic tests cover immediate dialog-free startup, exact compact UI, long
+history, sibling isolation, automatic all-topic collection, effective projection,
+compaction, images/tools, persistence, cancellation/failures, races and actual
+SDK dispatch/native navigation. The hidden PTY test uses a private empty agent
+directory and synthetic model responses, with no provider requests or visible
+windows. Pass the deployed extension path to test the installed file.
 
-`PI_ENUM_LIVE=1` opts into a configured-Codex test using a synthetic history longer
-than the former limit, the fruit/colour/location agenda, three item answers and
-explicit all-item summary collection. Default tests never access real credentials
-or call a provider; the opt-in test uses the normal credential API without copying
-credentials or sending personal conversation history.
+`PI_ENUM_LIVE=1` opts into configured Codex extraction and automatic final
+collection using only synthetic history longer than the old limit and a
+fruit/colour/location agenda with mango/violet/Kyoto answers. Default tests never
+access real credentials or providers. The opt-in test uses the normal credential
+API without copying credentials or sending personal history.
 
 Pi's [session/tree support](https://pi.dev/docs/latest/sessions) and
-[extension command APIs](https://pi.dev/docs/latest/extensions) provide the native
-mechanisms. [pi-tree-navigator](https://pi.dev/packages/%40cad0p/pi-tree-navigator)
-is aimed at agent-controlled rewinds and documents internal reflection. This
-workflow instead keeps branch advancement in explicit user commands on public APIs.
+[extension APIs](https://pi.dev/docs/latest/extensions) provide the native
+branching and above-editor widget mechanisms.

@@ -5,6 +5,7 @@ python3 tests/pi-enumerate-tui.py [extension-path]
 """
 import errno
 import fcntl
+import json
 import os
 from pathlib import Path
 import pty
@@ -27,7 +28,23 @@ env = {**os.environ, "PI_CODING_AGENT_DIR": str(root / "agent"), "TERM": "xterm-
 for key in list(env):
     if any(part in key for part in ("API_KEY", "ACCESS_TOKEN", "AUTH_TOKEN")):
         env.pop(key)
-process = subprocess.Popen(["pi", "--no-extensions", "--extension", str(extension), "--no-skills", "--no-prompt-templates", "--no-themes", "--session", str(root / "session.jsonl")], cwd=root, env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
+# Keep native command dispatch, rendering and navigation; replace only nested
+# provider requests with deterministic synthetic extraction/collection results.
+wrapper = root / "fixture.ts"
+wrapper.write_text('import enumerate from ' + json.dumps(str(extension)) + ';\n' + r'''
+export default function(pi) {
+  enumerate({ ...pi, registerCommand(name, definition) {
+    pi.registerCommand(name, { ...definition, handler: (args, ctx) => definition.handler(args, {
+      ...ctx, model: { provider: "test", id: "test" },
+      modelRegistry: { streamSimple(_model, context) { return { result: async () => ({
+        role: "assistant", content: [{ type: "text", text: context.systemPrompt.startsWith("Extract") ? '["Alpha","Beta"]' : "Alpha and Beta results gathered." }],
+        stopReason: "stop", usage: { input: 0, output: 0, totalTokens: 0 }
+      }) }; } }
+    }) });
+  } });
+}
+''')
+process = subprocess.Popen(["pi", "--no-extensions", "--extension", str(wrapper), "--no-skills", "--no-prompt-templates", "--no-themes", "--session", str(root / "session.jsonl")], cwd=root, env=env, stdin=slave, stdout=slave, stderr=slave, start_new_session=True)
 os.close(slave)
 raw = bytearray()
 ansi = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))")
@@ -64,28 +81,24 @@ def send(data):
 
 try:
     pump(2)
-    mark = send("/enum Alpha; Beta\r")
-    expect("Review agenda", mark)
-    mark = send("\r")
-    expect("Start this agenda?", mark)
-    mark = send("\r")
-    expect("Item 1 of 2", mark)
-    pump(0.5)
-    # Verify Escape stays on the same item before accepting advancement.
-    mark = send("/next carry\r")
-    expect("Carry forward:", mark)
-    send("\x1b")
-    pump(0.5)
-    mark = send("/enum status\r")
-    expect("Item 1 of 2", mark)
+    mark = send("/enum\r")
+    expect("Okay, let's tackle: Alpha", mark)
+    expect("Branch: 1 of 2", mark)
     pump(0.5)
     mark = send("/next\r")
-    expect("LAST ITEM", mark)
-    assert "Carry forward:" not in ansi.sub("", raw[mark:].decode("utf-8", "replace"))
+    expect("Okay, let's tackle: Beta", mark)
+    expect("Branch: 2 of 2", mark)
+    pump(0.5)
+    # Resize while the compact branch line is active.
+    fcntl.ioctl(master, termios.TIOCSWINSZ, struct.pack("HHHH", 20, 35, 0, 0))
+    os.kill(process.pid, signal.SIGWINCH)
     pump(0.5)
     mark = send("/next\r")
-    expect("All 2 items covered", mark)
-    assert "finish the queue and return" not in ansi.sub("", raw[mark:].decode("utf-8", "replace"))
+    expect("All topics covered.", mark)
+    expect("Alpha and Beta results gathered.", mark)
+    text = ansi.sub("", raw.decode("utf-8", "replace"))
+    for unwanted in ["Review agenda", "Start this agenda?", "Carry forward:", "LAST ITEM", "Stay on this item", "enum 1/2", "Preparing enumeration context"]:
+        assert unwanted not in text, unwanted
     pump(0.5)
     mark = send("/next\r")
     expect("No active enumeration", mark)
@@ -94,7 +107,7 @@ try:
     os.kill(process.pid, signal.SIGWINCH)
     pump(0.5)
     assert process.poll() is None, "TUI crashed after resizing"
-    print(f"PASS: hidden native TUI review/confirmation, optional carry Escape, processing-free /next, LAST, completion and resize ({root})")
+    print(f"PASS: hidden native TUI dialog-free /enum, Branch: x of y, direct /next, automatic collection and resize ({root})")
 finally:
     if process.poll() is None:
         process.terminate()
