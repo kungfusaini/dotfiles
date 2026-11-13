@@ -48,6 +48,7 @@ Use direct inspection and existing tools to establish the simplest safe path bef
 
 ## External research
 
+- Resolve readily researchable uncertainty before answering; don’t make the user ask you to check.
 - Before designing a non-trivial custom solution, investigate current recommended approaches and existing tools, libraries, or platform capabilities that may already solve the problem. When external research could materially affect the approach, perform it before presenting an implementation plan for approval.
 - Compare promising alternatives against the project's requirements, including integration fit, privacy, security, licensing, maintenance burden, and operational complexity. Prefer primary documentation and actively maintained options. Do not default to building from scratch, but do not adopt a dependency merely because it exists; briefly explain the build-versus-adopt decision.
 - When an answer relies on external research, include clickable links to the most relevant primary sources, attached to the claims or recommendations they support.
