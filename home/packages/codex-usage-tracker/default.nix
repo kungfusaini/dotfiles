@@ -2,7 +2,7 @@
 
 stdenvNoCC.mkDerivation {
   pname = "codex-usage-tracker";
-  version = "1.1.0";
+  version = "1.2.0";
   src = lib.cleanSource ./.;
   nativeBuildInputs = [ python3 makeWrapper ];
   dontBuild = true;
@@ -16,6 +16,9 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     install -Dm644 codex_usage.py "$out/lib/codex-usage/codex_usage.py"
     install -Dm644 codex_oneshot.py "$out/lib/codex-usage/codex_oneshot.py"
+    install -Dm644 codex_environment.py "$out/lib/codex-usage/codex_environment.py"
+    install -Dm644 environment_models.json "$out/lib/codex-usage/environment_models.json"
+    install -Dm644 LICENSE-EcoLogits "$out/share/doc/codex-usage-tracker/LICENSE-EcoLogits"
     makeWrapper ${python3}/bin/python3 "$out/bin/codex-usage" \
       --add-flags "$out/lib/codex-usage/codex_usage.py" \
       --prefix PATH : ${lib.makeBinPath [ libnotify ]} \

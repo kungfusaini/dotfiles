@@ -1,0 +1,2186 @@
+{
+  "models": [
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "chat-latest",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 900,
+          "active": {
+            "min": 90,
+            "max": 300
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://openai.com/index/introducing-gpt-5-5/",
+        "https://developers.openai.com/api/docs/models/gpt-5.5",
+        "https://inferencebench.io/models/proprietary/gpt-5-5/"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-3.5-turbo",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 20,
+          "max": 70
+        }
+      },
+      "warnings": [
+        "model-arch-not-released"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-3-5-turbo"
+      ],
+      "deployment": {
+        "tps": 88.0,
+        "ttft": 0.71
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-3.5-turbo-0125",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 20,
+          "max": 70
+        }
+      },
+      "warnings": [
+        "model-arch-not-released"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-3-5-turbo"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-3.5-turbo-1106",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 20,
+          "max": 70
+        }
+      },
+      "warnings": [
+        "model-arch-not-released"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-3-5-turbo"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-3.5-turbo-16k",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 20,
+          "max": 70
+        }
+      },
+      "warnings": [
+        "model-arch-not-released"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-3-5-turbo"
+      ],
+      "deployment": {
+        "tps": 95.0,
+        "ttft": 0.81
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-3.5-turbo-instruct",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 20,
+          "max": 70
+        }
+      },
+      "warnings": [
+        "model-arch-not-released"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-3-5-turbo"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-3.5-turbo-instruct-0914",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 20,
+          "max": 70
+        }
+      },
+      "warnings": [
+        "model-arch-not-released"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-3-5-turbo"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 1760,
+          "active": {
+            "min": 176,
+            "max": 528
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4-turbo-and-gpt-4"
+      ],
+      "deployment": {
+        "tps": 46.0,
+        "ttft": 0.89
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4-0613",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 1760,
+          "active": {
+            "min": 176,
+            "max": 528
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4-turbo-and-gpt-4"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4-turbo",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 880,
+          "active": {
+            "min": 88,
+            "max": 264
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4-turbo-and-gpt-4"
+      ],
+      "deployment": {
+        "tps": 23.0,
+        "ttft": 1.25
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4-turbo-2024-04-09",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 880,
+          "active": {
+            "min": 88,
+            "max": 264
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4-turbo-and-gpt-4"
+      ],
+      "deployment": {
+        "tps": 23.0,
+        "ttft": 1.25
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4.1",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 352,
+          "active": {
+            "min": 35,
+            "max": 106
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 81.0,
+        "ttft": 1.02
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4.1-2025-04-14",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 352,
+          "active": {
+            "min": 35,
+            "max": 106
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 81.0,
+        "ttft": 1.02
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4.1-mini",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 40,
+          "max": 112
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 79.0,
+        "ttft": 0.93
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4.1-mini-2025-04-14",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 40,
+          "max": 112
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 79.0,
+        "ttft": 0.93
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4.1-nano",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 10,
+          "max": 37
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 83.0,
+        "ttft": 0.83
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4.1-nano-2025-04-14",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 10,
+          "max": 37
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 83.0,
+        "ttft": 0.83
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 440,
+          "active": {
+            "min": 44,
+            "max": 132
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o"
+      ],
+      "deployment": {
+        "tps": 74.0,
+        "ttft": 0.61
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-2024-05-13",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 440,
+          "active": {
+            "min": 44,
+            "max": 132
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o"
+      ],
+      "deployment": {
+        "tps": 44.5,
+        "ttft": 1.1
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-2024-08-06",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 440,
+          "active": {
+            "min": 44,
+            "max": 132
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o"
+      ],
+      "deployment": {
+        "tps": 40.0,
+        "ttft": 2.03
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-2024-11-20",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 440,
+          "active": {
+            "min": 44,
+            "max": 132
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o"
+      ],
+      "deployment": {
+        "tps": 95.0,
+        "ttft": 0.67
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-mini",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o-mini"
+      ],
+      "deployment": {
+        "tps": 79.0,
+        "ttft": 0.54
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-mini-2024-07-18",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o-mini"
+      ],
+      "deployment": {
+        "tps": 63.0,
+        "ttft": 0.53
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-mini-search-preview",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o-mini"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-mini-search-preview-2025-03-11",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o-mini"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-mini-transcribe",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o-mini"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-mini-transcribe-2025-03-20",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o-mini"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-mini-transcribe-2025-12-15",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o-mini"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-mini-tts",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o-mini"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-mini-tts-2025-03-20",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o-mini"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-mini-tts-2025-12-15",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o-mini"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-search-preview",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 440,
+          "active": {
+            "min": 44,
+            "max": 132
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-4o-search-preview-2025-03-11",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 440,
+          "active": {
+            "min": 44,
+            "max": 132
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#gpt-4o"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 59.0,
+        "ttft": 5.13
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-2025-08-07",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 59.0,
+        "ttft": 5.13
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-chat-latest",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-codex",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-mini",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 25,
+          "max": 70
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 101.0,
+        "ttft": 3.72
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-mini-2025-08-07",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 25,
+          "max": 70
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 101.0,
+        "ttft": 3.72
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-nano",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 5,
+          "max": 18.5
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 62.5,
+        "ttft": 6.93
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-nano-2025-08-07",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 5,
+          "max": 18.5
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 62.5,
+        "ttft": 6.93
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-pro",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 3600,
+          "active": {
+            "min": 360,
+            "max": 1080
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 12.0,
+        "ttft": 21.83
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-pro-2025-10-06",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 3600,
+          "active": {
+            "min": 360,
+            "max": 1080
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 12.0,
+        "ttft": 21.83
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-search-api",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5-search-api-2025-10-14",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.1",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 74.5,
+        "ttft": 0.97
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.1-2025-11-13",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 74.5,
+        "ttft": 0.97
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.1-chat-latest",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.1-codex",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.1-codex-max",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 300,
+          "active": {
+            "min": 30,
+            "max": 90
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.1-codex-mini",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 25,
+          "max": 70
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.2",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 420,
+          "active": {
+            "min": 42,
+            "max": 126
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 68.0,
+        "ttft": 2.41
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.2-2025-12-11",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 420,
+          "active": {
+            "min": 42,
+            "max": 126
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 68.0,
+        "ttft": 2.41
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.2-chat-latest",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 420,
+          "active": {
+            "min": 42,
+            "max": 126
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.2-codex",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 420,
+          "active": {
+            "min": 42,
+            "max": 126
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.2-pro",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 5040,
+          "active": {
+            "min": 504,
+            "max": 1512
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 19.0,
+        "ttft": 3.71
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.2-pro-2025-12-11",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 5040,
+          "active": {
+            "min": 504,
+            "max": 1512
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 19.0,
+        "ttft": 3.71
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.3-chat-latest",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 420,
+          "active": {
+            "min": 42,
+            "max": 126
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.3-codex",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 420,
+          "active": {
+            "min": 42,
+            "max": 126
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 70.0,
+        "ttft": 2.29
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.4",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 450,
+          "active": {
+            "min": 45,
+            "max": 150
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 51.0,
+        "ttft": 1.56
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.4-2026-03-05",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 450,
+          "active": {
+            "min": 45,
+            "max": 150
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 51.0,
+        "ttft": 1.56
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.4-mini",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 56,
+          "max": 158
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 106.0,
+        "ttft": 1.04
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.4-mini-2026-03-17",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 56,
+          "max": 158
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 106.0,
+        "ttft": 1.04
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.4-nano",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 15,
+          "max": 58
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 95.5,
+        "ttft": 1.1
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.4-nano-2026-03-17",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 15,
+          "max": 58
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 95.5,
+        "ttft": 1.1
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.4-pro",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 5400,
+          "active": {
+            "min": 540,
+            "max": 1800
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 9.0,
+        "ttft": 7.12
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.4-pro-2026-03-05",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 5400,
+          "active": {
+            "min": 540,
+            "max": 1800
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models"
+      ],
+      "deployment": {
+        "tps": 9.0,
+        "ttft": 7.12
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.5",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 900,
+          "active": {
+            "min": 90,
+            "max": 300
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://openai.com/index/introducing-gpt-5-5/",
+        "https://developers.openai.com/api/docs/models/gpt-5.5",
+        "https://inferencebench.io/models/proprietary/gpt-5-5/"
+      ],
+      "deployment": {
+        "tps": 96.0,
+        "ttft": 4.03
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.5-2026-04-23",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 900,
+          "active": {
+            "min": 90,
+            "max": 300
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://openai.com/index/introducing-gpt-5-5/",
+        "https://developers.openai.com/api/docs/models/gpt-5.5",
+        "https://inferencebench.io/models/proprietary/gpt-5-5/"
+      ],
+      "deployment": {
+        "tps": 96.0,
+        "ttft": 4.03
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.5-pro",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 5400,
+          "active": {
+            "min": 540,
+            "max": 1800
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://openai.com/index/introducing-gpt-5-5/",
+        "https://developers.openai.com/api/docs/models/gpt-5.5-pro",
+        "https://www.swfte.com/research/gpt-5-5"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.5-pro-2026-04-23",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 5400,
+          "active": {
+            "min": 540,
+            "max": 1800
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://openai.com/index/introducing-gpt-5-5/",
+        "https://developers.openai.com/api/docs/models/gpt-5.5-pro",
+        "https://www.swfte.com/research/gpt-5-5"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.6-luna",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 180,
+          "active": {
+            "min": 18,
+            "max": 60
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://openai.com/index/gpt-5-6/",
+        "https://developers.openai.com/api/docs/models/gpt-5.6-luna"
+      ],
+      "deployment": {
+        "tps": 60.0,
+        "ttft": 2.0
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.6-sol",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 900,
+          "active": {
+            "min": 90,
+            "max": 300
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://openai.com/index/gpt-5-6/",
+        "https://developers.openai.com/api/docs/models/gpt-5.6-sol"
+      ],
+      "deployment": {
+        "tps": 71.0,
+        "ttft": 3.26
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-5.6-terra",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 450,
+          "active": {
+            "min": 45,
+            "max": 150
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://openai.com/index/gpt-5-6/",
+        "https://developers.openai.com/api/docs/models/gpt-5.6-terra"
+      ],
+      "deployment": {
+        "tps": 75.0,
+        "ttft": 2.15
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-6-astra",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 1500,
+          "active": {
+            "min": 150,
+            "max": 500
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://openai.com/index/gpt-6-astra/",
+        "https://developers.openai.com/api/docs/models/gpt-6-astra"
+      ],
+      "deployment": {
+        "tps": 35.8,
+        "ttft": 2.94
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-6-luna",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 38,
+          "active": {
+            "min": 3.8,
+            "max": 11
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://developers.openai.com/api/docs/changelog",
+        "https://developers.openai.com/api/docs/models/gpt-6-luna"
+      ],
+      "deployment": {
+        "tps": 65.0,
+        "ttft": 2.6
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-6-sol",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 375,
+          "active": {
+            "min": 38,
+            "max": 112
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://developers.openai.com/api/docs/changelog",
+        "https://developers.openai.com/api/docs/models/gpt-6-sol"
+      ],
+      "deployment": {
+        "tps": 74.0,
+        "ttft": 1.93
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "gpt-6.1-sol",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 375,
+          "active": {
+            "min": 38,
+            "max": 112
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://developers.openai.com/api/docs/changelog",
+        "https://developers.openai.com/api/docs/models/gpt-6.1-sol"
+      ],
+      "deployment": {
+        "tps": 57.0,
+        "ttft": 4.07
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "o1",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 440,
+          "active": {
+            "min": 44,
+            "max": 132
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#o1"
+      ],
+      "deployment": {
+        "tps": 111.5,
+        "ttft": 0.96
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "o1-2024-12-17",
+      "architecture": {
+        "type": "moe",
+        "parameters": {
+          "total": 440,
+          "active": {
+            "min": 44,
+            "max": 132
+          }
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#o1"
+      ],
+      "deployment": {
+        "tps": 111.5,
+        "ttft": 0.96
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "o3-mini",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#o3-mini"
+      ],
+      "deployment": {
+        "tps": 142.0,
+        "ttft": 4.49
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "o3-mini-2025-01-31",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#o3-mini"
+      ],
+      "deployment": {
+        "tps": 142.0,
+        "ttft": 4.49
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "o4-mini",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#o3-mini"
+      ],
+      "deployment": {
+        "tps": 93.0,
+        "ttft": 3.4
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "o4-mini-2025-04-16",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#o3-mini"
+      ],
+      "deployment": {
+        "tps": 93.0,
+        "ttft": 3.4
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "o4-mini-deep-research",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#o3-mini"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    },
+    {
+      "type": "model",
+      "provider": "openai",
+      "name": "o4-mini-deep-research-2025-06-26",
+      "architecture": {
+        "type": "dense",
+        "parameters": {
+          "min": 8,
+          "max": 28
+        }
+      },
+      "warnings": [
+        "model-arch-not-released",
+        "model-arch-multimodal"
+      ],
+      "sources": [
+        "https://platform.openai.com/docs/models#o3-mini"
+      ],
+      "deployment": {
+        "tps": null,
+        "ttft": null
+      }
+    }
+  ],
+  "aliases": [
+    {
+      "type": "alias",
+      "provider": "openai",
+      "name": "gpt-35-turbo",
+      "alias": "gpt-3.5-turbo"
+    },
+    {
+      "type": "alias",
+      "provider": "openai",
+      "name": "gpt-35-turbo-0125",
+      "alias": "gpt-3.5-turbo-0125"
+    },
+    {
+      "type": "alias",
+      "provider": "openai",
+      "name": "gpt-35-turbo-1106",
+      "alias": "gpt-3.5-turbo-1106"
+    },
+    {
+      "type": "alias",
+      "provider": "openai",
+      "name": "gpt-35-turbo-16k",
+      "alias": "gpt-3.5-turbo-16k"
+    },
+    {
+      "type": "alias",
+      "provider": "openai",
+      "name": "gpt-35-turbo-instruct-0914",
+      "alias": "gpt-3.5-turbo-instruct-0914"
+    },
+    {
+      "type": "alias",
+      "provider": "openai",
+      "name": "gpt-35-turbo-instruct",
+      "alias": "gpt-3.5-turbo-instruct"
+    }
+  ],
+  "revision": "3a8e85ca7970c439d00ee44cfb1c5b29fd1afeff",
+  "source": "https://raw.githubusercontent.com/genai-impact/ecologits/3a8e85ca7970c439d00ee44cfb1c5b29fd1afeff/ecologits/data/models.json"
+}

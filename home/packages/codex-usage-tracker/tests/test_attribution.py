@@ -169,14 +169,14 @@ class AttributionTests(unittest.TestCase):
             t.ingest(db, [self.log])
         with t.database(self.directory, readonly=True) as db:
             original = t.report_attribution
-            def scan(db, since, until, all_streams=False, snapshot=None):
+            def scan(db, since, until, all_streams=False, snapshot=None, **kwargs):
                 self.assertFalse(db.in_transaction)
                 # Collector commits must work during scanning, not wait for its end.
                 with t.database(self.directory) as writer:
                     writer.execute("INSERT INTO runs(started_at,quota_status) VALUES (1,'local_only')")
                     writer.commit()
                 self.assertEqual(len(snapshot[0]), 1)
-                return original(db, since, until, all_streams, snapshot=snapshot)
+                return original(db, since, until, all_streams, snapshot=snapshot, **kwargs)
             with mock.patch.object(t, "report_attribution", side_effect=scan), \
                     contextlib.redirect_stdout(io.StringIO()):
                 t.report(db, "2026-11-02")

@@ -74,6 +74,68 @@ refused, malformed/oversized lines
 are counted, and conversation content is neither printed nor persisted. The hourly
 `collect` service does not run this on-demand attribution scan.
 
+## Optional environmental scenario
+
+```sh
+codex-usage --environment
+codex-usage status --environment --all-streams
+codex-usage week --start 2026-11-09 --environment
+codex-usage --environment --grid-carbon 100  # assumed g CO2e/kWh, not measured
+```
+
+Reports remain offline/read-only. No tracing SDK, network calls, additional
+collector, schema changes or transcript uploads. Default reports are unchanged.
+Energy is shown in **Wh**, carbon in **g CO2e**, for the **covered subset only**.
+Project/stream rows sum per-request model estimates, never allocate the account
+quota or multiply output shares by a universal coefficient. Parent projects and
+streams are separate, non-additive views. Unmatched and ambiguous scope buckets
+retain their estimates; attribution coverage is separate from model coverage.
+
+`codex_environment.py` adapts only the operational energy equations of
+[EcoLogits](https://ecologits.ai/latest/methodology/llm_inference/), pinned to
+[3a8e85ca7970c439d00ee44cfb1c5b29fd1afeff](https://github.com/genai-impact/ecologits/tree/3a8e85ca7970c439d00ee44cfb1c5b29fd1afeff).
+The OpenAI subset of its model catalog is bundled in `environment_models.json`,
+with upstream warnings and sources. Module/data are MPL-2.0; the license is
+included as `LICENSE-EcoLogits`. No full lifecycle-estimator dependency is needed
+for this small offline metadata-only report; the equations and pinned golden
+fixtures are tested locally. Catalog updates require a reviewed code change,
+not runtime fetching. It is not the full EcoLogits impact calculation.
+
+### Assumptions and exclusions — read before interpreting numbers
+
+- Architecture parameter counts for proprietary models are **inferred**, not
+  provider measurements. Source warnings are displayed, including multimodality.
+- Uses H100 80GB, FP16, batch size 64, 1.2 kW host per 8 GPUs and **assumed PUE
+  1.2**. Required GPU count rounds FP16 model memory up to a power of two.
+- GPU energy uses the upstream regression against active parameters and output
+  tokens. Host energy uses the model catalog's estimated TTFT/TPS, falling back
+  to the upstream latency regression. No request duration is measured or used as
+  a server-energy proxy; upstream's optional request-latency cap is absent.
+- Output includes reasoning **once**. Input, cached input and cache writes are
+  **not separately modeled**. In particular, long-context prefill/cache effects
+  can make these estimates materially wrong for coding agents. Partial recorded
+  output from errors/aborts is included, not assumed free.
+- Ranges vary the catalog's inferred parameter-count endpoints only. They are
+  **not confidence intervals, actual-impact bounds, or proof of model rankings**.
+  They do not capture unknown hardware, batching, cache or serving optimizations.
+- Carbon is conditional on **illustrative 400 g CO2e/kWh**, or an explicit
+  `--grid-carbon` scenario. The provider's actual serving region/electricity mix
+  is unknown; the laptop's location is not substituted. A zero-intensity scenario
+  means zero modeled operational electricity emissions, not zero total footprint.
+- Excludes training, embodied hardware emissions, reserved idle capacity, water,
+  laptop/builds/tools, other clients and unrecorded work. This is **not a complete
+  environmental footprint** or an audited carbon inventory.
+- Unknown models (including a concrete unsupported response model), missing
+  output and zero-output calls remain **unknown, not zero**. No fuzzy model-name
+  matching. Exact catalog aliases are supported. Missing output is reported as a
+  separate count and cannot appear in output-weighted coverage's denominator.
+  Call coverage and recorded-output coverage are both displayed. Even 100%
+  coverage means model applicability, not measurement accuracy.
+
+For reproducibility, preserve report interval/import freshness, catalog revision,
+PUE and grid scenario. Comparing reports under different assumptions is not an
+improvement measurement. No laptop power instrumentation is installed.
+
 ## One dedicated Pi session, stopped at reset
 
 In an interactive project/stream terminal:

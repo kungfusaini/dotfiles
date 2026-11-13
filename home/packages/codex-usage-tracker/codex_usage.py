@@ -508,7 +508,7 @@ def attribution(db, since, until, budget=4 * 1024**3, seconds=30, snapshot=None)
                         issues += 1
         except OSError:
             issues += 1
-    groups = {}
+    groups, scopes = {}, {}
     matched_calls = matched_output = 0
     for key, output in requests.items():
         scope = owners.get(key, ("unmatched", None))
@@ -517,18 +517,30 @@ def attribution(db, since, until, budget=4 * 1024**3, seconds=30, snapshot=None)
         elif key in owners:
             matched_calls += 1
             matched_output += output or 0
+        scopes[key] = scope
         totals = groups.setdefault(scope, [0, 0, 0])
         totals[0] += 1
         totals[1] += output or 0
         totals[2] += output is None
     return {"groups": groups, "calls": len(requests), "output": sum(v or 0 for v in requests.values()),
             "matched_calls": matched_calls, "matched_output": matched_output,
-            "issues": issues, "limited": limited, "bytes": read}
+            "issues": issues, "limited": limited, "bytes": read, "scopes": scopes}
 
 
-def report_attribution(db, since, until, all_streams=False, snapshot=None):
+def report_attribution(db, since, until, all_streams=False, snapshot=None,
+                       environment_records=None, grid_carbon=400.0):
     result = attribution(db, since, until, snapshot=snapshot)
     projects, streams, registry_issues = scope_names()
+    environmental = environment_records is not None
+    env_groups, env_projects = {}, {}
+    if environmental:
+        import codex_environment as env
+        env_groups, total, unsupported, warnings = env.summarize(
+            environment_records, result['scopes'], env.catalog())
+        env.introduction(total, unsupported, warnings, grid_carbon)
+        for (pid, _sid), value in env_groups.items():
+            env.add(env_projects.setdefault(pid, env.empty()), value)
+    extra = ' | Estimated Wh | Scenario g CO2e | Estimated/recorded calls' if environmental else ''
     def project_name(pid):
         return {None: "Other / unattached", "unmatched": "Unmatched", "ambiguous": "Ambiguous"}.get(
             pid, projects.get(pid, f"Unknown project {pid}"))
@@ -536,24 +548,30 @@ def report_attribution(db, since, until, all_streams=False, snapshot=None):
         return streams.get((pid, sid), f"Unknown stream {sid}") if sid else "Main / project sessions"
     def share(output):
         return f"{output / result['output'] * 100:.2f}%" if result["output"] else "N/A"
-    def show(name, totals):
-        print(f"{name} | {totals[0]:,} | {totals[1]:,} | {share(totals[1])}")
-    print("\nProjects | Calls | Output (includes reasoning) | Pi output share")
+    def show(name, totals, impact=None):
+        suffix = ' | ' + env.cells(impact, grid_carbon) if environmental else ''
+        print(f"{name} | {totals[0]:,} | {totals[1]:,} | {share(totals[1])}{suffix}")
+    print("\nProjects | Calls | Output (includes reasoning) | Pi output share" + extra)
     rollups = {}
     for (pid, _sid), totals in result["groups"].items():
         summed = rollups.setdefault(pid, [0, 0, 0])
         for i in range(3):
             summed[i] += totals[i]
     for pid, totals in sorted(rollups.items(), key=lambda item: (-item[1][1], str(item[0]))):
-        show(project_name(pid), totals)
-    print("\nStreams (parent projects include these rows) | Calls | Output | Pi output share")
+        show(project_name(pid), totals, env_projects.get(pid))
+    print("\nStreams (parent projects include these rows) | Calls | Output | Pi output share" + extra)
     ranked = sorted(result["groups"].items(), key=lambda item: (-item[1][1], str(item[0])))
     selected = ranked if all_streams else ranked[:12]
     for (pid, sid), totals in sorted(selected, key=lambda item: (project_name(item[0][0]), -item[1][1], str(item[0]))):
-        show(f"{project_name(pid)} / {stream_name(pid, sid)}", totals)
+        show(f"{project_name(pid)} / {stream_name(pid, sid)}", totals, env_groups.get((pid, sid)))
     if len(selected) < len(ranked):
+        remaining = None
+        if environmental:
+            remaining = env.empty()
+            for scope, _totals in ranked[len(selected):]:
+                env.add(remaining, env_groups[scope])
         show(f"Remaining {len(ranked)-len(selected)} streams/buckets (use --all-streams)",
-             [sum(t[i] for _, t in ranked[len(selected):]) for i in range(3)])
+             [sum(t[i] for _, t in ranked[len(selected):]) for i in range(3)], remaining)
     print(f"Attribution: {result['matched_calls']:,}/{result['calls']:,} calls matched; "
           f"{share(result['matched_output'])} output-weighted coverage.")
     print("Pi output shares are not subscription quota shares or measures of waste/productivity.")
@@ -564,7 +582,7 @@ def report_attribution(db, since, until, all_streams=False, snapshot=None):
         print("WARNING: some output values are unknown; shares cover recorded output only.")
 
 
-def report(db, start=None, all_streams=False):
+def report(db, start=None, all_streams=False, environment=False, grid_carbon=400.0):
     # One SQLite read snapshot keeps model totals, identities and coverage consistent.
     owned_snapshot = not db.in_transaction
     if owned_snapshot:
@@ -632,10 +650,14 @@ def report(db, start=None, all_streams=False):
             projection = latest["used"] + (window[-1]["used"]-window[0]["used"]) / span * (latest["reset_at"]-now)
             print(f"Rough projection at reset: {projection:.0f}% (linear observed pace; not a guarantee).")
     frozen = attribution_snapshot(db, since, until)
+    environment_records = db.execute(
+        'SELECT key,model,response_model,output FROM requests WHERE timestamp>=? AND timestamp<?',
+        (since, until)).fetchall() if environment else None
     if owned_snapshot:
         # Release the rollback-journal shared lock before the potentially long log scan.
         db.rollback()
-    report_attribution(db, since, until, all_streams, snapshot=frozen)
+    report_attribution(db, since, until, all_streams, snapshot=frozen,
+                       environment_records=environment_records, grid_carbon=grid_carbon)
 
 
 def history(db):
@@ -663,7 +685,23 @@ def main():
         p.add_argument("--start", help="Start a seven-day report on YYYY-MM-DD (UTC)")
         p.add_argument("--all-streams", action="store_true", help="Show every stream instead of the largest twelve")
     sub.add_parser("history", help="List observed quota windows and their peak percentages")
+    # Accept flags before or after reporting subcommands without subparser
+    # defaults silently overwriting values supplied to the root parser.
+    report_parsers = [parser] + [sub.choices[n] for n in ('status', 'week', 'refresh')]
+    for p in report_parsers:
+        p.add_argument('--environment', action='store_true', default=argparse.SUPPRESS,
+                       help='Show offline operational energy/carbon scenario estimates')
+        p.add_argument('--grid-carbon', type=float, default=argparse.SUPPRESS, metavar='G_PER_KWH',
+                       help='Assumed electricity intensity in g CO2e/kWh (default: illustrative 400)')
     args = parser.parse_args()
+    environmental = getattr(args, 'environment', False)
+    grid = getattr(args, 'grid_carbon', 400.0)
+    if not math.isfinite(grid) or grid < 0:
+        parser.error('--grid-carbon must be finite and nonnegative')
+    if hasattr(args, 'grid_carbon') and not environmental:
+        parser.error('--grid-carbon requires --environment')
+    if environmental and args.command in ('history', 'collect'):
+        parser.error('--environment is available only for usage reports')
     directory = state_dir()
     try:
         if args.command == "collect":
@@ -675,13 +713,14 @@ def main():
             if result:
                 print("WARNING: refresh incomplete; showing the latest saved data, which may not be fresh.")
             with database(directory, readonly=True) as db:
-                report(db, all_streams=args.all_streams)
+                report(db, all_streams=args.all_streams, environment=environmental, grid_carbon=grid)
             return result
         with database(directory, readonly=True) as db:
             if args.command == "history":
                 history(db)
             else:
-                report(db, getattr(args, "start", None), args.all_streams)
+                report(db, getattr(args, "start", None), args.all_streams,
+                       environment=environmental, grid_carbon=grid)
     except (OSError, sqlite3.Error, ValueError):
         # Exceptions from HTTP/auth or session parsing can contain private data.
         print("codex-usage: unavailable state or invalid input; see README for troubleshooting.", file=sys.stderr)
