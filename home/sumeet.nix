@@ -69,6 +69,8 @@ in
         "image/svg+xml" = "swayimg.desktop";
         "image/tiff" = "swayimg.desktop";
         "image/webp" = "swayimg.desktop";
+        "text/calendar" = "thunderbird.desktop";
+        "application/x-extension-ics" = "thunderbird.desktop";
         "text/html" = "vivaldi-stable.desktop";
         "x-scheme-handler/http" = "project-browser.desktop";
         "x-scheme-handler/https" = "project-browser.desktop";
