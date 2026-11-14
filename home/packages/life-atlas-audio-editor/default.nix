@@ -13,9 +13,13 @@ stdenvNoCC.mkDerivation {
   '';
   installPhase = ''
     install -Dm644 editor.py "$out/lib/life-atlas-audio-editor/editor.py"
-    install -m644 policy.txt "$out/lib/life-atlas-audio-editor/policy.txt"
+    install -m644 policy.txt bridge.py "$out/lib/life-atlas-audio-editor/"
     makeWrapper ${python3}/bin/python3 "$out/bin/life-atlas-audio-editor" \
       --add-flags "$out/lib/life-atlas-audio-editor/editor.py" \
+      --set LIFE_ATLAS_PI_BIN ${pi}/bin/pi \
+      --set PYTHONDONTWRITEBYTECODE 1
+    makeWrapper ${python3}/bin/python3 "$out/bin/life-atlas-audio-bridge" \
+      --add-flags "$out/lib/life-atlas-audio-editor/bridge.py" \
       --set LIFE_ATLAS_PI_BIN ${pi}/bin/pi \
       --set PYTHONDONTWRITEBYTECODE 1
     install -Dm644 README.md "$out/share/doc/life-atlas-audio-editor/README.md"
