@@ -24,6 +24,7 @@ in
     ./modules/codex-usage.nix
     ./modules/command-center-roundup.nix
     ./modules/agent-techniques-weekly.nix
+    ./modules/life-atlas-audio.nix
     ./modules/display.nix
     ./modules/hypr.nix
     ./modules/kitty.nix
