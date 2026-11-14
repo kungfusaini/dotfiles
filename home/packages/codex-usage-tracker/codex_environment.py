@@ -16,6 +16,15 @@ METHOD = f"https://github.com/genai-impact/ecologits/blob/{REVISION}/ecologits/i
 # Explicit illustrative assumptions, not observations of the serving datacenter.
 PUE = 1.2
 DEFAULT_GRID = 400.0  # gCO2e/kWh, illustrative electricity-intensity scenario
+# UK DESNZ 2026 methodology: rounded tabulated long-haul economy
+# factors before distance uplift. Apply RF only to CO2, not other GHGs.
+FLIGHT_SOURCE = "https://www.gov.uk/government/publications/greenhouse-gas-reporting-conversion-factors-2026"
+FLIGHT_CO2_KG_PER_PKM = 0.0632
+FLIGHT_OTHER_KG_CO2E_PER_PKM = 0.0005
+FLIGHT_RF = 1.7
+FLIGHT_KMH = 800  # illustrative effective airborne speed, not a measured route
+FLIGHT_KG_CO2E_PER_HOUR = (FLIGHT_CO2_KG_PER_PKM * FLIGHT_RF
+                           + FLIGHT_OTHER_KG_CO2E_PER_PKM) * FLIGHT_KMH
 
 
 def catalog():
@@ -116,6 +125,60 @@ def cells(totals, grid):
             f"{totals['covered']}/{totals['calls']}")
 
 
+def readable(value):
+    """Two significant figures without hard-to-read scientific notation."""
+    rounded = float(f'{value:.2g}')
+    places = max(0, 1 - math.floor(math.log10(abs(rounded)))) if rounded else 0
+    return f"{rounded:,.{places}f}"
+
+
+def quantity_range(lo, hi, unit):
+    return f"{readable(lo)}–{readable(hi)} {unit}"
+
+
+def flight_hours(total, grid):
+    """Per-passenger climate-equivalent hours, not actual flight/whole-plane time."""
+    if not total['covered']:
+        return None
+    # Wh * (g/kWh) / 1e6 = kg CO2e.
+    return tuple(total[k] * grid / 1e6 / FLIGHT_KG_CO2E_PER_HOUR for k in ('lo', 'hi'))
+
+
+def summary(total, unsupported, warnings, grid, period, details=False):
+    print(f"\nEnvironmental estimate — {period}")
+    if total['covered']:
+        energy_unit, energy_scale = ('kWh', 1000) if total['hi'] >= 1000 else ('Wh', 1)
+        carbon_hi = total['hi'] * grid / 1000  # g CO2e
+        carbon_unit, carbon_scale = ('kg CO2e', 1000) if carbon_hi >= 1000 else ('g CO2e', 1)
+        electricity = quantity_range(total['lo'] / energy_scale, total['hi'] / energy_scale, energy_unit)
+        carbon = quantity_range(total['lo'] * grid / 1000 / carbon_scale,
+                                carbon_hi / carbon_scale, carbon_unit)
+        print(f"Covered operational subtotal: {electricity}; {carbon} (scenario, not measured).")
+        lo, hi = flight_hours(total, grid)
+        # Weekly comparisons are often minutes, not hours; retain readable units.
+        unit, scale = ('hours', 1) if hi >= 1 else ('minutes', 60)
+        print(f"Equivalent flight time: {quantity_range(lo * scale, hi * scale, unit)} for ONE "
+              "long-haul economy passenger, including non-CO2 warming allowance.")
+    else:
+        print("Covered operational subtotal: unknown; equivalent flight time: unknown (not zero).")
+    if details:
+        return  # The detailed introduction below supplies coverage, warnings and caveats.
+    print(f"Estimate coverage: {total['covered']:,}/{total['calls']:,} calls; "
+          f"{percent(total['covered_output'], total['output'])} of recorded output. "
+          f"Unknown output {total['missing']:,}; zero-output unestimated {total['zero']:,}.")
+    print(f"Assumptions: grid {grid:g} g CO2e/kWh, PUE {PUE:g}; flight ~{FLIGHT_KMH} km/h, "
+          f"UK2026 long-haul economy factors + {FLIGHT_RF:g}x CO2 warming multiplier.")
+    print("Scenario ranges, NOT confidence bounds. Prefill/cache effects unmodeled; "
+          "excludes training, hardware manufacture, idle reserves, water, laptop/tools and other clients.")
+    if unsupported:
+        print("Unsupported models (unknown, not zero): " + "; ".join(
+            f"{name}: {count:,} calls" for name, count in sorted(unsupported.items())))
+    if warnings:
+        print("Source warnings: " + ", ".join(sorted(warnings)))
+    print("Methods: EcoLogits " + REVISION[:12] + "; flight: " + FLIGHT_SOURCE
+          + " (use --environment for detailed assumptions/tables).")
+
+
 def introduction(total, unsupported, warnings, grid):
     print("\nEnvironmental scenario — ESTIMATED operational inference only, not measured")
     print("Covered subtotal: Wh | g CO2e | estimated/recorded calls")
@@ -135,3 +198,7 @@ def introduction(total, unsupported, warnings, grid):
     if warnings:
         print("Source warnings: " + ", ".join(sorted(warnings)))
     print(f"Method/data: EcoLogits {REVISION[:12]} (MPL-2.0); {METHOD}")
+    print(f"Flight comparison: UK2026 long-haul economy {FLIGHT_CO2_KG_PER_PKM:g} kg CO2/pkm "
+          f"+ {FLIGHT_OTHER_KG_CO2E_PER_PKM:g} kg CO2e/pkm other GHGs; "
+          f"CO2-only warming multiplier {FLIGHT_RF:g}; assumed {FLIGHT_KMH} km/h.")
+    print(f"Flight method: {FLIGHT_SOURCE}; no extra distance uplift on assumed airborne km.")

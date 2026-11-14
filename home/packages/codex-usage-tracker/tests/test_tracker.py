@@ -5,10 +5,13 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import sys
 import unittest
 from unittest import mock
 import urllib.error
 
+# Match the installed script's sibling-module resolution even outside package cwd.
+sys.path.insert(0, str(Path(__file__).parents[1]))
 spec = importlib.util.spec_from_file_location("tracker", Path(__file__).parents[1] / "codex_usage.py")
 t = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(t)

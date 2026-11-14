@@ -6,7 +6,7 @@ server, Pi extension, model requests, or new authentication setup.
 ## Use
 
 ```sh
-codex-usage                         # quota + model/project/stream usage
+codex-usage                         # quota + usage + compact environmental/flight summary
 codex-usage --all-streams           # include every stream, not just the largest twelve
 codex-usage refresh                 # fetch latest quota + new logs, then show report
 codex-usage week                    # same report
@@ -74,9 +74,26 @@ refused, malformed/oversized lines
 are counted, and conversation content is neither printed nor persisted. The hourly
 `collect` service does not run this on-demand attribution scan.
 
-## Optional environmental scenario
+## Environmental summary and optional details
+
+Normal, `status`, `week` and `refresh` reports include a compact environmental
+scenario: covered operational energy in readable Wh/kWh, carbon in g/kg CO2e,
+and equivalent **long-haul economy flight time for one passenger**, not an entire
+aircraft. The default period is the **quota week so far**, with the declared
+window and last recorded usage timestamp displayed. An expired snapshot is
+labelled **Saved quota week**, not current usage; `--start` retains the selected
+seven-day UTC interval and does not imply complete records. No quota snapshot
+means an explicitly labelled calendar-week fallback. Existing freshness/backlog
+warnings still apply; missing logs are not zero usage. No annualization or
+extrapolation is included in this summary.
+
+Use `--environment` to expand the assumptions and add project/stream energy and
+carbon columns. `--grid-carbon` can adjust the summary's explicit electricity
+scenario with or without `--environment`.
 
 ```sh
+codex-usage
+codex-usage --grid-carbon 100
 codex-usage --environment
 codex-usage status --environment --all-streams
 codex-usage week --start 2026-11-09 --environment
@@ -84,8 +101,8 @@ codex-usage --environment --grid-carbon 100  # assumed g CO2e/kWh, not measured
 ```
 
 Reports remain offline/read-only. No tracing SDK, network calls, additional
-collector, schema changes or transcript uploads. Default reports are unchanged.
-Energy is shown in **Wh**, carbon in **g CO2e**, for the **covered subset only**.
+collector, schema changes or transcript uploads. Detailed table columns use
+**Wh** and **g CO2e**. All estimates cover the **covered subset only**.
 Project/stream rows sum per-request model estimates, never allocate the account
 quota or multiply output shares by a universal coefficient. Parent projects and
 streams are separate, non-additive views. Unmatched and ambiguous scope buckets
@@ -100,6 +117,29 @@ included as `LICENSE-EcoLogits`. No full lifecycle-estimator dependency is neede
 for this small offline metadata-only report; the equations and pinned golden
 fixtures are tested locally. Catalog updates require a reviewed code change,
 not runtime fetching. It is not the full EcoLogits impact calculation.
+
+### Flight equivalence
+
+This is a climate-impact scale comparison, not a measured route or a claim that
+AI and aviation have identical climate effects. It uses rounded long-haul economy
+factors from the [UK DESNZ 2026 methodology](https://www.gov.uk/government/publications/greenhouse-gas-reporting-conversion-factors-2026):
+
+- 0.0632 kg CO2/passenger-km, plus 0.0005 kg CO2e/passenger-km other GHGs;
+- the UK **1.7x non-CO2 warming allowance applied only to the CO2 component**;
+- **assumed 800 km/h** effective airborne speed, not a measured itinerary.
+
+Thus `(0.0632 * 1.7 + 0.0005) * 800 = 86.352 kg CO2e/passenger-hour`,
+and equivalent hours = scenario kg CO2e / 86.352. No additional 8% great-circle
+distance uplift is applied: the illustrative speed already represents assumed
+kilometres flown, not a geographic route distance. Warming effects such as
+contrails vary greatly and are uncertain; this is an accounting convention, not
+an exact physical equivalence. Cabin, route, aircraft and occupancy change the
+result. Comparisons shorter than an hour display minutes. Zero modeled carbon
+in an explicit zero-grid scenario is not a zero total footprint; unestimated
+usage remains unknown, including its flight equivalent.
+
+The flight factors and source are pinned in code; no live calculator/API or new
+library is needed for this small unit conversion. Changes require reviewed code.
 
 ### Assumptions and exclusions — read before interpreting numbers
 

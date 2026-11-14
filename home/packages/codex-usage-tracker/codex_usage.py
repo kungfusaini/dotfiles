@@ -528,18 +528,22 @@ def attribution(db, since, until, budget=4 * 1024**3, seconds=30, snapshot=None)
 
 
 def report_attribution(db, since, until, all_streams=False, snapshot=None,
-                       environment_records=None, grid_carbon=400.0):
+                       environment_records=None, grid_carbon=400.0,
+                       environment_details=True, environment_period='Recorded report interval'):
     result = attribution(db, since, until, snapshot=snapshot)
     projects, streams, registry_issues = scope_names()
-    environmental = environment_records is not None
+    environmental = environment_records is not None and environment_details
     env_groups, env_projects = {}, {}
-    if environmental:
+    if environment_records is not None:
         import codex_environment as env
         env_groups, total, unsupported, warnings = env.summarize(
             environment_records, result['scopes'], env.catalog())
-        env.introduction(total, unsupported, warnings, grid_carbon)
-        for (pid, _sid), value in env_groups.items():
-            env.add(env_projects.setdefault(pid, env.empty()), value)
+        env.summary(total, unsupported, warnings, grid_carbon, environment_period,
+                    details=environment_details)
+        if environmental:
+            env.introduction(total, unsupported, warnings, grid_carbon)
+            for (pid, _sid), value in env_groups.items():
+                env.add(env_projects.setdefault(pid, env.empty()), value)
     extra = ' | Estimated Wh | Scenario g CO2e | Estimated/recorded calls' if environmental else ''
     def project_name(pid):
         return {None: "Other / unattached", "unmatched": "Unmatched", "ambiguous": "Ambiguous"}.get(
@@ -652,12 +656,21 @@ def report(db, start=None, all_streams=False, environment=False, grid_carbon=400
     frozen = attribution_snapshot(db, since, until)
     environment_records = db.execute(
         'SELECT key,model,response_model,output FROM requests WHERE timestamp>=? AND timestamp<?',
-        (since, until)).fetchall() if environment else None
+        (since, until)).fetchall()
+    if start:
+        period_name = 'Selected 7-day interval'
+    elif latest:
+        period_name = 'Quota week so far' if now < until else 'Saved quota week'
+    else:
+        period_name = 'Calendar week so far (UTC; no quota snapshot)'
+    period = (f"{period_name}: {iso(since)} to {iso(until)} (end exclusive); "
+              f"recorded through {iso(cutoff) if cutoff is not None else 'no records'}")
     if owned_snapshot:
         # Release the rollback-journal shared lock before the potentially long log scan.
         db.rollback()
     report_attribution(db, since, until, all_streams, snapshot=frozen,
-                       environment_records=environment_records, grid_carbon=grid_carbon)
+                       environment_records=environment_records, grid_carbon=grid_carbon,
+                       environment_details=environment, environment_period=period)
 
 
 def history(db):
@@ -690,7 +703,7 @@ def main():
     report_parsers = [parser] + [sub.choices[n] for n in ('status', 'week', 'refresh')]
     for p in report_parsers:
         p.add_argument('--environment', action='store_true', default=argparse.SUPPRESS,
-                       help='Show offline operational energy/carbon scenario estimates')
+                       help='Expand default environmental summary with detailed assumptions and tables')
         p.add_argument('--grid-carbon', type=float, default=argparse.SUPPRESS, metavar='G_PER_KWH',
                        help='Assumed electricity intensity in g CO2e/kWh (default: illustrative 400)')
     args = parser.parse_args()
@@ -698,10 +711,8 @@ def main():
     grid = getattr(args, 'grid_carbon', 400.0)
     if not math.isfinite(grid) or grid < 0:
         parser.error('--grid-carbon must be finite and nonnegative')
-    if hasattr(args, 'grid_carbon') and not environmental:
-        parser.error('--grid-carbon requires --environment')
-    if environmental and args.command in ('history', 'collect'):
-        parser.error('--environment is available only for usage reports')
+    if args.command in ('history', 'collect') and (environmental or hasattr(args, 'grid_carbon')):
+        parser.error('--environment and --grid-carbon are available only for usage reports')
     directory = state_dir()
     try:
         if args.command == "collect":

@@ -67,6 +67,32 @@ class EnergyTests(unittest.TestCase):
         self.assertIn('unknown', e.cells(groups[('ambiguous', None)], 400))
         self.assertIn('0–0', e.cells(total, 0))
 
+    def test_flight_conversion_golden_and_units(self):
+        total = e.empty()
+        total.update(covered=1, calls=1, output=1000, covered_output=1000,
+                     lo=215880, hi=431760)
+        # At 400g/kWh these energies give 86.352 and 172.704 kg: 1 and 2 hours.
+        self.assertEqual(e.flight_hours(total, 400), (1, 2))
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            e.summary(total, {}, set(), 400, 'Quota week so far')
+        text = out.getvalue()
+        self.assertIn('1.0–2.0 hours for ONE long-haul economy passenger', text)
+        self.assertIn('including non-CO2 warming allowance', text)
+        self.assertIn('220–430 kWh', text)
+        self.assertIn('86–170 kg CO2e', text)
+        self.assertIn('grid 400', text)
+        self.assertIn('1.7x CO2', text)
+        total.update(lo=2158.8, hi=4317.6)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            e.summary(total, {}, set(), 400, 'Recorded interval')
+        self.assertIn('0.60–1.2 minutes', out.getvalue())
+        self.assertEqual(e.readable(20000), '20,000')
+        self.assertEqual(e.readable(0), '0')
+        self.assertEqual(e.flight_hours(total, 0), (0, 0))
+        self.assertIsNone(e.flight_hours(e.empty(), 400))
+
     def test_empty_not_zero_and_conditional_carbon(self):
         _, total, unsupported, warnings = e.summarize([], {}, e.catalog())
         out = io.StringIO()
@@ -135,13 +161,66 @@ class EnvironmentReportTests(unittest.TestCase):
                 self.assertEqual(t.main(), 0)
                 self.assertTrue(report.call_args.kwargs['environment'])
                 self.assertEqual(report.call_args.kwargs['grid_carbon'], 100 if '100' in argv else 400)
-        for argv in (['--grid-carbon', '100'], ['--environment', '--grid-carbon', 'nan'],
+        for argv in (['--environment', '--grid-carbon', 'nan'],
                      ['--environment', '--grid-carbon', '-1'], ['--environment', '--grid-carbon', 'inf'],
-                     ['--environment', 'history'], ['--environment', 'collect']):
+                     ['--environment', 'history'], ['--environment', 'collect'],
+                     ['--grid-carbon', '100', 'history'], ['--grid-carbon', '100', 'collect']):
             with mock.patch.object(sys, 'argv', ['codex-usage'] + argv), \
                     contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as exc:
                 t.main()
             self.assertEqual(exc.exception.code, 2)
+
+    def test_default_summary_without_environment_tables(self):
+        self.write([header(), change(), response(model='gpt-6.1-sol', responseId='a')])
+        with t.database(self.directory) as db:
+            t.ingest(db, [self.log])
+            # Current quota interval starts exactly at synthetic usage timestamp.
+            db.execute('INSERT INTO snapshots(sampled_at,account,plan,reset_at,duration,used,allowed,reached) '
+                       'VALUES (?,?,?,?,?,?,?,?)',
+                       (1793640010, 'synthetic', 'pro', 1794244800, 604800, 10, 1, 0))
+            db.commit()
+        before = (self.directory / 'usage.sqlite').read_bytes()
+        for now, label in ((1793640020, 'Quota week so far'), (1794244801, 'Saved quota week')):
+            with t.database(self.directory, readonly=True) as db, self.module(), \
+                    mock.patch.object(t.time, 'time', return_value=now), \
+                    mock.patch.object(t, 'fetch_quota', side_effect=AssertionError('network')):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    t.report(db)
+                text = out.getvalue()
+                self.assertIn('Environmental estimate — ' + label, text)
+                self.assertIn('recorded through 2026-11-02', text)
+                self.assertIn('Equivalent flight time:', text)
+                self.assertIn('Estimate coverage: 1/1 calls', text)
+                self.assertNotIn(' | Estimated Wh | ', text)
+                self.assertNotIn('annuali', text.lower())
+        self.assertEqual((self.directory / 'usage.sqlite').read_bytes(), before)
+        with t.database(self.directory, readonly=True) as db, self.module():
+            for start, label in (('2026-11-02', 'Selected 7-day interval'),
+                                 ('2026-10-01', 'Selected 7-day interval')):
+                out = io.StringIO()
+                with contextlib.redirect_stdout(out):
+                    t.report(db, start)
+                self.assertIn('Environmental estimate — ' + label, out.getvalue())
+                if start == '2026-10-01':
+                    self.assertIn('equivalent flight time: unknown (not zero)', out.getvalue())
+
+    def test_default_grid_override_and_calendar_fallback(self):
+        with t.database(t.state_dir()):
+            pass
+        for argv in (['--grid-carbon', '100'], ['status', '--grid-carbon', '100'],
+                     ['--grid-carbon', '100', 'week'], ['refresh', '--grid-carbon', '100']):
+            with mock.patch.object(sys, 'argv', ['codex-usage'] + argv), \
+                    mock.patch.object(t, 'report') as report, mock.patch.object(t, 'collect', return_value=0):
+                self.assertEqual(t.main(), 0)
+                self.assertFalse(report.call_args.kwargs['environment'])
+                self.assertEqual(report.call_args.kwargs['grid_carbon'], 100)
+        with t.database(self.directory) as db, self.module():
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                t.report(db)
+            self.assertIn('Calendar week so far (UTC; no quota snapshot)', out.getvalue())
+            self.assertIn('equivalent flight time: unknown (not zero)', out.getvalue())
 
     def test_scope_remainder_and_mixed_unknown_coverage(self):
         scopes = {str(i): ('project', str(i)) for i in range(15)}
