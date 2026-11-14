@@ -187,6 +187,9 @@ in
         "$mod, Return, exec, $terminal"
         "$mod, W, killactive"
 
+        # Explicit sleep; leave the existing screen-lock policy unchanged.
+        "$mod SHIFT, Escape, exec, systemctl suspend"
+
         # Resolve Super+B to the active project's persistent browser, with the
         # original global browser workspace as the non-project fallback.
         "$mod, B, exec, project-browser focus"
