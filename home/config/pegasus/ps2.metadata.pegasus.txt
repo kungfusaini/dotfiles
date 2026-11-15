@@ -1,7 +1,7 @@
 # PlayStation 2 disc images are user-supplied data outside this repository.
 collection: PlayStation 2
 shortname: ps2
-launch: pcsx2-qt -batch -fullscreen -- "{file.path}"
+launch: tablet-game-launch -- pcsx2-qt -batch -fullscreen -- "{file.path}"
 
 game: Crazy Taxi
 file: /home/sumeet/matrix/data/emulation/roms/ps2/Crazy Taxi (Europe) (En,Fr,De,Es).bin

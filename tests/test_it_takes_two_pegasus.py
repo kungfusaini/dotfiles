@@ -23,11 +23,11 @@ class ItTakesTwoPegasusTests(unittest.TestCase):
     def test_exact_entry_uses_managed_launcher(self):
         self.assertEqual(self.text.count("game: It Takes Two\n"), 1)
         self.assertEqual(self.fields["file"], ["steam:1426210"])
-        self.assertEqual(self.fields["launch"], ["steam-session 1426210"])
+        self.assertEqual(self.fields["launch"], ["tablet-game-launch -- steam-session 1426210"])
         self.assertEqual(self.fields["players"], ["2"])
         self.assertEqual(self.fields["release"], ["2021-03-25"])
         for appid in (1687950, 242550, 289070):
-            self.assertIn(f"launch: steam-session {appid}\n", self.text)
+            self.assertIn(f"launch: tablet-game-launch -- steam-session {appid}\n", self.text)
 
     def test_all_artwork_is_packaged(self):
         artwork = (ROOT / "home/packages/pegasus-artwork.nix").read_text()

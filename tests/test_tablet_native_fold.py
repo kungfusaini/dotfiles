@@ -348,6 +348,85 @@ class NativeTests(unittest.TestCase):
         with patch.object(p, 'start_time', side_effect=FileNotFoundError()): self.native.journal()
         self.assertEqual(json.loads((p.runtime() / 'recovery.json').read_text())['children'], [])
 
+    def test_pegasus_switch_parks_browser_behind_cover_without_stopping_ui(self):
+        tablet = self.client('0xcd', 'def', n.WORKSPACE)
+        self.clients.append(tablet); self.enter()
+        from contextlib import ExitStack
+        with ExitStack() as stack:
+            for patcher in self.runtime(): stack.enter_context(patcher)
+            stack.enter_context(patch.object(self.native, 'ipc'))
+            launch = stack.enter_context(patch.object(self.native.games, 'launch'))
+            self.native.select_games()
+        launch.assert_called_once()
+        self.assertTrue(self.native.record['home_only'])
+        self.assertEqual(self.native.active_app, 'games')
+        self.assertEqual(self.native.source['address'], tablet['address'])
+        self.media.pause.assert_called_once()
+        self.keyboard.stop.assert_not_called()
+        self.assertFalse(tablet['tags'])
+        self.assertEqual(tablet['fullscreen'], 0)
+
+    def test_game_handoff_and_library_return_use_verified_identities(self):
+        self.enter()
+        self.native.active_app = 'games'
+        game = dict(self.client('0xcd', 'def', n.WORKSPACE), **{'class': 'game', 'xwayland': True})
+        library = dict(self.client('0xce', 'fed', n.WORKSPACE), **{'class': 'pegasus-fe'})
+        self.clients += [game, library]
+        self.focus = game
+        status = dict(gameLaunching=False, gameRunning=False, gamesLaunching=False)
+        with patch.object(p, 'hypr', side_effect=self.queries), patch.object(p, 'start_time', return_value='process'), \
+                patch.object(p, 'dispatch', side_effect=self.dispatch), \
+                patch.object(self.native.games, 'status', return_value=status), \
+                patch.object(self.native.games, 'game', return_value=game) as playing, \
+                patch.object(self.native.games, 'launcher', return_value=library):
+            self.native.poll_games()
+            self.assertEqual(self.native.games_target['address'], game['address'])
+            self.clients.remove(game); self.focus = library; playing.return_value = None
+            self.native.poll_games()
+            self.assertEqual(self.native.games_target['address'], library['address'])
+        self.assertNotIn(('workspace', 'name:laptop'), self.events)
+
+    def test_game_handoff_never_follows_user_workspace_escape(self):
+        self.enter(); self.native.active_app = 'games'
+        self.workspace = {'name': 'other', 'monitor': 'eDP-1'}
+        game = self.client('0xcd', 'def', n.WORKSPACE)
+        with patch.object(p, 'hypr', side_effect=self.queries), patch.object(p, 'start_time', return_value='process'), \
+                patch.object(p, 'dispatch') as dispatch, \
+                patch.object(self.native.games, 'status', return_value=dict(gameLaunching=False, gameRunning=True)), \
+                patch.object(self.native.games, 'game', return_value=game):
+            with self.assertRaisesRegex(RuntimeError, 'no longer foreground'):
+                self.native.poll_games()
+        dispatch.assert_not_called()
+
+    def test_launch_gap_is_covered_without_claiming_or_refocusing_window(self):
+        self.enter(); self.native.active_app = 'games'; self.native.games_requested = True
+        status = dict(gameLaunching=True, gameRunning=False)
+        with patch.object(self.native.games, 'status', return_value=status), patch.object(p, 'dispatch') as dispatch:
+            self.assertEqual(self.native.poll_games(), status)
+        self.assertTrue(self.native.home)
+        dispatch.assert_not_called()
+
+    def test_failed_media_pause_during_switch_reveals_original_browser(self):
+        self.enter()
+        self.native.record['home_only'] = False
+        with patch.object(self.native, 'cover'), patch.object(self.native, 'pause_media', side_effect=RuntimeError('unpaired')), \
+                patch.object(self.native, 'ipc') as ipc, patch.object(self.native, 'release_window') as release:
+            with self.assertRaisesRegex(RuntimeError, 'unpaired'):
+                self.native.select_games()
+        ipc.assert_called_once_with(self.native.stage, 'tabletStage', 'reveal')
+        release.assert_not_called()
+        self.assertEqual(self.native.active_app, 'vivaldi')
+
+    def test_unfold_gaming_does_not_pause_close_or_signal_game(self):
+        self.enter(); self.native.active_app = 'games'
+        with patch.object(p, 'hypr', side_effect=self.queries), patch.object(p, 'run'), \
+                patch.object(self.native, 'cover'), patch.object(self.native, 'start_stage'), \
+                patch.object(p, 'dispatch', side_effect=self.dispatch):
+            self.native.cleanup()
+        self.media.pause.assert_not_called()
+        self.assertEqual(self.workspace['name'], 'laptop')
+        self.assertFalse((p.runtime() / 'recovery.json').exists())
+
     def tick(self, edges, posture, state, headless='off'):
         original = Path.read_text
         def read(path, *args, **kwargs):

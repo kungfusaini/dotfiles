@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, pkgs, osConfig, ... }:
 
 let
   gameOSTheme = pkgs.fetchFromGitHub {
@@ -39,6 +39,11 @@ let
   pegasusArtwork = import ../packages/pegasus-artwork.nix { inherit pkgs; };
   symphonyRecomp = pkgs.callPackage ../packages/symphony-recomp { };
   steamSession = pkgs.callPackage ../packages/steam-session { };
+  tabletGameLaunch = pkgs.writeShellApplication {
+    name = "tablet-game-launch";
+    runtimeInputs = [ pkgs.python3 pkgs.libnotify osConfig.programs.hyprland.package ];
+    text = ''exec python3 ${../packages/tablet-proof/gaming.py} "$@"'';
+  };
 in
 {
   home.packages = with pkgs; [
@@ -48,6 +53,7 @@ in
     symphonyRecomp
     (pkgs.callPackage ../packages/voyee-controller { })
     steamSession
+    tabletGameLaunch
   ];
 
   # Human opens opt out of automation for the current client lifetime. Keep

@@ -2,7 +2,7 @@
 # mistake update and DLC NSPs for launchable games.
 collection: Nintendo Switch
 shortname: switch
-launch: Ryujinx --fullscreen "{file.path}"
+launch: tablet-game-launch -- Ryujinx --fullscreen "{file.path}"
 
 game: Mario Kart 8 Deluxe
 file: /home/sumeet/matrix/data/emulation/roms/switch/Mario Kart 8 Deluxe.nsp

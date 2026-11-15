@@ -5,7 +5,7 @@ shortname: steam
 
 game: It Takes Two
 file: steam:1426210
-launch: steam-session 1426210
+launch: tablet-game-launch -- steam-session 1426210
 developer: Hazelight Studios
 publisher: Electronic Arts
 genre: Action, Adventure
@@ -22,7 +22,7 @@ assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/it-takes-tw
 
 game: Persona 5 Royal
 file: steam:1687950
-launch: steam-session 1687950
+launch: tablet-game-launch -- steam-session 1687950
 developer: ATLUS
 publisher: SEGA
 genre: RPG
@@ -36,7 +36,7 @@ assets.logo: /home/sumeet/.config/pegasus-frontend/media/steam/persona-5-royal/l
 
 game: Rayman Legends
 file: steam:242550
-launch: steam-session 242550
+launch: tablet-game-launch -- steam-session 242550
 developer: Ubisoft Montpellier
 publisher: Ubisoft
 genre: Platformer
@@ -53,7 +53,7 @@ assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/rayman-lege
 
 game: Sid Meier's Civilization VI
 file: steam:289070
-launch: steam-session 289070
+launch: tablet-game-launch -- steam-session 289070
 developer: Firaxis Games
 publisher: 2K
 genre: Strategy

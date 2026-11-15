@@ -12,11 +12,12 @@ let
   '';
   package = pkgs.writeShellApplication {
     name = "tablet-native";
-    runtimeInputs = with pkgs; [ python3 quickshell coreutils glib dconf squeekboard wireplumber brightnessctl libnotify vivaldi hyprland ];
+    runtimeInputs = with pkgs; [ python3 quickshell coreutils glib dconf squeekboard wireplumber brightnessctl libnotify vivaldi pegasus-frontend hyprland ];
     text = ''
       export TABLET_PROOF_QML=${ui}/shell.qml
       export TABLET_PROOF_SOURCE=${./controller.py}
       export TABLET_MEDIA_CLIENT_SOURCE=${./media/client.py}
+      export TABLET_GAMING_SOURCE=${./gaming.py}
       export TABLET_WINDOW_APPS_SOURCE=${../../scripts/desktop/tablet_apps.py}
       export TABLET_APPS_REGISTRY=${registry}
       export TABLET_STAGE_QML=${ui}/stage.qml

@@ -19,6 +19,10 @@ media_spec = importlib.util.spec_from_file_location('tablet_media_client', os.en
     'TABLET_MEDIA_CLIENT_SOURCE', str(Path(__file__).with_name('media') / 'client.py')))
 media_module = importlib.util.module_from_spec(media_spec)
 media_spec.loader.exec_module(media_module)
+games_spec = importlib.util.spec_from_file_location('tablet_gaming', os.environ.get(
+    'TABLET_GAMING_SOURCE', str(Path(__file__).with_name('gaming.py'))))
+gaming = importlib.util.module_from_spec(games_spec)
+games_spec.loader.exec_module(gaming)
 
 
 def state_file():
@@ -118,6 +122,11 @@ class Native(p.Proof):
         self.capabilities = None
         self.saved = {}
         self.resume_overview = False
+        self.games = gaming.Games(lambda *args: p.hypr(*args), lambda *args: p.dispatch(*args))
+        self.active_app = 'vivaldi'
+        self.games_target = None
+        self.games_requested = False
+        self.games_focus_lost_at = None
 
     def panel(self):
         panel = next((m for m in p.hypr('monitors') if m['name'] == 'eDP-1'), None)
@@ -232,17 +241,27 @@ class Native(p.Proof):
         self.journal()
         p.dispatch('workspace', 'name:' + WORKSPACE)
         self.guard()
-        if source:
+        resume_games = self.saved.get('activeApp') == 'games'
+        if source and not resume_games:
             self.attach(source)
+        elif source:
+            self.source = identity(source)
+        if resume_games:
+            self.active_app = 'games'
+            self.games_requested = not self.saved.get('home', True)
+            target = self.games.game() or self.games.launcher()
+            if target:
+                p.dispatch('focuswindow', 'address:' + target['address'])
+                self.games_target = identity(target)
         self.keyboard.start()
         self.values = self.controls.read()
-        self.home = bool(self.saved.get('home', True)) if self.source else True
+        self.home = bool(self.saved.get('home', True)) if (self.source or self.games_target) else True
         self.drawer = bool(self.saved.get('drawer', False))
         self.resume_overview = bool(self.saved.get('overview', False)) and bool(self.source)
         self.rotation_enabled = True
         self.record['media_suspended'] = False
         self.journal()
-        if self.source:
+        if self.source and self.active_app == 'vivaldi':
             try:
                 self.media.resume(self.record)  # Unblock only; never auto-play.
             except (OSError, ValueError, RuntimeError):
@@ -251,6 +270,10 @@ class Native(p.Proof):
         with (p.runtime() / 'orientation.log').open('a') as log:
             self.orientation = subprocess.Popen([os.environ['TABLET_NATIVE_ORIENTATION_BIN'], 'daemon'], stdout=log, stderr=log)
         self.journal()
+
+    def fullscreen_peer_allowed(self, client):
+        return any(target and identity(client) == identity(target)
+                   for target in (self.games.game(), self.games.launcher()))
 
     def attach(self, client):
         if not eligible(client):
@@ -274,7 +297,9 @@ class Native(p.Proof):
         if self.session is None:
             return
         store({'instance': os.environ['HYPRLAND_INSTANCE_SIGNATURE'], 'source': self.source,
-               'home': self.home, 'drawer': self.drawer, 'overview': self.resume_overview,
+               'activeApp': self.active_app,
+               'home': False if self.active_app == 'games' and self.games_requested else self.home,
+               'drawer': self.drawer, 'overview': self.resume_overview,
                'return': {key: self.session[key] for key in ('origin', 'focus', 'origin_empty')}})
 
     def browser_policy(self):
@@ -340,19 +365,108 @@ class Native(p.Proof):
             self.pending = None
             self.error = 'Tablet browser launch could not be verified; no existing window was adopted'
 
+    def select_games(self):
+        self.cover('Opening Pegasus…')
+        try:
+            if not self.record.get('home_only'):
+                self.pause_media()
+                self.release_window()
+                self.record = {'home_only': True, 'instance': os.environ['HYPRLAND_INSTANCE_SIGNATURE'],
+                               'workspace': WORKSPACE, 'origin': WORKSPACE, 'focus': {}}
+                self.journal()
+            self.active_app = 'games'
+            self.games_target = None
+            self.games_requested = True
+            self.games.launch()
+            self.home = not bool(self.games.game() or self.games.launcher())
+            self.drawer = False
+            self.remember()
+        finally:
+            self.ipc(self.stage, 'tabletStage', 'reveal')
+
+    def select_browser(self):
+        self.cover('Opening Vivaldi…')
+        try:
+            self.active_app = 'vivaldi'
+            self.games_target = None
+            self.games_requested = False
+            if self.record.get('home_only') and self.source:
+                client = gaming.find(self.source, p.hypr('clients'))
+                if client and eligible(client):
+                    self.attach(client)
+                    self.media.resume(self.record)  # Ungate, never play.
+                else:
+                    self.source = None
+            if not self.source:
+                self.launch_browser()
+            else:
+                p.dispatch('focuswindow', 'address:' + self.source['address'])
+                self.home = False
+                self.drawer = False
+            self.remember()
+        finally:
+            self.ipc(self.stage, 'tabletStage', 'reveal')
+
+    def poll_games(self):
+        status = self.games.status()
+        if self.active_app != 'games':
+            return status
+        if status['gameLaunching'] and not status['gameRunning']:
+            # Pegasus unmaps before the new game identity can be published.
+            # Keep Home covering this gap, without reclaiming an unverified app.
+            self.home = True
+            return status
+        target = self.games.game() or self.games.launcher()
+        if target:
+            if self.games_requested:
+                self.home = False
+            current = identity(target)
+            if current != self.games_target:
+                # Handoff only while our workspace remains foreground. Never
+                # follow a game or user to a different output/workspace.
+                self.guard()
+                focus = p.hypr('activewindow')
+                known = [self.source, self.games_target]
+                if focus and focus.get('address') != target['address'] and not any(
+                        item and all(focus.get(k) == v for k, v in item.items() if k != 'start') for item in known):
+                    raise RuntimeError('Unrelated tablet window has focus; game handoff refused')
+                p.dispatch('focuswindow', 'address:' + target['address'])
+                self.games_target = current
+                self.journal()
+                self.remember()
+            if not self.home and p.hypr('activewindow').get('address') != target['address']:
+                latest = self.games.status()
+                if latest['gameLaunching'] or latest['gameRunning'] != status['gameRunning']:
+                    self.home = True
+                    return latest
+                # Pegasus hides its frontend before its metadata command can
+                # publish a receipt. Bound that gap without refocusing anything.
+                if self.games_focus_lost_at is None:
+                    self.games_focus_lost_at = time.monotonic()
+                if time.monotonic() - self.games_focus_lost_at < 5:
+                    self.home = True
+                    return latest
+                raise RuntimeError('Tablet game/library lost focus; no window was reclaimed')
+            self.games_focus_lost_at = None
+        elif not status['gameLaunching'] and not status['gamesLaunching']:
+            self.home = True
+            self.games_target = None
+        return status
+
     def state(self):
         self.guard()
+        games = self.poll_games() if not self.stopping else self.games.status()
         if not self.stopping:
             self.poll_launch()
         if not self.record.get('home_only'):
             state = super().state()
         else:
             _, panel = self.guard()
-            state = {'running': True, 'ready': self.ready, 'home': True, 'drawer': self.drawer,
+            state = {'running': True, 'ready': self.ready, 'home': self.home, 'drawer': self.drawer,
                      'backend': {'pid': os.getpid(), 'start': p.start_time(os.getpid())},
                      'media': False, 'keyboardInset': panel.get('reserved', [0, 0, 0, 0])[3],
                      'error': self.error, **self.values}
-        if self.source and time.monotonic() >= self.media_status_at:
+        if self.source and self.active_app == 'vivaldi' and time.monotonic() >= self.media_status_at:
             self.media_status_at = time.monotonic() + 1
             try:
                 self.media_paired = bool(self.media.status(self.record).get('registered'))
@@ -360,7 +474,9 @@ class Native(p.Proof):
                 self.media_paired = False
         return dict(state, native=True, automatic=self.automatic, workspace=WORKSPACE,
                     mediaPaired=self.media_paired,
-                    browserAvailable=True, browserRunning=bool(self.source), launching=bool(self.pending),
+                    browserAvailable=True, browserRunning=bool(self.source),
+                    activeApp=self.active_app, **games,
+                    launching=bool(self.pending) or games['gamesLaunching'] or games['gameLaunching'],
                     resumeOverview=self.resume_overview)
 
     def action(self, command, value=None):
@@ -369,9 +485,15 @@ class Native(p.Proof):
             self.automatic = True
             self.journal()
             return self.state()
-        if command == 'app' and self.record.get('home_only'):
+        if command == 'home':
+            self.games_requested = False
+        if command == 'games':
             self.error = ''
-            self.launch_browser()
+            self.select_games()
+            return self.state()
+        if command == 'app' and (self.record.get('home_only') or self.active_app != 'vivaldi'):
+            self.error = ''
+            self.select_browser()
             return self.state()
         if command == 'ui-ready':
             if not self.layer_opaque(self.ui, '3'):
@@ -679,7 +801,7 @@ def watch():
 def main():
     p.Proof = Native
     p.recover = recover
-    p.EXTRA_COMMANDS = ['adopt-fold']
+    p.EXTRA_COMMANDS = ['adopt-fold', 'games']
     command = sys.argv[1] if len(sys.argv) > 1 else ''
     if command == 'watch-fold':
         return watch()

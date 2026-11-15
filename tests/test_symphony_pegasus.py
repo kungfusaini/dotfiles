@@ -30,7 +30,7 @@ class SymphonyPegasusTests(unittest.TestCase):
     def test_native_command_and_disc_gate(self):
         self.assertEqual(self.collection, "PlayStation")
         self.assertEqual(self.shortname, "psx")
-        self.assertEqual(self.fields["launch"], ["symphony-recomp"])
+        self.assertEqual(self.fields["launch"], ["tablet-game-launch -- symphony-recomp"])
         self.assertEqual(self.fields["file"], [
             "/home/sumeet/matrix/data/emulation/roms/ps1/"
             "Castlevania - Symphony of the Night (USA)/"

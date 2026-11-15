@@ -52,6 +52,7 @@ let
     export PATH="$TABLET_TEST_FAKE_BIN:$PATH"
     export TABLET_PROOF_SOURCE=${../home/packages/tablet-proof/controller.py}
     export TABLET_MEDIA_CLIENT_SOURCE=${../home/packages/tablet-proof/media/client.py}
+    export TABLET_GAMING_SOURCE=${../home/packages/tablet-proof/gaming.py}
     export TABLET_WINDOW_APPS_SOURCE=${../home/scripts/desktop/tablet_apps.py}
     export TABLET_APPS_REGISTRY=${registry}
     export TABLET_STAGE_QML=${proof.ui}/stage.qml
@@ -60,10 +61,11 @@ let
   '';
 in pkgs.writeShellApplication {
   name = if native then "tablet-native-fold-test" else "tablet-proof-native-test";
-  runtimeInputs = [python hyprland pkgs.quickshell pkgs.labwc pkgs.bubblewrap pkgs.dbus pkgs.glib pkgs.dconf pkgs.wtype pkgs.grim pkgs.squeekboard pkgs.vivaldi];
+  runtimeInputs = [python hyprland pkgs.quickshell pkgs.labwc pkgs.bubblewrap pkgs.dbus pkgs.glib pkgs.dconf pkgs.wtype pkgs.grim pkgs.squeekboard pkgs.vivaldi pkgs.pegasus-frontend];
   text = ''
     export TABLET_TEST_NATIVE_FOLD=${if native then "1" else "0"}
     export TABLET_TEST_NATIVE_SOURCE=${../home/packages/tablet-proof/native.py}
+    export TABLET_GAMING_SOURCE=${../home/packages/tablet-proof/gaming.py}
     export TABLET_TEST_LAPTOP_QML=${laptop}
     export TABLET_TEST_MEDIA_EXTENSION=${media.extension}
     export TABLET_TEST_MEDIA_EXTENSION_ID=${media.extensionId}

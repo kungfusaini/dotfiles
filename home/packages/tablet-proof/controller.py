@@ -229,6 +229,9 @@ class Proof:
         self.keyboard.start()
         self.values = self.controls.read()
 
+    def fullscreen_peer_allowed(self, client):
+        return False
+
     def lease(self, address):
         """Acquire native presentation; the caller already owns the journal."""
         if not re.fullmatch(r'0x[0-9a-f]+', address):
@@ -244,7 +247,8 @@ class Proof:
         workspace = next((w for w in hypr('workspaces') if w['name'] == client['workspace']['name']), None)
         if not workspace or workspace.get('monitor') != 'eDP-1':
             raise RuntimeError('Selected window must already be on the internal display')
-        if any(c['address'] != address and c['workspace']['name'] == workspace['name'] and c.get('fullscreen') for c in clients):
+        if any(c['address'] != address and c['workspace']['name'] == workspace['name'] and c.get('fullscreen')
+               and not self.fullscreen_peer_allowed(c) for c in clients):
             raise RuntimeError('Another fullscreen window owns this workspace')
         origin = hypr('activeworkspace')
         if origin.get('monitor') != 'eDP-1':
@@ -317,15 +321,9 @@ class Proof:
             raise RuntimeError('Unknown proof action')
         return self.state()
 
-    def cleanup(self, activate=False, retain_journal=False):
-        if not self.record:
-            return
+    def release_window(self, activate=False):
+        """Release only the exact client lease; keep frontend and IME alive."""
         errors = []
-        for fn in (self.keyboard.stop,):
-            try:
-                fn()
-            except Exception as error:
-                errors.append(str(error))
         r = self.record
         try:
             window = self.window(require_tag=r['tagged'])
@@ -358,6 +356,18 @@ class Proof:
                                       and c.get('stableId') and c['workspace']['name'] == r['origin']), None)
                         if focus:
                             dispatch('focuswindow', 'address:' + focus['address'])
+            except Exception as error:
+                errors.append(str(error))
+        if errors:
+            raise RuntimeError('Proof recovery retained: ' + '; '.join(errors))
+
+    def cleanup(self, activate=False, retain_journal=False):
+        if not self.record:
+            return
+        errors = []
+        for fn in (self.keyboard.stop, lambda: self.release_window(activate)):
+            try:
+                fn()
             except Exception as error:
                 errors.append(str(error))
         if self.ui and self.ui.poll() is None:

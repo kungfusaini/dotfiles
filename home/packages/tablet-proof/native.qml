@@ -11,12 +11,16 @@ ShellRoot {
     property string localError: ""
     property bool restoredNavigation: false
     readonly property var targetScreen: Quickshell.screens.find(s => s.name === "eDP-1") ?? null
-    readonly property var apps: state.browserAvailable ? [{id: "vivaldi", label: "Vivaldi", kind: "window", icon: Quickshell.iconPath("vivaldi", true)}] : []
+    readonly property var apps: state.browserAvailable ? [
+        {id: "vivaldi", label: "Vivaldi", kind: "window", icon: Quickshell.iconPath("vivaldi", true)},
+        {id: "games", label: "Pegasus", kind: "window", icon: Quickshell.iconPath("org.pegasus_frontend.Pegasus", true)}
+    ] : []
     property real drawerProgress: state.drawer ? 1 : 0
     Behavior on drawerProgress { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
     onStateChanged: {
         if (frames) { frames.frames = 0; frames.requestFrame() }
         if (state.browserRunning) nativeHistory.open("vivaldi")
+        if (state.pegasusRunning || state.gameRunning) nativeHistory.open("games")
         if (state.running && !restoredNavigation) {
             restoredNavigation = true
             if (state.resumeOverview) Qt.callLater(() => home.openSwitcher())
@@ -104,18 +108,21 @@ ShellRoot {
             modeLabel: "TABLET"
             nativePresentation: true
             nativeAppVisible: !root.state.home
-            nativeAppId: "vivaldi"
+            nativeAppId: root.state.activeApp || "vivaldi"
             keyboardInset: window.inset
             apps: root.apps
             history: nativeHistory
             settingsExternallyManaged: true
             navigationBlocked: !!root.state.drawer || !!root.state.launching
-            appSummary: app => root.state.browserRunning ? "Your tablet browser · same windows and tabs" : "Open Vivaldi in your tablet workspace"
+            appSummary: app => app.id === "games"
+                ? (root.state.gameRunning ? "Game running · kept on unfold"
+                    : root.state.pegasusRunning ? "Your tablet game library" : "Open Pegasus in your tablet workspace")
+                : (root.state.browserRunning ? "Your tablet browser · same windows and tabs" : "Open Vivaldi in your tablet workspace")
             onNativeHomeRequested: root.command("home")
             onSettingsRequested: root.command("settings")
-            onAppRequested: (id, label) => root.command("app")
+            onAppRequested: (id, label) => root.command(id === "games" ? "games" : "app")
             onExitRequested: root.command("close")
-            onWindowCloseRequested: id => root.localError = "Close the window in Vivaldi; desktop windows are not closed here."
+            onWindowCloseRequested: id => root.localError = "Exit in the app or game; tablet navigation never closes your applications."
         }
         ColumnLayout {
             visible: !!root.state.home && !root.state.drawer
@@ -124,13 +131,13 @@ ShellRoot {
             Label {
                 Layout.fillWidth: true
                 visible: !root.state.browserRunning
-                text: root.state.launching ? "Opening your tablet browser…" : "Open Vivaldi here. Your laptop apps stay on the desktop."
+                text: root.state.launching ? "Opening your tablet app…" : "Open Vivaldi or Pegasus here. Your laptop apps stay on the desktop."
                 color: "#b3cdcb"; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter
             }
             Label {
                 Layout.fillWidth: true
                 visible: text.length > 0
-                text: root.localError || root.state.error || ""
+                text: root.localError || root.state.error || root.state.gamesError || ""
                 color: "#b3cdcb"; wrapMode: Text.Wrap
             }
         }

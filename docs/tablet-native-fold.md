@@ -8,6 +8,11 @@ Laptop apps are never adopted, borrowed or transported into tablet mode. The
 same Hyprland session and normal browser profile are retained, but they do not
 imply using the laptop's current workspace or browser window.
 
+Pegasus and curated game launches now have a separate tablet-local lifecycle;
+see [Pegasus and tablet games](tablet-pegasus.md). Games are preserved, not
+paused or closed, on unfold. Browser-only details below describe the Vivaldi
+adapter rather than limiting the whole native shell to browsers.
+
 The companion-dependent proof now removes visible desktop-exit buttons and
 pauses only the registered tablet browser's supported media on exit; see
 [tablet media companion](tablet-media-companion.md). Its real-profile installation
@@ -46,8 +51,9 @@ automatic default.
   not authority to cold-start the normal profile and restore unrelated windows.
   If normal Vivaldi is not running, Home reports that limitation; it does not
   restart another profile or silently restore desktop windows.
-- Vivaldi remains the first real-window adapter. Other app integrations and a
-  general multi-app switcher are not claimed. Legacy Pi/chat data and app
+- Vivaldi and Pegasus are real-window adapters. Pegasus hands off to a uniquely
+  verified game window; other app integrations and an unrestricted multi-app
+  switcher are not claimed. Legacy Pi/chat data and app
   ownership records are preserved, not migrated or erased by this change.
 
 ## Original presentation, native windows
