@@ -27,8 +27,14 @@ be private and caller-owned; the output directory must be fresh. Packets are the
 `review.py packet` format from Aether's `services/life-atlas-audio/review.py`.
 Explicit sharing authorization is required for the selected recordings before
 invocation. The component does not discover recordings or grant itself scope.
-Only transcript text, segment anchors and the documented uncalibrated low-token
-hint are sent to the model. No audio or unrelated metadata is sent.
+Only transcript text, segment anchors, the documented uncalibrated low-token
+hint, and optional approved frozen name-spelling candidates are sent to the model.
+No audio or unrelated metadata is sent. Names come from the source-bound Aether
+packet, not a mutable laptop config or personal data embedded in the Nix store.
+The packet/receipt hashes bind those hints. Names remain distinct candidates,
+never aliases/global replacements; lexical name repairs must remain bracketed.
+Absent hints preserve compatibility with older jobs. Recognition improvement
+must be judged on future recordings, not inferred from successful API plumbing.
 
 All built-in/extension tools, extensions, context files, skills, templates, themes
 and session persistence are disabled. The policy treats speech as untrusted data,

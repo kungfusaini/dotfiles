@@ -52,6 +52,26 @@ class EditorTests(unittest.TestCase):
         self.assertNotIn('unrelated_private_field', result[0])
         self.assertFalse(result[0]['low_token_probability_hint_not_accuracy'])
 
+    def test_name_hints_are_distinct_bounded_data_not_aliases(self):
+        self.assertEqual(editor.name_hints(dict(self.packet, name_hints=['Mira', 'Mina'])), ['Mira', 'Mina'])
+        for hints in (['Mira', 'mira'], ['bad\nname'], ['$(command)'], ['a'*49], ['a'*48]*32, 'not-a-list'):
+            with self.subTest(hints=hints):
+                with self.assertRaises(ValueError): editor.name_hints(dict(self.packet, name_hints=hints))
+        self.assertEqual(editor.name_hints(self.packet), [])
+
+    def test_frozen_names_reach_model_and_packet_hash_covers_them(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp); path = root/'packet.json'
+            packet = dict(self.packet, name_hints=['Mira', 'Mina'])
+            path.write_text(json.dumps(packet)); path.chmod(0o600)
+            with patch.object(editor, 'invoke', return_value=({'source_sha256': self.source, 'edits': []}, 'f'*64)) as invoke:
+                editor.run(path, root/'review', 'unused')
+            prompt = invoke.call_args.args[1]
+            self.assertEqual(prompt['name_hints'], ['Mira', 'Mina'])
+            receipt = json.loads((root/'review/receipt.json').read_text())
+            self.assertEqual(receipt['packet_sha256'], editor.digest(path.read_bytes()))
+            self.assertEqual(receipt['name_hints_sha256'], editor.digest(json.dumps(['Mira', 'Mina'], ensure_ascii=False).encode()))
+
     def test_bad_proposals_fail_closed(self):
         base = {'source_sha256': self.source, 'edits': []}
         with self.assertRaises(ValueError): editor.validate_proposal(dict(base, source_sha256='b'*64), self.source, self.packet['segments'])

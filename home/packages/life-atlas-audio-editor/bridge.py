@@ -51,6 +51,7 @@ def process(root, item):
     if not item['has_review']:
         packet = remote('packet', identity)
         editor.packet_segments(json.loads(packet))
+        editor.name_hints(json.loads(packet))
         packet_path = job/'packet.json'
         if packet_path.exists(): editor.require(packet_path.read_bytes() == packet)
         else: atomic(packet_path, packet)
