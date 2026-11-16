@@ -64,6 +64,8 @@ in
       # Home Manager owns the mail associations; do not prompt on each launch.
       extraPrefs = ''
         lockPref("mail.shell.checkDefaultClient", false);
+        // Keep mail syncing without playing a sound for new messages.
+        lockPref("mail.biff.play_sound", false);
       '';
     })
     unstable.zapzap
