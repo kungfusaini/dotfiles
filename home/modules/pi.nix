@@ -83,6 +83,7 @@ in
   xdg.configFile."pi/agent/skills/nanogpt/SKILL.md".source = ../config/pi/skills/nanogpt/SKILL.md;
   xdg.configFile."pi/agent/skills/workstream/SKILL.md".source = ../config/pi/skills/workstream/SKILL.md;
   xdg.configFile."pi/agent/skills/browser/SKILL.md".source = ../config/pi/skills/browser/SKILL.md;
+  xdg.configFile."pi/agent/skills/command-center-roundup/SKILL.md".source = ../config/pi/skills/command-center-roundup/SKILL.md;
   xdg.configFile."pi/agent/skills/gemini-share-capture/SKILL.md" = {
     source = ../config/pi/skills/gemini-share-capture/SKILL.md;
     force = true; # Replace the pre-existing unmanaged skill during migration.
