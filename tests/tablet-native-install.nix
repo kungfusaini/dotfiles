@@ -11,6 +11,9 @@ assert !homeConfig.programs.tablet-native.automatic;
 assert toString pkgs.vivaldi == toString expectedBrowser;
 assert lib.hasInfix "tablet-chat start-home" homeConfig.xdg.desktopEntries.tablet-workspace.exec;
 assert builtins.any (p: p.name == "tablet-native") homeConfig.home.packages;
+assert builtins.all (binding:
+  !(lib.hasInfix "tablet-chat toggle" binding || lib.hasInfix "tablet-native toggle" binding)
+) homeConfig.wayland.windowManager.hyprland.settings.bind;
 pkgs.runCommand "tablet-native-install-contract" { nativeBuildInputs = [ pkgs.python3 ]; } ''
   python3 - ${extension}/manifest.json ${manifest} <<'PY'
 import base64, hashlib, json, sys

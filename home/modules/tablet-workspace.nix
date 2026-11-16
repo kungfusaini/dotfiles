@@ -188,9 +188,5 @@ in
       "${tabletFoldWatch}/bin/tablet-fold-watch >> \"$XDG_RUNTIME_DIR/tablet-fold-watch.log\" 2>&1"
     ];
 
-    wayland.windowManager.hyprland.settings.bind = lib.mkAfter [
-      (if nativeAutomatic then "$mod CTRL, T, exec, ${tabletNative}/bin/tablet-native toggle"
-       else "$mod CTRL, T, exec, ${tabletChat}/bin/tablet-chat toggle")
-    ];
   };
 }
