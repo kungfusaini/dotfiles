@@ -6,7 +6,7 @@
 
   "modules-left": ["custom/current-workspace", "custom/workspace-tabs"],
   "modules-center": ["clock"],
-  "modules-right": ["custom/tablet-mode", "custom/platform-profile", "custom/wshowkeys", "custom/dnd", "custom/mic-status", "tray", "backlight", "pulseaudio", "network", "custom/battery"],
+  "modules-right": ["custom/platform-profile", "custom/wshowkeys", "custom/dnd", "custom/mic-status", "tray", "backlight", "pulseaudio", "network", "custom/battery"],
 
   "custom/current-workspace": {
     "exec": "/home/sumeet/.config/hypr/scripts/waybar-current-workspace",
