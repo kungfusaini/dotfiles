@@ -14,7 +14,9 @@ The worker:
    for the current client session to finish login. The shared launcher recognises
    exactly `steam -silent`: it installs a Steam-only hidden-window policy, starts
    the backend on `special:steam-hidden`, and verifies a newly tagged main client
-   process. A tray-only client does not need to map a window. Delayed Steam UI
+   process. Both the legacy `ubuntu12_32/steam` and newer `steamrt64/steam`
+   main-client layouts are recognized; updater UI and unrelated executables
+   remain excluded. A tray-only client does not need to map a window. Delayed Steam UI
    remains hidden and cannot request focus. Missing placement context is an error,
    not permission to use the globally active workspace.
 3. Records the current game-process log position and sends the normal official

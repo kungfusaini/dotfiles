@@ -33,10 +33,10 @@ class SteamWorkspaceTests(unittest.TestCase):
         m.start()
         self.addCleanup(m.stop)
 
-    def process(self, pid=123, marker='launch', child=False, appid=None):
+    def process(self, pid=123, marker='launch', child=False, appid=None, layout='ubuntu12_32'):
         p = self.proc / str(pid)
         p.mkdir(exist_ok=True)
-        args = [b'/home/user/.local/share/Steam/ubuntu12_32/steam', b'-silent']
+        args = [f'/home/user/.local/share/Steam/{layout}/steam'.encode(), b'-silent']
         if child:
             args.append(b'-child-update-ui')
         (p / 'cmdline').write_bytes(b'\0'.join(args) + b'\0')
@@ -60,6 +60,17 @@ class SteamWorkspaceTests(unittest.TestCase):
              patch.object(h.time, 'monotonic', side_effect=[0, 0, 16]), patch.object(h.time, 'sleep'):
             with self.assertRaisesRegex(RuntimeError, 'no newly launched'):
                 h.verify_steam_backend('launch')
+
+    def test_64_bit_client_requires_same_launch_tag_and_excludes_updater(self):
+        self.process(pid=123, layout='steamrt64')
+        self.process(pid=124, layout='steamrt64', marker='old')
+        self.process(pid=125, layout='steamrt64', child=True)
+        self.process(pid=126, layout='unrelated')
+        self.assertEqual(h.steam_backend_pids('launch'), [123])
+        with patch.object(h, 'hypr_clients', return_value=[]):
+            h.verify_steam_backend('launch')
+        with patch.object(h.os, 'getuid', return_value=os.getuid() + 1):
+            self.assertEqual(h.steam_backend_pids('launch'), [])
 
     def test_mapped_steam_client_must_be_hidden_not_moved_to_frontend(self):
         self.process()

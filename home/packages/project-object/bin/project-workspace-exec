@@ -168,7 +168,7 @@ def steam_backend_pids(launch_id):
             if entry.stat().st_uid != os.getuid():
                 continue
             argv = (entry / "cmdline").read_bytes().split(b"\0")
-            if not argv[0].endswith(b"/ubuntu12_32/steam") or b"-child-update-ui" in argv:
+            if not argv[0].endswith((b"/ubuntu12_32/steam", b"/steamrt64/steam")) or b"-child-update-ui" in argv:
                 continue
             marker = f"{LAUNCH_ID_ENV}={launch_id}".encode()
             if marker in (entry / "environ").read_bytes().split(b"\0"):

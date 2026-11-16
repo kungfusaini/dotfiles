@@ -69,7 +69,7 @@ def run(args):
     runtime.mkdir(mode=0o700)
     (root / 'home').mkdir()
     (root / 'labwc').mkdir()
-    binary = root / 'home/.local/share/Steam/ubuntu12_32/steam'
+    binary = root / 'home/.local/share/Steam' / args.client_layout / 'steam'
     binary.parent.mkdir(parents=True)
     (root / 'client.c').write_text(FAKE_CLIENT)
     subprocess.run([args.cc, '-O2', str(root / 'client.c'), '-o', str(binary)], check=True)
@@ -219,6 +219,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ['hyprland', 'hyprctl', 'labwc', 'kitty', 'cc']:
         parser.add_argument('--' + name, required=True)
+    parser.add_argument('--client-layout', choices=['ubuntu12_32', 'steamrt64'], default='ubuntu12_32')
     parser.add_argument('--render-node', default='/dev/dri/renderD128')
     parser.add_argument('--helper', default=str(Path(__file__).resolve().parents[1] / 'bin/project-workspace-exec'))
     args = parser.parse_args()

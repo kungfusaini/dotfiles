@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +13,30 @@ SPEC = importlib.util.spec_from_file_location("steamctl", SCRIPT)
 assert SPEC and SPEC.loader
 steamctl = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(steamctl)
+
+
+class ClientProcessTests(unittest.TestCase):
+    def test_32_and_64_bit_main_clients_only_for_current_user(self):
+        with tempfile.TemporaryDirectory() as directory:
+            proc = Path(directory)
+            for pid, executable, extra in (
+                (101, steamctl.STEAM_ROOT / 'ubuntu12_32/steam', []),
+                (102, steamctl.STEAM_ROOT / 'steamrt64/steam', []),
+                (103, steamctl.STEAM_ROOT / 'steamrt64/steam', ['-child-update-ui']),
+                (104, steamctl.STEAM_ROOT / 'ubuntu12_32/steam', ['-child-update-ui']),
+                (105, steamctl.STEAM_ROOT / 'steamrt64/steamwebhelper', []),
+                (106, Path('/tmp/unrelated/steamrt64/steam'), []),
+            ):
+                entry = proc / str(pid)
+                entry.mkdir()
+                (entry / 'cmdline').write_bytes(b'\0'.join(str(s).encode() for s in [executable, *extra]))
+            # Only replace the /proc root, keeping exact canonical Steam path
+            # comparisons and the real fixture ownership checks intact.
+            with mock.patch.object(steamctl, 'Path', side_effect=lambda value: proc if value == '/proc' else Path(value)):
+                self.assertEqual(steamctl.steam_main_pids(), [101, 102])
+                self.assertTrue(steamctl.steam_running())
+                with mock.patch.object(steamctl.os, 'getuid', return_value=os.getuid() + 1):
+                    self.assertEqual(steamctl.steam_main_pids(), [])
 
 
 class GameLogTests(unittest.TestCase):

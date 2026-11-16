@@ -208,7 +208,7 @@ def steam_main_pids() -> list[int]:
         if not argv:
             continue
         executable = argv[0]
-        if (Path(executable) == STEAM_ROOT / "ubuntu12_32/steam"
+        if (Path(executable) in (STEAM_ROOT / "ubuntu12_32/steam", STEAM_ROOT / "steamrt64/steam")
                 and "-child-update-ui" not in argv):
             pids.append(int(entry.name))
     return sorted(pids)
