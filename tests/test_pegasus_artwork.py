@@ -31,7 +31,8 @@ class PegasusArtworkTests(unittest.TestCase):
     def test_every_curated_artwork_reference_exists(self):
         prefix = "/home/sumeet/.config/pegasus-frontend/media/"
         referenced = set()
-        for metadata in CONFIG.glob("*.metadata.pegasus.txt"):
+        # Inactive entries retain their artwork but are not installed as metafiles.
+        for metadata in CONFIG.rglob("*.metadata.pegasus.txt"):
             for line in metadata.read_text().splitlines():
                 if not line.startswith("assets."):
                     continue

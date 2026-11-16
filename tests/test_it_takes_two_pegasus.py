@@ -26,7 +26,7 @@ class ItTakesTwoPegasusTests(unittest.TestCase):
         self.assertEqual(self.fields["launch"], ["tablet-game-launch -- steam-session 1426210"])
         self.assertEqual(self.fields["players"], ["2"])
         self.assertEqual(self.fields["release"], ["2021-03-25"])
-        for appid in (1687950, 242550, 289070):
+        for appid in (1687950, 242550, 646570):
             self.assertIn(f"launch: tablet-game-launch -- steam-session {appid}\n", self.text)
 
     def test_all_artwork_is_packaged(self):

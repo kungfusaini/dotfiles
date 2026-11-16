@@ -26,7 +26,7 @@ class Persona5PegasusTests(unittest.TestCase):
         self.assertEqual(self.fields["file"], ["steam:1687950"])
         self.assertEqual(self.fields["launch"], ["tablet-game-launch -- steam-session 1687950"])
         self.assertNotIn("launch: steam steam://", self.text)
-        for appid in (1687950, 242550, 289070):
+        for appid in (1687950, 242550, 646570):
             self.assertIn(f"launch: tablet-game-launch -- steam-session {appid}\n", self.text)
         module = (ROOT / "home/modules/pegasus.nix").read_text()
         self.assertIn("steamSession = pkgs.callPackage ../packages/steam-session { };", module)
@@ -50,7 +50,9 @@ class Persona5PegasusTests(unittest.TestCase):
 
     def test_existing_curated_games_and_provider_policy_preserved(self):
         self.assertIn("game: Rayman Legends\nfile: steam:242550\n", self.text)
-        self.assertIn("game: Sid Meier's Civilization VI\nfile: steam:289070\n", self.text)
+        inactive = (ROOT / "home/config/pegasus/inactive/civilization-vi.metadata.pegasus.txt").read_text()
+        self.assertIn("game: Sid Meier's Civilization VI\nfile: steam:289070\n", inactive)
+        self.assertNotIn("steam:289070", self.text)
         settings = (ROOT / "home/config/pegasus/settings.txt").read_text()
         self.assertIn("providers.steam.enabled: false", settings)
 

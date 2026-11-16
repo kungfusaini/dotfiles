@@ -51,19 +51,19 @@ assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/rayman-lege
 assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/rayman-legends/screenshot-2.jpg
 assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/rayman-legends/screenshot-3.jpg
 
-game: Sid Meier's Civilization VI
-file: steam:289070
-launch: tablet-game-launch -- steam-session 289070
-developer: Firaxis Games
-publisher: 2K
-genre: Strategy
-players: 1-12
-release: 2016-10-20
-rating: 88%
-summary: Build a civilization from its first settlement into a world power through exploration, diplomacy, scientific progress, cultural influence, and turn-based warfare.
-assets.box_front: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/boxFront.jpg
-assets.background: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/background.jpg
-assets.logo: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/logo.png
-assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/screenshot-1.jpg
-assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/screenshot-2.jpg
-assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/civilization-vi/screenshot-3.jpg
+game: Slay the Spire
+file: steam:646570
+launch: tablet-game-launch -- steam-session 646570
+developer: Mega Crit
+publisher: Mega Crit
+genre: Card Game, Roguelike, Strategy
+players: 1
+release: 2019-01-23
+rating: 89%
+summary: Build a deck, discover powerful relics, and climb an ever-changing spire in turn-based card battles. Enable Touchscreen Mode in the game's input settings for tablet play.
+assets.box_front: /home/sumeet/.config/pegasus-frontend/media/steam/slay-the-spire/boxFront.jpg
+assets.background: /home/sumeet/.config/pegasus-frontend/media/steam/slay-the-spire/background.jpg
+assets.logo: /home/sumeet/.config/pegasus-frontend/media/steam/slay-the-spire/logo.png
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/slay-the-spire/screenshot-1.jpg
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/slay-the-spire/screenshot-2.jpg
+assets.screenshot: /home/sumeet/.config/pegasus-frontend/media/steam/slay-the-spire/screenshot-3.jpg

@@ -21,6 +21,18 @@ JPEG/PNG locally, replace only the relevant `media/` file, and update its checks
 and provenance here. Do not restore build-time downloads. Keep logos transparent
 and metadata paths stable. New artwork must be committed before deployment.
 
+## Inactive games
+
+`inactive/` preserves curated metadata for uninstalled games. These files are
+repository sources only: Home Manager does not deploy them into Pegasus's
+metafiles directory. All their artwork remains versioned and deployed in
+`media/`, so hiding a game does not discard any assets or touch saves.
+
+To restore Civilization VI after reinstalling Steam App ID `289070`, copy the
+`game:` stanza from `inactive/civilization-vi.metadata.pegasus.txt` back into
+`steam.metadata.pegasus.txt`, then validate, commit and deploy normally. Do not
+copy its duplicate `collection:` header or enable Steam's automatic provider.
+
 ## Original download sources (provenance only; never fetched by the build)
 
 - https://www.mariowiki.com/images/9/9b/MK8_Deluxe_-_Box_NA.png
@@ -71,3 +83,12 @@ and metadata paths stable. New artwork must be committed before deployment.
 - https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/289070/ss_12cc6e1f4084de5bc0f66bfdbe3aaf3e59388b53.1920x1080.jpg
 - https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/289070/ss_6c4a3cfb61f1a9677cf2ac549c2816a4e651f741.1920x1080.jpg
 - https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/289070/ss_b2bf12299c38214fe520af0f724a6349d17ed330.1920x1080.jpg
+
+Slay the Spire: original Steam bytes, inspected locally, no re-encoding.
+
+- https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/646570/library_600x900.jpg
+- https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/646570/library_hero.jpg
+- https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/646570/logo.png
+- https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/646570/ss_c171816f7ecd35b5b46d2fa27532f4c5b8ca3cc5.1920x1080.jpg?t=1774015376
+- https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/646570/ss_01aa3e7759e457bfbf2422f31c325d7b3ba8a6eb.1920x1080.jpg?t=1774015376
+- https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/646570/ss_b757436d08ba08292796bfed9c60e7cc99d5f2c3.1920x1080.jpg?t=1774015376
