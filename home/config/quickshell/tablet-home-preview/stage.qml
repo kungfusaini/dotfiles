@@ -8,6 +8,10 @@ import QtQuick.Controls
 ShellRoot {
     id: stage
     readonly property var targetScreen: Quickshell.screens.find(s => s.name === (Quickshell.env("TABLET_STAGE_SCREEN") || "eDP-1")) ?? null
+    // Native mode has one authoritative interactive Home. Its safety surfaces
+    // must never look like a second launcher or draw navigation affordances.
+    readonly property bool presentationOnly: Quickshell.env("TABLET_STAGE_PRESENTATION_ONLY") === "1"
+    readonly property string sceneFile: presentationOnly ? "/StageBackdrop.qml" : "/TabletHome.qml"
     property var apps: []
     FileView {
         id: appRegistry
@@ -44,6 +48,7 @@ ShellRoot {
             const window = coverLoader.item
             return JSON.stringify({cover: !!window && window.ready && stage.coverLevel >= .999,
                 backdrop: backdropFrames.rendered && baseHome.status === Loader.Ready, covering: stage.coverLevel > 0,
+                presentationOnly: stage.presentationOnly,
                 coverFrames: window ? window.queuedFrames : 0, baseFrames: backdropFrames.frames,
                 screen: stage.targetScreen !== null, coverAssets: window ? window.assetState : 0, baseAssets: baseHome.status})
         }
@@ -74,8 +79,8 @@ ShellRoot {
         Loader {
             id: baseHome
             anchors.fill: parent
-            source: "file://" + stage.assetDirectory + "/TabletHome.qml"
-            onLoaded: { item.apps = Qt.binding(() => stage.apps); item.enabled = false }
+            source: "file://" + stage.assetDirectory + stage.sceneFile
+            onLoaded: { if (!stage.presentationOnly) item.apps = Qt.binding(() => stage.apps); item.enabled = false }
         }
         FrameWitness { id: backdropFrames; requiredFrames: 1; armed: base.backingWindowVisible }
     }
@@ -105,8 +110,8 @@ ShellRoot {
                 Loader {
                     id: coverHome
                     anchors.fill: parent
-                    source: "file://" + stage.assetDirectory + "/TabletHome.qml"
-                    onLoaded: { item.apps = Qt.binding(() => stage.apps); item.enabled = false }
+                    source: "file://" + stage.assetDirectory + stage.sceneFile
+                    onLoaded: { if (!stage.presentationOnly) item.apps = Qt.binding(() => stage.apps); item.enabled = false }
                 }
                 MouseArea { anchors.fill: parent }
                 Label {

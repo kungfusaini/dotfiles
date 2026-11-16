@@ -34,7 +34,9 @@ ShellRoot {
                 rendered: frames.rendered, width: window.width, height: window.height,
                 transitioning: (home.homeProgress > 0 && home.homeProgress < 1)
                     || (root.drawerProgress > 0 && root.drawerProgress < 1),
-                overview: home.switcherOpen, navigationContact: home.navigationContactActive})
+                overview: home.switcherOpen, navigationContact: home.navigationContactActive,
+                navigationInput: {x: home.navigationInputRect.x, y: home.navigationInputRect.y,
+                    width: home.navigationInputRect.width, height: home.navigationInputRect.height}})
         }
     }
     function accept(text) {
@@ -94,7 +96,10 @@ ShellRoot {
             height: window.expanded ? window.height : 0
             regions: [
                 Region { x: window.width - 144; y: 0; width: 144; height: 24 },
-                Region { x: (window.width - 160) / 2; y: window.height - window.inset - 14; width: 160; height: 14 }
+                Region {
+                    x: home.navigationInputRect.x; y: home.navigationInputRect.y
+                    width: home.navigationInputRect.width; height: home.navigationInputRect.height
+                }
             ]
         }
         FrameWitness {
@@ -179,7 +184,8 @@ ShellRoot {
             keyboardInset: window.inset
             // Native navigation uses the original AppNavigator/BottomGesture;
             // keep only this component's globally proven top-right edge.
-            homeVisible: true
+            bottomNavigationEnabled: false
+            homeVisible: !!root.state.home
             drawerVisible: !!root.state.drawer
             onSettingsRequested: root.command("settings")
             onHomeRequested: root.command("home")

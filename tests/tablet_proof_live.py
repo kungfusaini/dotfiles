@@ -84,6 +84,66 @@ def inner():
         points=[(x,y) for y in range(0,image.height,3) for x in range(0,image.width,3) if max(abs(a-b) for a,b in zip(image.getpixel((x,y)),color))<5]
         if len(points)<10:return None
         return ((min(x for x,y in points)+max(x for x,y in points))//2,(min(y for x,y in points)+max(y for x,y in points))//2)
+    def assert_single_indicator(image, inset=0):
+        # Count rendered light horizontal bars, not declared/enabled handlers.
+        # The retired edge component drew another line 5px from the bottom.
+        rows=[]
+        bottom=image.height-round(inset)
+        for y in range(max(0,bottom-60), bottom):
+            pixels=[image.getpixel((x,y)) for x in range(image.width//2-40,image.width//2+40)]
+            # Browser media progress tracks span most of the output; shell
+            # indicators are only 100px wide. Do not count the app's controls.
+            outside=[image.getpixel((image.width//2+dx,y)) for dx in (-65,65)]
+            center=image.getpixel((image.width//2,y))
+            if sum(min(color)>=160 and max(abs(a-b) for a,b in zip(color,center))<=3 for color in pixels)>=72 and all(max(abs(a-b) for a,b in zip(color,center))>=8 for color in outside):
+                rows.append(y)
+        bands=[]
+        for y in rows:
+            if not bands or y>bands[-1][-1]+1: bands.append([])
+            bands[-1].append(y)
+        assert len(bands)==1, ('expected exactly one rendered swipe indicator',bands,inset)
+        return (image.width//2, (bands[0][0]+bands[0][-1])//2)
+    def handle_center(name, inset=0):
+        point=assert_single_indicator(snapshot(name),inset)
+        rect=scene()['navigationInput']
+        assert rect['width']==180 and rect['height']==52, ('unexpected navigation capture area',rect)
+        assert rect['x']<=point[0]<rect['x']+rect['width'] and rect['y']<=point[1]<rect['y']+rect['height'], (point,rect)
+        return point
+    def stage_call(process, method, *args):
+        return subprocess.check_output(['quickshell','ipc','--pid',str(getattr(process,'pid',process)),'call','tabletStage',method,*args],text=True,timeout=5)
+    def check_native_stage():
+        # Exercise the exact packaged stage before any native Home exists,
+        # including its persistent floor after the transition cover fades.
+        # The client's busy cursor can be software-composited even without
+        # grim -c. Park it outside the content/indicator sample regions.
+        move(900,550)
+        environment=dict(os.environ, TABLET_STAGE_PRESENTATION_ONLY='1',
+            TABLET_STAGE_OWNER_PID=str(os.getpid()),
+            TABLET_STAGE_OWNER_START=Path('/proc/self/stat').read_text().rsplit(')',1)[1].split()[19],
+            TABLET_STAGE_ASSETS=str(Path(os.environ['TABLET_TEST_PROOF_QML']).parent))
+        with (root/'stage-presentation.log').open('w') as log:
+            process=subprocess.Popen(['quickshell','--path',str(Path(os.environ['TABLET_TEST_PROOF_QML']).with_name('stage.qml'))],env=environment,stdout=log,stderr=log)
+            processes.append(process)
+            try:
+                until(lambda:(lambda s:s['cover'] and s['backdrop'] and s['presentationOnly'])(json.loads(stage_call(process,'status'))),'neutral stage frames')
+                image=snapshot('native-entry-cover')
+                # Ignore delayed transition notice/cancel; neither launcher
+                # content nor swipe indicators may occur in the cover.
+                for area in ((0,0,960,480),(0,610,960,640)):
+                    assert image.crop(area).getextrema()==((23,23),(43,43),(60,60)), ('non-neutral native cover',area)
+                origin=json.loads(ctl('activeworkspace','-j'))['name']
+                ctl('dispatch','workspace','name:stage-only-fixture')
+                stage_call(process,'reveal')
+                until(lambda:not json.loads(stage_call(process,'status'))['covering'],'stage cover faded')
+                time.sleep(.6)  # Let the private compositor's workspace animation settle.
+                image=snapshot('native-persistent-floor')
+                for area in ((0,0,850,640),(850,0,960,480),(850,610,960,640)):
+                    assert image.crop(area).getextrema()==((23,23),(43,43),(60,60)), ('persistent stage rendered another Home/navigation',area)
+            finally:
+                if 'origin' in locals():
+                    ctl('dispatch','workspace','name:'+origin)
+                    time.sleep(.6)
+                process.terminate();process.wait(timeout=5)
     pointer=None;ipc=None
     def pointer_command(line):
         assert ipc and str(ipc).startswith(str(runtime)+'/hypr/')
@@ -220,13 +280,15 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             time.sleep(.7)
         before={c['address']:meta(c) for c in clients()}
         browser_pid=browser['pid']
+        if native: check_native_stage()
         proof('start','--address',address)
         until(lambda:status().get('ready'),'frontend frames')
         if native:
             assert status()['home'] and status()['browserRunning']
             assert json.loads(ctl('activeworkspace','-j'))['name']=='tablet-trial'
             assert next(c for c in clients() if c['address']==laptop_window['address'])['workspace']['name']=='proof-fixture'
-            snapshot('original-design-home')
+            until(lambda:scene()['rendered'] and not scene()['transitioning'],'stable native Home')
+            handle_center('original-design-home')
             proof('app')
             until(lambda:not scene()['home'] and not scene().get('transitioning') and scene()['rendered'],'native Home dismissal rendered')
             # Use the companion's actual Options UI in this disposable
@@ -288,8 +350,9 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             # Original swipe-and-pause navigation must be available over the
             # real video too, without capturing a browser texture or changing
             # its fullscreen state. Initial edge contact expands the mask.
-            move(480,630); pointer_command('down')
-            for i in range(1,9): move(480,round(630-150*i/8)); time.sleep(.035)
+            x,y=handle_center('single-indicator-over-media')
+            move(x,y); pointer_command('down')
+            for i in range(1,9): move(x,round(y-150*i/8)); time.sleep(.035)
             time.sleep(.4)
             pointer_command('up')
             until(lambda:scene()['overview'],'original app switcher gesture over media')
@@ -297,7 +360,8 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             snapshot('original-design-switcher')
             click(480,320)
             until(lambda:not scene()['overview'],'resume existing browser from switcher')
-        swipe(480,630 if native else 634,500)
+        x,y=handle_center('visible-handle-home') if native else (480,634)
+        swipe(x,y,y-130)
         until(lambda:status()['home'],'global Home gesture over video')
         snapshot('home-over-media')
         assert target()['fullscreenClient']==2
@@ -310,20 +374,55 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
         time.sleep(.4)
         image=snapshot('app-after-media')
         field=color_center(image,(232,240,250));assert field,'native input fixture missing'
+        if native:
+            # Test DOM passthrough outside media fullscreen: Chromium's own
+            # fullscreen controls consume bottom clicks before DOM handlers.
+            handle_center('bottom-passthrough-geometry')
+            # Stay inside the handle's vertical band but above Vivaldi's own
+            # status bar so the fixture can authoritatively report delivery.
+            handle_y=round(scene()['navigationInput']['y']+8)
+            for side in (220,740):
+                count=len([r for r in requests if r.startswith('/clicked-')])
+                click(side,handle_y)
+                until(lambda:len([r for r in requests if r.startswith('/clicked-')])>count,'bottom app touch beside handle')
+                assert not status()['home'], 'bottom app touch incorrectly opened Home'
         click(*field)
         until(lambda:'/focused' in requests,'native input touch focus')
         until(lambda:json.loads(ctl('monitors','-j'))[0].get('reserved',[0,0,0,0])[3]>0,'native IME panel')
         keys('touch-proof')
         until(lambda:any(r.startswith('/typed-touch-proof') for r in requests),'private native text input')
         if native:
+            for side in (220,740):
+                inset=status()['keyboardInset']
+                assert inset > 0
+                handle_center('ime-passthrough-'+str(side),inset)
+                handle_y=round(scene()['navigationInput']['y']+8)
+                count=len([r for r in requests if r.startswith('/clicked-')])
+                click(side,handle_y)
+                until(lambda:len([r for r in requests if r.startswith('/clicked-')])>count,'app touch beside handle above IME')
+                assert not status()['home'], 'app touch above IME incorrectly opened Home'
+                click(*field)
+                until(lambda:status()['keyboardInset']>0,'refocus text after IME passthrough')
             inset=status()['keyboardInset']
-            assert inset > 0
-            swipe(480,640-inset-10,640-inset-120)
+            x,y=handle_center('single-indicator-above-ime',inset)
+            swipe(x,y,y-110)
             until(lambda:status()['home'],'original Home gesture above open IME')
             until(lambda:status()['keyboardInset']==0,'Home hides IME without losing navigation')
             proof('app')
             until(lambda:not scene()['home'] and not scene().get('transitioning'),'resume after IME Home')
         proof('hide-keyboard')
+        if native:
+            # Validate the actual session's return cover too, not merely the
+            # standalone stage fixture. Close must keep this neutral cover
+            # while retiring the single Home and restoring laptop focus.
+            journal=json.loads((runtime/'tablet-proof/recovery.json').read_text())
+            stage_pid=next(child['pid'] for child in journal['children'] if child['role']=='stage')
+            stage_call(stage_pid,'cover','Returning to laptop…')
+            until(lambda:json.loads(stage_call(stage_pid,'status'))['cover'],'native return cover frames')
+            move(900,550)
+            image=snapshot('native-return-cover')
+            for area in ((0,0,960,480),(0,610,960,640)):
+                assert image.crop(area).getextrema()==((23,23),(43,43),(60,60)), ('return cover rendered another Home/navigation',area)
         proof('close')
         until(lambda:not status().get('running'),'clean proof exit')
         time.sleep(.7)
@@ -507,7 +606,7 @@ ShellRoot { FloatingWindow { visible: true; width: 960; height: 640; title: "Tab
             assert not (runtime/'tablet-proof/recovery.json').exists()
             assert not (runtime/'tablet-native-orientation.json').exists()
         print('PASS: native app/media fullscreen, global edge gestures, passthrough, real IME, exact layout return, backend crash recovery and focus-loss safety including unchanged2/2 acquisition'
-              + ('; original Home/control visuals, persistent tablet-workspace app/Home resume, unrelated laptop app/focus return, tablet-only browser launch, rotation/restore, repeated fold ownership and real two-window isolated media pause/autoplay gate/no auto-resume; real Pegasus/dummy-game launch, unfold survival, resume, game exit/library return and browser switching' if native else ''),flush=True)
+              + ('; original Home/control visuals, persistent tablet-workspace app/Home resume, unrelated laptop app/focus return, tablet-only browser launch, rotation/restore, repeated fold ownership and real two-window isolated media pause/autoplay gate/no auto-resume; real Pegasus/dummy-game launch, unfold survival, resume, game exit/library return and browser switching; neutral entry/floor/return stage, single rendered indicator, visible-handle gestures and both-side bottom/IME passthrough' if native else ''),flush=True)
         return 0
     finally:
         if ipc:

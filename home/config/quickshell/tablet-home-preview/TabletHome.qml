@@ -17,6 +17,7 @@ Control {
     property real keyboardInset: 0
     signal nativeHomeRequested()
     readonly property bool navigationContactActive: navigator.contactActive
+    readonly property rect navigationInputRect: navigator.navigationInputRect
     readonly property bool navigationVisible: navigator.navigating
     property bool liveClock: true
     property string clockText: Qt.formatTime(new Date(), "hh:mm")
@@ -227,6 +228,7 @@ Control {
         apps: root.history.cards()
         activeAppId: root.nativePresentation ? (root.nativeAppVisible ? root.nativeAppId : "") : (root.apps.find(app => app.label === root.activeApp) || {}).id || ""
         keyboardInset: root.keyboardInset
+        navigationWidth: root.nativePresentation ? Math.min(180, navigator.width) : navigator.width
         blocked: root.navigationBlocked
         urgentInput: root.navigationUrgent
         summary: root.appSummary

@@ -190,7 +190,8 @@ class Native(p.Proof):
         config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'hypr/hyprland.conf'
         if not re.search(r'(?m)^\s*layerrule\s*=\s*match:namespace\s+\^tablet-rotation-fade\$\s*,\s*no_anim\s+on\s*$', config.read_text()):
             raise RuntimeError('Tablet entry requires the installed guarded no-animation policy')
-        environment = dict(os.environ, TABLET_STAGE_OWNER_PID=str(os.getpid()),
+        environment = dict(os.environ, TABLET_STAGE_PRESENTATION_ONLY='1',
+                           TABLET_STAGE_OWNER_PID=str(os.getpid()),
                            TABLET_STAGE_OWNER_START=self.owner['start'],
                            TABLET_STAGE_ASSETS=str(Path(os.environ['TABLET_PROOF_QML']).parent))
         with (p.runtime() / 'stage.log').open('a') as log:

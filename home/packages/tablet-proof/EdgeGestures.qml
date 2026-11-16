@@ -9,6 +9,7 @@ Item {
     id: root
     property real keyboardInset: 0
     property bool homeVisible: false
+    property bool bottomNavigationEnabled: true
     property bool drawerVisible: false
     signal settingsRequested()
     signal homeRequested()
@@ -38,7 +39,8 @@ Item {
         objectName: "globalBottomEdge"
         anchors { bottom: parent.bottom; horizontalCenter: parent.horizontalCenter; bottomMargin: root.keyboardInset }
         width: 160; height: 14
-        enabled: !root.drawerVisible && !root.homeVisible
+        visible: root.bottomNavigationEnabled
+        enabled: root.bottomNavigationEnabled && !root.drawerVisible && !root.homeVisible
         Rectangle {
             anchors { bottom: parent.bottom; bottomMargin: 5; horizontalCenter: parent.horizontalCenter }
             width: 100; height: 4; radius: 2; color: "#cceff5ff"

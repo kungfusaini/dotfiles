@@ -72,8 +72,10 @@ no permanent reserved bands or repeated geometry enforcement. Legacy IPC acts
 on the active window: transitions remain focus-checked, **not compositor-atomic
 conditional transactions**.
 
-Idle input regions are the top-right 144×24 corner and bottom-centre 160×14
-edge. Initial bottom contact expands the mask for the original navigator;
+Idle input regions are the top-right 144×24 corner and the original navigator's
+180×52 handle, four pixels above the bottom/IME. The input mask reads the
+handle's actual geometry rather than maintaining a second edge hitbox. Initial
+bottom contact expands the mask for the original navigator;
 quick swipe goes Home and swipe/pause opens its card. Gesture and input-region
 geometry both move above the native IME. A real browser card has an honest text
 summary, not a fake live preview. Card dismissal does not close desktop windows.
@@ -82,8 +84,11 @@ Volume/mute and brightness use real backends; missing controls are disabled.
 Unconnected battery/network/media readouts say unknown/not connected rather
 than showing preview values.
 
-The established `stage.qml` owns an opaque Home floor and fresh overlay cover.
-Its rendered-frame acknowledgement and matching PID/layer/geometry/alpha check
+The shared `stage.qml` uses a native-only presentation mode: an opaque neutral
+floor and fresh overlay cover, with no launcher, clock or swipe indicator.
+Legacy preview routes retain their existing Home-based stage. Only `native.qml`
+owns interactive Home and bottom navigation; its corner gesture helper omits
+both the legacy bottom handler and its visual. The stage's rendered-frame acknowledgement and matching PID/layer/geometry/alpha check
 must pass **before workspace entry**. The already-installed
 `tablet-rotation-fade` no-animation rule is required; compositor alpha is a goal,
 not evidence that a fade completed. The native frontend acknowledges its own
@@ -151,6 +156,9 @@ sensor, and SIGKILL/focus-loss recovery. Normal exit must not silently depend on
 supervisor recovery. Cover timeout/loss, dead-stage replacement and covered
 backend-crash recovery are checked too. Qt checks retain original layout/animation/touch coverage;
 Python checks reject laptop adoption and stale/recycled/wrong-workspace sources.
+The private native suite renders the packaged stage cover and floor separately
+and rejects launcher/navigation pixels, counts the real swipe indicators on
+Home and over media/IME, and begins gestures on the rendered indicator itself.
 No host system bus, physical sensor, real browser profile, audio or backlight is
 used by the private compositor suite.
 

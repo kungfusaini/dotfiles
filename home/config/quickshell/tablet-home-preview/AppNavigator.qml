@@ -20,6 +20,9 @@ Item {
     readonly property bool navigating: overview || progress > 0
     readonly property bool dragging: gesture.dragging || capturing || cards.draggingCard
     readonly property bool contactActive: gesture.pressed || gesture.dragging
+    // Single geometry source for the layer-shell input mask and visible handle.
+    property real navigationWidth: width
+    readonly property rect navigationInputRect: Qt.rect(gesture.x, gesture.y, gesture.width, gesture.height)
     readonly property real cardWidth: Math.min(width * .76, 760)
     readonly property real cardHeight: height * .70
     readonly property real cardTop: height * .15
@@ -191,7 +194,7 @@ Item {
     }
     BottomGesture {
         id: gesture
-        width: parent.width
+        width: nav.navigationWidth
         z: 5
         anchors { bottom: parent.bottom; bottomMargin: 4 + nav.keyboardInset; horizontalCenter: parent.horizontalCenter }
         blocked: nav.blocked

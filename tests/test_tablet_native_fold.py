@@ -85,6 +85,23 @@ class NativeTests(unittest.TestCase):
             for patcher in self.runtime(): stack.enter_context(patcher)
             self.native.setup(address)
 
+    def test_native_stage_is_presentation_only_including_recovery(self):
+        config = Path(self.tmp.name) / 'config/hypr'
+        config.mkdir(parents=True)
+        (config / 'hyprland.conf').write_text('layerrule=match:namespace ^tablet-rotation-fade$, no_anim on\n')
+        self.native.owner = {'start': 'owner-start'}
+        with patch.dict(os.environ, {'XDG_CONFIG_HOME': str(config.parent),
+                'TABLET_STAGE_QML': '/nix/store/fixture/stage.qml',
+                'TABLET_PROOF_QML': '/nix/store/fixture/shell.qml'}), \
+                patch.object(n.subprocess, 'Popen') as launch, \
+                patch.object(self.native, 'journal'), patch.object(self.native, 'cover') as cover:
+            for recovering in (False, True):
+                self.native.start_stage(allow_stopping=recovering)
+                environment = launch.call_args.kwargs['env']
+                self.assertEqual(environment['TABLET_STAGE_PRESENTATION_ONLY'], '1')
+                self.assertEqual(environment['TABLET_STAGE_ASSETS'], '/nix/store/fixture')
+                cover.assert_called_with(allow_stopping=recovering)
+
     def test_real_headless_posture_is_rejected_before_tablet_entry(self):
         with patch.object(Path, 'read_text', return_value='on'):
             with self.assertRaisesRegex(RuntimeError, 'awake internal display'):
