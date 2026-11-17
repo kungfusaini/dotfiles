@@ -541,6 +541,7 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             # Simulate the user closing ONLY the disposable tablet browser.
             # A later Home launch creates its own new tablet-local window,
             # never borrows the still-running laptop Vivaldi or laptop app.
+            closed_identity = next(c for c in clients() if c['address']==address)
             ctl('dispatch','closewindow','address:'+address)
             until(lambda:not any(c['address']==address for c in clients()),'private tablet window closed')
             ctl('dispatch','focuswindow','address:'+laptop_window['address'])
@@ -551,8 +552,12 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             proof('settings');proof('dismiss');proof('app')
             until(lambda:status()['browserRunning'] and not status()['home'],'new tablet-only browser launch from Home')
             new_source = status()['source']['address']
-            assert new_source not in before_home and new_source!=address
-            assert next(c for c in clients() if c['address']==new_source)['workspace']['name']=='tablet-trial'
+            assert new_source not in before_home
+            created = next(c for c in clients() if c['address']==new_source)
+            # Compositor addresses are allocator identities and can be reused
+            # after destruction. The stable window lifetime must be new.
+            assert created['stableId'] != closed_identity['stableId']
+            assert created['workspace']['name']=='tablet-trial'
             proof('home');proof('close')
             assert json.loads(ctl('activewindow','-j'))['address']==laptop_window['address']
             after_home = {c['address']:meta(c) for c in clients()}

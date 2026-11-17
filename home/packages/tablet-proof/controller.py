@@ -394,6 +394,19 @@ def request(command, value=None):
         return result
 
 
+def reject_pending_interaction_reload(proof, ipc):
+    """Do not acquire runtime settings after an unprocessed setup-time reload."""
+    try:
+        queued = ipc.recv(65536, socket.MSG_PEEK | socket.MSG_DONTWAIT)
+    except BlockingIOError:
+        return
+    if (not queued or len(queued) == 65536 or not queued.endswith(b'\n')
+            or any(line.startswith(b'configreloaded>>') for line in queued.splitlines())):
+        proof.record['config_changed'] = True
+        proof.journal()
+        raise RuntimeError('Configuration changed before tablet interaction acquisition; retry entry')
+
+
 def daemon(address):
     with (runtime() / 'owner.lock').open('a') as owner:
         fcntl.flock(owner, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -414,6 +427,7 @@ def daemon(address):
             selector.register(server, selectors.EVENT_READ, 'server')
             ipc.connect(str(Path(os.environ['XDG_RUNTIME_DIR']) / 'hypr' / os.environ['HYPRLAND_INSTANCE_SIGNATURE'] / '.socket2.sock'))
             selector.register(ipc, selectors.EVENT_READ, 'compositor')
+            proof.before_interaction_acquire = lambda: reject_pending_interaction_reload(proof, ipc)
             proof.setup(address)
             with (runtime() / 'frontend.log').open('a') as log:
                 proof.ui = subprocess.Popen(['quickshell', '--path', os.environ['TABLET_PROOF_QML']], stdout=log, stderr=log)

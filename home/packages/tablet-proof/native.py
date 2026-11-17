@@ -127,6 +127,7 @@ class Native(p.Proof):
         self.games_target = None
         self.games_requested = False
         self.games_focus_lost_at = None
+        self.posture = None
 
     def panel(self):
         panel = next((m for m in p.hypr('monitors') if m['name'] == 'eDP-1'), None)
@@ -139,7 +140,74 @@ class Native(p.Proof):
             raise RuntimeError('Use the awake internal display without a special workspace')
         return panel
 
+    POSTURE_OPTIONS = {'gestures:workspace_swipe_touch': (0, (0, 1)),
+                       'input:follow_mouse': (0, (0, 1, 2, 3))}
+
+    def config_token(self):
+        config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'hypr/hyprland.conf'
+        stat = config.stat()
+        return [str(config.resolve()), stat.st_mtime_ns, stat.st_size]
+
+    def posture_value(self, option):
+        value = json.loads(p.run('hyprctl', 'getoption', option, '-j')).get('int')
+        if type(value) is not int or value not in self.POSTURE_OPTIONS[option][1]:
+            raise RuntimeError('Unsupported tablet interaction baseline: ' + option)
+        return value
+
+    def acquire_posture(self):
+        barrier = getattr(self, 'before_interaction_acquire', None)
+        if barrier:
+            barrier()
+        baseline = {key: self.posture_value(key) for key in self.POSTURE_OPTIONS}
+        lease = {'config': self.config_token(), 'baseline': baseline, 'applied': []}
+        self.posture = lease
+        self.record['posture'] = lease
+        self.journal()
+        if barrier:
+            barrier()  # Recheck after the synchronous baseline reads/journal, before writes.
+        for key, (desired, _) in self.POSTURE_OPTIONS.items():
+            if baseline[key] == desired:
+                continue
+            lease['applied'].append(key)  # Journal intent before a potentially interrupted IPC.
+            self.journal()
+            if p.run('hyprctl', 'keyword', key, str(desired)) != 'ok' or self.posture_value(key) != desired:
+                raise RuntimeError('Could not acquire tablet interaction setting: ' + key)
+
+    def restore_posture(self, record=None):
+        record = self.record if record is None else record
+        lease = record.get('posture') if record else None
+        if not lease:
+            return
+        baseline, applied, token = lease.get('baseline'), lease.get('applied'), lease.get('config')
+        if (not isinstance(token, list) or len(token) != 3 or not isinstance(token[0], str)
+                or any(type(value) is not int for value in token[1:])
+                or not isinstance(baseline, dict) or set(baseline) != set(self.POSTURE_OPTIONS)
+                or not isinstance(applied, list) or any(not isinstance(key, str) for key in applied)
+                or len(set(applied)) != len(applied)
+                or any(key not in self.POSTURE_OPTIONS for key in applied)
+                or any(type(baseline[key]) is not int or baseline[key] not in bounds
+                       for key, (_, bounds) in self.POSTURE_OPTIONS.items())):
+            raise RuntimeError('Invalid tablet interaction recovery record; retained')
+        # A reload/deployment owns its new baseline. Never replay old settings
+        # into that generation or override a nonmatching live external change.
+        if not record.get('config_changed') and lease.get('config') == self.config_token():
+            for key in list(reversed(applied)):
+                if self.posture_value(key) == self.POSTURE_OPTIONS[key][0]:
+                    if p.run('hyprctl', 'keyword', key, str(baseline[key])) != 'ok':
+                        raise RuntimeError('Tablet interaction restoration deferred: ' + key)
+                    if self.posture_value(key) != baseline[key]:
+                        raise RuntimeError('Tablet interaction restoration not verified: ' + key)
+                applied.remove(key)
+                if record is self.record:
+                    self.journal()
+        record.pop('posture', None)
+        if record is self.record:
+            self.posture = None
+            self.journal()
+
     def journal(self):
+        if self.record and self.posture is not None:
+            self.record['posture'] = self.posture
         if self.record and self.session is not None:
             self.record.update(native=True, automatic=self.automatic,
                                rotation_enabled=self.rotation_enabled, owner=self.owner,
@@ -238,6 +306,7 @@ class Native(p.Proof):
                        'workspace': WORKSPACE, 'origin': WORKSPACE, 'focus': {}}
         self.journal()
         self.start_stage()  # Rendered opaque Home BEFORE switching workspace.
+        self.acquire_posture()
         self.session['entered'] = True
         self.journal()
         p.dispatch('workspace', 'name:' + WORKSPACE)
@@ -493,13 +562,18 @@ class Native(p.Proof):
             if current != self.games_target:
                 # Handoff only while our workspace remains foreground. Never
                 # follow a game or user to a different output/workspace.
-                self.guard()
+                _, panel = self.guard()
                 focus = p.hypr('activewindow')
+                if (focus.get('address') != target['address']
+                        and (self.drawer or panel.get('reserved', [0, 0, 0, 0])[3])):
+                    return status  # A drawer/IME may own even an empty focus during handoff.
                 known = [self.source, self.games_target]
                 if focus and focus.get('address') != target['address'] and not any(
                         item and all(focus.get(k) == v for k, v in item.items() if k != 'start') for item in known):
-                    raise RuntimeError('Unrelated tablet window has focus; game handoff refused')
-                p.dispatch('focuswindow', 'address:' + target['address'])
+                    self.error = 'Tablet game/library is not focused; swipe up for Home.'
+                    return status  # Keep navigation; never reclaim unrelated focus.
+                if focus.get('address') != target['address']:
+                    p.dispatch('focuswindow', 'address:' + target['address'])
                 if status['gameRunning'] and not self.present_game(target):
                     return status  # Renderer/compositor geometry may settle asynchronously.
                 if not status['gameRunning']:
@@ -511,14 +585,23 @@ class Native(p.Proof):
                 latest = self.games.status()
                 if latest['gameLaunching'] or latest['gameRunning'] != status['gameRunning']:
                     return latest
-                # Pegasus hides its frontend before its metadata command can
-                # publish a receipt. Bound that gap without refocusing anything.
+                # Keep navigation through modal/owned focus transitions. Only
+                # an empty focus may be repaired to the verified current target;
+                # a nonempty foreign window is never reclaimed.
                 if self.games_focus_lost_at is None:
                     self.games_focus_lost_at = time.monotonic()
-                if time.monotonic() - self.games_focus_lost_at < 5:
-                    return latest
-                raise RuntimeError('Tablet game/library lost focus; no window was reclaimed')
+                if (not self.drawer and not p.hypr('activewindow')
+                        and time.monotonic() - self.games_focus_lost_at >= .25):
+                    _, panel = self.guard()
+                    verified = self.games.game() or self.games.launcher()
+                    if (not panel.get('reserved', [0, 0, 0, 0])[3]
+                            and verified and identity(verified) == current and not p.hypr('activewindow')):
+                        p.dispatch('focuswindow', 'address:' + target['address'])
+                self.error = 'Tablet game/library is not focused; swipe up for Home.'
+                return latest
             self.games_focus_lost_at = None
+            if self.error == 'Tablet game/library is not focused; swipe up for Home.':
+                self.error = ''
         elif not status['gameLaunching'] and not status['gamesLaunching']:
             self.home = True
             self.games_target = None
@@ -678,6 +761,12 @@ class Native(p.Proof):
                 self.return_desktop()
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
             errors.append(str(error))
+        # Even a deferred client restore must release the interaction lease.
+        # Do this after client/workspace work so follow-mouse cannot disrupt it.
+        try:
+            self.restore_posture()
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
+            errors.append(str(error))
         # Stage last: window/IME teardown and workspace return happen behind it.
         try:
             if self.stage and self.stage.poll() is None:
@@ -787,11 +876,13 @@ def recover(activate=False):
                 record['rotation_enabled'] = False
                 p.save(value)
                 errors = []
-                for fn in (proof.keyboard.stop, lambda: p.run(os.environ['TABLET_NATIVE_ORIENTATION_BIN'], 'restore')):
+                for fn in (proof.keyboard.stop, lambda: p.run(os.environ['TABLET_NATIVE_ORIENTATION_BIN'], 'restore'),
+                           lambda: proof.restore_posture(record)):
                     try:
                         fn()
                     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
                         errors.append(str(error))
+                p.save(value)
                 detail = str(cover_error) if cover_error else 'Covered tablet foreground is required'
                 raise RuntimeError('Native tablet recovery retained: ' + '; '.join([detail, *errors]))
             proof.record = record

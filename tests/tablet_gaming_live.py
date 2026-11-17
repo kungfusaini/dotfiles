@@ -3,6 +3,7 @@ import importlib.util
 import io
 import json
 import os
+import select
 from pathlib import Path
 import signal
 import subprocess
@@ -22,6 +23,7 @@ def inner():
     assert str(root).startswith('/tmp/twa.proof.') and runtime == root / 'r'
     processes = []
     ipc = None
+    pointer = None
     os.environ['TABLET_TEST_ORIENTATION'] = str(root / 'orientation')
     (root / 'orientation').write_text('normal')
     fake = root / 'fake-bin'; fake.mkdir()
@@ -55,6 +57,24 @@ def inner():
         assert ipc and str(ipc).startswith(str(runtime) + '/hypr/')
         subprocess.run(['wtype', '-k', key], check=True, timeout=5)
 
+    def posture():
+        return {key: json.loads(ctl('getoption', key, '-j'))['int'] for key in
+                ('gestures:workspace_swipe_touch', 'input:follow_mouse')}
+
+    def pointer_command(command):
+        assert ipc and str(ipc).startswith(str(runtime) + '/hypr/')
+        pointer.stdin.write(command + '\n'); pointer.stdin.flush()
+        assert select.select([pointer.stdout], [], [], 5)[0]
+        assert pointer.stdout.readline().strip() == 'OK'
+
+    def swipe_home():
+        pointer_command('move 480 610 960 640'); pointer_command('down')
+        time.sleep(.04)
+        for step in range(1, 9):
+            pointer_command('move 480 ' + str(610 - step * 16) + ' 960 640')
+            time.sleep(.018)
+        pointer_command('up')
+
     def snapshot(name):
         assert ipc and str(ipc).startswith(str(runtime) + '/hypr/')
         image = Image.open(io.BytesIO(subprocess.check_output(['grim', '-o', 'eDP-1', '-']))).convert('RGB')
@@ -67,7 +87,7 @@ def inner():
         outer = until(lambda: next((p for p in runtime.glob('wayland-*') if p.is_socket()), None), 'private outer socket')
         os.environ['WAYLAND_DISPLAY'] = outer.name
         config = root / 'hyprland.conf'
-        config.write_text('monitor=,960x640@60,auto,1\nxwayland {\n enabled=false\n}\nmisc {\n disable_hyprland_logo=true\n disable_splash_rendering=true\n}\nlayerrule=match:namespace ^tablet-rotation-fade$, no_anim on\n')
+        config.write_text('monitor=,960x640@60,auto,1\nxwayland {\n enabled=false\n}\nmisc {\n disable_hyprland_logo=true\n disable_splash_rendering=true\n}\ngestures {\n workspace_swipe_touch=true\n}\ninput {\n follow_mouse=1\n}\nlayerrule=match:namespace ^tablet-rotation-fade$, no_anim on\n')
         install = Path(os.environ['XDG_CONFIG_HOME']) / 'hypr'; install.mkdir(parents=True)
         (install / 'hyprland.conf').symlink_to(config)
         start([os.environ['TABLET_TEST_HYPRLAND'], '-c', str(config)], 'hyprland')
@@ -78,6 +98,13 @@ def inner():
         ctl('keyword', 'monitor', 'eDP-1,960x640@60,0x0,1')
         for monitor in json.loads(ctl('monitors', '-j')):
             if monitor['name'] != 'eDP-1': ctl('keyword', 'monitor', monitor['name'] + ',disable')
+        pointer = subprocess.Popen([os.environ['TABLET_TEST_POINTER']], stdin=subprocess.PIPE,
+                                   stdout=subprocess.PIPE, text=True, start_new_session=True)
+        processes.append(pointer)
+        assert select.select([pointer.stdout], [], [], 5)[0]
+        assert pointer.stdout.readline().strip() == 'READY'
+        baseline = posture()
+        assert all(value == 1 for value in baseline.values())
         ctl('dispatch', 'workspace', 'name:laptop-fixture')
         laptop = start(['quickshell', '--path', os.environ['TABLET_TEST_LAPTOP_QML']], 'laptop')
         laptop_window = until(lambda: next((c for c in clients() if c['pid'] == laptop.pid), None), 'private laptop window')
@@ -111,6 +138,8 @@ FocusScope {
         ctl('keyword', 'windowrule', 'match:title ^Tablet fixture game$, float on')
         proof('start'); proof('games')
         until(lambda: status()['pegasusRunning'] and not status()['home'], 'tablet Pegasus view')
+        assert all(value == 0 for value in posture().values()), 'tablet interaction lease missing'
+        first_backend = status()['backend']['pid']
         library = next(c for c in clients() if c['class'].startswith(('pegasus-fe', 'org.pegasus-frontend')))
         time.sleep(.5)
         assert snapshot('library').getpixel((40, 40)) == (37, 59, 104)
@@ -126,14 +155,35 @@ FocusScope {
         game = next(c for c in clients() if c.get('title') == 'Tablet fixture game')
         until(lambda: next(c for c in clients() if c['address'] == game['address'])['size'] == [960, 640], 'screen-filling floating game')
         assert snapshot('game').getpixel((40, 40)) == (21, 185, 77)
+        intruder_ui = root / 'foreign-focus.qml'
+        intruder_ui.write_text('import Quickshell\nimport QtQuick\nShellRoot { FloatingWindow { visible: true; width: 200; height: 150; title: "Foreign focus fixture"; color: "#555555"; onClosed: Qt.quit() } }\n')
+        ctl('keyword', 'windowrule', 'match:title ^Foreign focus fixture$, float on')
+        intruder_process = start(['quickshell', '--path', str(intruder_ui)], 'foreign-focus')
+        intruder = until(lambda: next((c for c in clients() if c['pid'] == intruder_process.pid), None), 'foreign same-workspace focus fixture')
+        ctl('dispatch', 'focuswindow', 'address:' + intruder['address'])
+        time.sleep(6)  # Cross the former fatal focus-loss timeout.
+        assert status()['running'] and status()['backend']['pid'] == first_backend
+        assert json.loads(ctl('activewindow', '-j'))['pid'] == intruder_process.pid, 'unrelated focus reclaimed'
+        assert all(value == 0 for value in posture().values())
+        ctl('dispatch', 'closewindow', 'address:' + intruder['address'])
+        until(lambda: json.loads(ctl('activewindow', '-j')).get('address') == game['address'], 'verified game focus resumes')
         proof('close')
+        assert posture() == baseline, 'desktop gesture/focus baseline not restored on unfold'
         restored = next(c for c in clients() if c['address'] == game['address'])
         assert restored['floating'] and restored['fullscreen'] == 0 and restored['size'] == [480, 320], restored
         assert json.loads(ctl('activewindow', '-j'))['address'] == laptop_window['address']
         proof('start')
+        returned_backend = status()['backend']['pid']
+        assert all(value == 0 for value in posture().values())
         until(lambda: status()['gameRunning'] and json.loads(ctl('activewindow', '-j')).get('address') == game['address'], 'game resumes on fold')
         ctl('dispatch', 'closewindow', 'address:' + game['address'])
         until(lambda: status()['pegasusRunning'] and not status()['gameRunning'] and json.loads(ctl('activewindow', '-j')).get('pid') == library['pid'], 'same library returns after game')
+        assert status()['backend']['pid'] == returned_backend, 'game exit destroyed tablet navigation'
+        swipe_home()
+        until(lambda: status()['home'], 'bottom swipe works after returning from game to Pegasus')
+        assert status()['backend']['pid'] == returned_backend
+        proof('games')
+        until(lambda: status()['pegasusRunning'] and not status()['home'], 'Pegasus resumes from tablet Home')
         keys('2')
         until(lambda: receipt().get('phase') == 'done' and receipt().get('code') == 1, 'failed child receipt completes', timeout=35)
         caller = receipt()['caller']['pid']
@@ -147,16 +197,26 @@ FocusScope {
         ctl('dispatch', 'closewindow', 'address:' + retry['address'])
         until(lambda: status()['pegasusRunning'] and not status()['gameRunning'], 'retry returns to Pegasus')
         proof('close')
+        assert posture() == baseline, 'desktop input settings changed after final exit'
         assert not (runtime / 'tablet-proof/recovery.json').exists()
         assert json.loads(ctl('activewindow', '-j'))['address'] == laptop_window['address']
-        print('PASS: retained Pegasus loading, no Home fallback, floating fullscreen/release, unfold survival/resume, library return, failed launch and retry', flush=True)
+        proof('start')
+        assert all(value == 0 for value in posture().values())
+        backend = status()['backend']['pid']
+        descriptor = os.pidfd_open(backend)
+        try: signal.pidfd_send_signal(descriptor, signal.SIGKILL)
+        finally: os.close(descriptor)
+        until(lambda: not status().get('running') and not status().get('recovery'), 'crashed controller recovers interaction ownership', timeout=35)
+        assert posture() == baseline, 'crash recovery did not restore desktop input policy'
+        assert json.loads(ctl('activewindow', '-j'))['address'] == laptop_window['address']
+        print('PASS: retained Pegasus loading, no Home fallback, floating fullscreen/release, unfold survival/resume, library return, failed launch and retry; reversible interaction isolation, no foreign-focus reclaim, bottom swipe after game return, crash restoration', flush=True)
     finally:
         if ipc:
             try:
                 (root / 'last-clients.json').write_text(json.dumps(clients(), indent=2))
                 (root / 'last-status.json').write_text(json.dumps(status(), indent=2))
                 snapshot('last-frame')
-                if (runtime / 'tablet-proof/control.sock').exists(): proof('close')
+                if status().get('running'): proof('close')
             except Exception as error: print('Private cleanup:', error, file=sys.stderr)
         for process in reversed(processes):
             if process.poll() is None:

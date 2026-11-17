@@ -97,6 +97,31 @@ the new tablet window is verified and natively maximized. Exit covers window/IME
 teardown and workspace return; the stage stops last. Independent parent-lifetime
 watchdogs prevent orphan covers. See [continuous presentation](tablet-presentation.md).
 
+## Interaction isolation
+
+Tablet mode is an interaction posture, not a separate OS or security sandbox.
+While the native session owns the awake internal tablet workspace, a journaled
+lease disables touchscreen workspace-edge swipes (`gestures:workspace_swipe_touch`)
+and focus-following cursor motion (`input:follow_mouse`). Keyboard bindings and
+normal desktop/trackpad gesture configuration are not replaced. Intentional
+keyboard workspace escape still ends the session safely; unfolding returns to
+the recorded desktop workspace rather than trapping the user.
+
+Entry refuses a queued setup-time config reload before acquiring interaction
+settings. The effective values and configuration-generation token are saved
+before any mutation. Normal exit, setup failure and crash recovery release the lease even
+when visual/client restoration must be deferred. Restoration compares the live
+value with the owned value and does not overwrite a newer config generation,
+config reload, or a nonmatching external runtime change. Adapter record changes
+(browser ↔ Pegasus) retain the same session lease.
+
+Pegasus/game modal or same-workspace focus gaps do not destroy the navigation
+layer. A nonempty unrelated focus is never reclaimed. Empty focus can return to
+the exact verified game/library only while the tablet workspace is still
+foreground, with neither settings drawer nor IME holding input. The bottom
+handle remains usable after game exit and return to Pegasus; the session does
+not silently become a standalone launcher with no tablet navigation.
+
 ## Posture, rotation and recovery
 
 `watch-fold` shares the old watcher's singleton lock and refuses coexistence.
@@ -158,7 +183,10 @@ backend-crash recovery are checked too. Qt checks retain original layout/animati
 Python checks reject laptop adoption and stale/recycled/wrong-workspace sources.
 The private native suite renders the packaged stage cover and floor separately
 and rejects launcher/navigation pixels, counts the real swipe indicators on
-Home and over media/IME, and begins gestures on the rendered indicator itself.
+Home and over media/IME, and begins gestures on the rendered indicator itself. The focused game proof
+also checks leased input values, normal/crash restoration, a six-second foreign
+focus interval without a focus steal or backend restart, and a real bottom-swipe
+back to Home after returning from a game to Pegasus.
 No host system bus, physical sensor, real browser profile, audio or backlight is
 used by the private compositor suite.
 

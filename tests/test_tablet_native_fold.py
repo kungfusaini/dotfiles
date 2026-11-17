@@ -77,7 +77,8 @@ class NativeTests(unittest.TestCase):
                 patch.object(p, 'run', side_effect=lambda *a, **kw: 'true' if 'getprop' in a else ''),
                 patch.object(p.subprocess, 'Popen', return_value=process),
                 patch.object(self.native, 'cover'),
-                patch.object(self.native, 'start_stage', side_effect=lambda **kw: self.events.append(('stage', 'covered'))))
+                patch.object(self.native, 'start_stage', side_effect=lambda **kw: self.events.append(('stage', 'covered'))),
+                patch.object(self.native, 'acquire_posture'))
 
     def enter(self, address=None):
         from contextlib import ExitStack
@@ -468,6 +469,77 @@ class NativeTests(unittest.TestCase):
             self.assertEqual(self.native.poll_games(), status)
         self.assertFalse(self.native.home)
         self.assertEqual(self.native.games_target['address'], library['address'])
+
+    def test_foreign_same_workspace_focus_does_not_destroy_navigation_or_get_reclaimed(self):
+        self.enter(); self.native.active_app = 'games'; self.native.games_requested = True; self.native.home = False
+        game = self.client('0xcd', 'def', n.WORKSPACE)
+        foreign = self.client('0xef', 'fed', n.WORKSPACE)
+        self.clients += [game, foreign]; self.focus = foreign
+        with patch.object(p, 'hypr', side_effect=self.queries), patch.object(p, 'start_time', return_value='process'), \
+                patch.object(p, 'dispatch') as dispatch, patch.object(n.time, 'monotonic', return_value=10), \
+                patch.object(self.native.games, 'status', return_value=dict(gameLaunching=False, gameRunning=True)), \
+                patch.object(self.native.games, 'game', return_value=game):
+            self.native.games_target = n.identity(game)
+            self.native.games_focus_lost_at = 0
+            self.native.poll_games()
+        dispatch.assert_not_called()
+        self.assertFalse(self.native.stopping)
+        self.assertFalse(self.native.home)
+        self.assertIn('swipe up for Home', self.native.error)
+
+    def test_empty_focus_can_repair_only_verified_foreground_tablet_target(self):
+        self.enter(); self.native.active_app = 'games'; self.native.games_requested = True; self.native.home = False
+        game = self.client('0xcd', 'def', n.WORKSPACE)
+        self.clients.append(game); self.focus = {}
+        with patch.object(p, 'hypr', side_effect=self.queries), patch.object(p, 'start_time', return_value='process'), \
+                patch.object(p, 'dispatch', side_effect=self.dispatch), patch.object(n.time, 'monotonic', return_value=10), \
+                patch.object(self.native.games, 'status', return_value=dict(gameLaunching=False, gameRunning=True)), \
+                patch.object(self.native.games, 'game', return_value=game):
+            self.native.games_target = n.identity(game)
+            self.native.games_focus_lost_at = 0
+            self.native.poll_games()
+        self.assertEqual(self.focus, game)
+        self.assertFalse(self.native.stopping)
+        self.assertNotIn(('workspace', 'name:laptop'), self.events)
+
+    def test_empty_focus_does_not_take_focus_from_drawer_or_visible_ime(self):
+        self.enter(); self.native.active_app = 'games'; self.native.games_requested = True; self.native.home = False
+        game = self.client('0xcd', 'def', n.WORKSPACE)
+        self.clients.append(game); self.focus = {}
+        with patch.object(p, 'hypr', side_effect=self.queries), patch.object(p, 'start_time', return_value='process'), \
+                patch.object(p, 'dispatch') as dispatch, patch.object(n.time, 'monotonic', return_value=10), \
+                patch.object(self.native.games, 'status', return_value=dict(gameLaunching=False, gameRunning=True)), \
+                patch.object(self.native.games, 'game', return_value=game):
+            self.native.games_target = n.identity(game)
+            self.native.games_focus_lost_at = 0
+            self.native.drawer = True
+            self.native.poll_games()
+            self.native.drawer = False
+            self.panel['reserved'][3] = 200
+            self.native.poll_games()
+        dispatch.assert_not_called()
+        self.assertFalse(self.native.stopping)
+
+    def test_changed_game_or_library_target_does_not_take_drawer_or_ime_focus(self):
+        self.enter(); self.native.active_app = 'games'; self.native.games_requested = True; self.native.home = False
+        game = self.client('0xcd', 'def', n.WORKSPACE)
+        library = dict(self.client('0xef', 'fed', n.WORKSPACE), **{'class': 'pegasus-fe'})
+        self.clients += [game, library]; self.focus = {}
+        with patch.object(p, 'hypr', side_effect=self.queries), patch.object(p, 'start_time', return_value='process'), \
+                patch.object(p, 'dispatch') as dispatch, \
+                patch.object(self.native.games, 'status') as state, \
+                patch.object(self.native.games, 'game') as playing, \
+                patch.object(self.native.games, 'launcher', return_value=library):
+            for target in (game, None):
+                playing.return_value = target
+                state.return_value = dict(gameLaunching=False, gameRunning=target is not None)
+                for drawer, inset in ((True, 0), (False, 200)):
+                    self.native.drawer = drawer; self.panel['reserved'][3] = inset
+                    self.native.games_target = {'address': '0xold'}
+                    self.native.poll_games()
+                    self.assertEqual(self.native.games_target, {'address': '0xold'})
+        dispatch.assert_not_called()
+        self.assertFalse(self.native.stopping)
 
     def test_failed_media_pause_during_switch_reveals_original_browser(self):
         self.enter()
