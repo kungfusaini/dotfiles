@@ -388,6 +388,7 @@ class Native(p.Proof):
     def select_browser(self):
         self.cover('Opening Vivaldi…')
         try:
+            self.release_game_presentation()
             self.active_app = 'vivaldi'
             self.games_target = None
             self.games_requested = False
@@ -408,20 +409,87 @@ class Native(p.Proof):
         finally:
             self.ipc(self.stage, 'tabletStage', 'reveal')
 
+    def present_game(self, client):
+        """Fullscreen only the exact verified tablet game; keep a reversible lease."""
+        self.guard()
+        if not gaming.find(gaming.identity(client), p.hypr('clients')):
+            raise RuntimeError('Tablet game identity changed before presentation')
+        if p.hypr('activewindow').get('address') != client['address']:
+            raise RuntimeError('Tablet game lost focus before presentation')
+        lease = self.record.get('game_presentation')
+        if lease and lease['window'] != gaming.identity(client):
+            self.release_game_presentation()
+            lease = None
+        if lease and lease.get('presented'):
+            return True  # No repeated enforcement after the verified first handoff.
+        if not lease:
+            lease = {'window': gaming.identity(client), 'internal': client.get('fullscreen', 0),
+                     'client': client.get('fullscreenClient', 0)}
+            self.record['game_presentation'] = lease
+            self.journal()  # Recovery evidence precedes the first mutation.
+        if (client.get('fullscreen', 0), client.get('fullscreenClient', 0)) != (2, 2):
+            p.dispatch('fullscreenstate', '2 2')
+            if p.hypr('activewindow').get('address') != client['address']:
+                raise RuntimeError('Game focus changed during fullscreen transition')
+        current = gaming.find(lease['window'], p.hypr('clients'))
+        panel = self.panel()
+        width, height = panel['width'], panel['height']
+        if panel.get('transform', 0) % 2:
+            width, height = height, width
+        scale = panel.get('scale', 1)
+        presented = bool(current and current.get('fullscreen') == 2
+                         and current.get('size') == [round(width / scale), round(height / scale)])
+        if presented:
+            lease['presented'] = True
+            self.journal()
+        return presented
+
+    def release_game_presentation(self, activate=False):
+        lease = self.record.get('game_presentation') if self.record else None
+        if not lease:
+            return
+        # Ineligible is not destroyed: a moved, pinned or temporarily unmapped
+        # exact window still owns this lease. Never erase its recovery evidence.
+        client = next((c for c in p.hypr('clients') if identity(c) == lease['window']), None)
+        if client:
+            if not gaming.local(client, allow_floating=True):
+                raise RuntimeError('Game presentation restore deferred for ineligible live window')
+            if activate and p.hypr('activeworkspace').get('name') != WORKSPACE:
+                if p.hypr('activeworkspace').get('monitor') != 'eDP-1':
+                    raise RuntimeError('Explicit game recovery cannot take focus from another display')
+                self.panel()
+                self.cover(allow_stopping=True)
+                p.dispatch('workspace', 'name:' + WORKSPACE)
+            self.guard()
+            if p.hypr('activewindow').get('address') != client['address']:
+                if not activate:
+                    raise RuntimeError('Game presentation restore needs its verified foreground window')
+                p.dispatch('focuswindow', 'address:' + client['address'])
+            if p.hypr('activewindow').get('address') != client['address']:
+                raise RuntimeError('Game restore focus could not be verified')
+            modes = (lease['internal'], lease['client'])
+            if (client.get('fullscreen', 0), client.get('fullscreenClient', 0)) != modes:
+                p.dispatch('fullscreenstate', f'{modes[0]} {modes[1]}')
+                if p.hypr('activewindow').get('address') != client['address']:
+                    raise RuntimeError('Game focus changed during restore')
+        self.record.pop('game_presentation', None)
+        self.journal()
+
     def poll_games(self):
         status = self.games.status()
         if self.active_app != 'games':
             return status
-        if status['gameLaunching'] and not status['gameRunning']:
-            # Pegasus unmaps before the new game identity can be published.
-            # Keep Home covering this gap, without reclaiming an unverified app.
-            self.home = True
-            return status
+        # Tablet Pegasus keeps its real, game-specific loading window mapped.
+        # Never substitute Home while its wrapper waits for the verified game.
         target = self.games.game() or self.games.launcher()
         if target:
             if self.games_requested:
                 self.home = False
             current = identity(target)
+            if (status['gameRunning'] and current == self.games_target
+                    and p.hypr('activewindow').get('address') == target['address']):
+                if not self.present_game(target):
+                    return status
             if current != self.games_target:
                 # Handoff only while our workspace remains foreground. Never
                 # follow a game or user to a different output/workspace.
@@ -432,20 +500,22 @@ class Native(p.Proof):
                         item and all(focus.get(k) == v for k, v in item.items() if k != 'start') for item in known):
                     raise RuntimeError('Unrelated tablet window has focus; game handoff refused')
                 p.dispatch('focuswindow', 'address:' + target['address'])
+                if status['gameRunning'] and not self.present_game(target):
+                    return status  # Renderer/compositor geometry may settle asynchronously.
+                if not status['gameRunning']:
+                    self.release_game_presentation()
                 self.games_target = current
                 self.journal()
                 self.remember()
             if not self.home and p.hypr('activewindow').get('address') != target['address']:
                 latest = self.games.status()
                 if latest['gameLaunching'] or latest['gameRunning'] != status['gameRunning']:
-                    self.home = True
                     return latest
                 # Pegasus hides its frontend before its metadata command can
                 # publish a receipt. Bound that gap without refocusing anything.
                 if self.games_focus_lost_at is None:
                     self.games_focus_lost_at = time.monotonic()
                 if time.monotonic() - self.games_focus_lost_at < 5:
-                    self.home = True
                     return latest
                 raise RuntimeError('Tablet game/library lost focus; no window was reclaimed')
             self.games_focus_lost_at = None
@@ -561,7 +631,7 @@ class Native(p.Proof):
             return
         errors = []
         covered = False
-        pending_lease = not self.record.get('home_only') and not self.record.get('lease_released')
+        pending_lease = (not self.record.get('home_only') and not self.record.get('lease_released')) or bool(self.record.get('game_presentation'))
         try:
             foreground = p.hypr('activeworkspace').get('name') == WORKSPACE
         except (OSError, ValueError, subprocess.SubprocessError) as error:
@@ -629,6 +699,7 @@ class Native(p.Proof):
             self.orientation.wait(timeout=10)
 
     def release_presentation(self, activate):
+        self.release_game_presentation(activate)
         if not self.record.get('home_only') and not self.record.get('lease_released'):
             super().cleanup(activate, retain_journal=True)
             self.record['lease_released'] = True
@@ -673,7 +744,7 @@ def recover(activate=False):
         # Establish a new, owned cover BEFORE stopping any surviving old cover
         # or mutating client/workspace state. Until registered in the journal,
         # its exact-parent watchdog handles interruption of this recovery.
-        pending = not record.get('home_only') and not record.get('lease_released')
+        pending = (not record.get('home_only') and not record.get('lease_released')) or bool(record.get('game_presentation'))
         foreground = p.hypr('activeworkspace').get('name') == WORKSPACE
         covered = False
         cover_error = None

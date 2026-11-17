@@ -9,9 +9,10 @@ let
   };
   # All prominent views use full-bleed promotional art, never screenshots or
   # package-shaped covers. Screenshots remain in the optional details gallery.
-  curatedGameOS = pkgs.runCommand "gameos-cover-art" { } ''
+  curatedGameOS = pkgs.runCommand "gameos-cover-art" { nativeBuildInputs = [ pkgs.patch ]; } ''
     cp -r ${gameOSTheme} "$out"
     chmod -R u+w "$out"
+    patch -d "$out" -p1 < ${../config/pegasus/tablet-launch-theme.patch}
     substituteInPlace "$out/Global/DynamicGridItem.qml" \
       --replace-fail 'modelData.assets.screenshots[0] || modelData.assets.background' \
                      'modelData.assets.background'

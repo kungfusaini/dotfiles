@@ -1,4 +1,5 @@
-{ pkgs, hyprland, native ? false }:
+{ pkgs, hyprland, native ? false, gamingOnly ? false }:
+assert !gamingOnly || native;
 let
   sensor = pkgs.writeShellScriptBin "monitor-sensor" ''
     while true; do
@@ -53,6 +54,7 @@ let
     export TABLET_PROOF_SOURCE=${../home/packages/tablet-proof/controller.py}
     export TABLET_MEDIA_CLIENT_SOURCE=${../home/packages/tablet-proof/media/client.py}
     export TABLET_GAMING_SOURCE=${../home/packages/tablet-proof/gaming.py}
+    ${pkgs.lib.optionalString native "export TABLET_PEGASUS_BIN=${proof.pegasus}/bin/pegasus-fe"}
     export TABLET_WINDOW_APPS_SOURCE=${../home/scripts/desktop/tablet_apps.py}
     export TABLET_APPS_REGISTRY=${registry}
     export TABLET_STAGE_QML=${proof.ui}/stage.qml
@@ -60,10 +62,11 @@ let
     exec ${python}/bin/python ${if native then ../home/packages/tablet-proof/native.py else ../home/packages/tablet-proof/controller.py} "$@"
   '';
 in pkgs.writeShellApplication {
-  name = if native then "tablet-native-fold-test" else "tablet-proof-native-test";
+  name = if gamingOnly then "tablet-pegasus-test" else if native then "tablet-native-fold-test" else "tablet-proof-native-test";
   runtimeInputs = [python hyprland pkgs.quickshell pkgs.labwc pkgs.bubblewrap pkgs.dbus pkgs.glib pkgs.dconf pkgs.wtype pkgs.grim pkgs.squeekboard pkgs.vivaldi pkgs.pegasus-frontend];
   text = ''
     export TABLET_TEST_NATIVE_FOLD=${if native then "1" else "0"}
+    export TABLET_TEST_PROOF_DRIVER=${./tablet_proof_live.py}
     export TABLET_TEST_NATIVE_SOURCE=${../home/packages/tablet-proof/native.py}
     export TABLET_GAMING_SOURCE=${../home/packages/tablet-proof/gaming.py}
     export TABLET_TEST_LAPTOP_QML=${laptop}
@@ -87,6 +90,6 @@ in pkgs.writeShellApplication {
     export GTK_THEME=Adwaita:dark
     export G_RESOURCE_OVERLAYS=/sm/puri/squeekboard=${../home/config/squeekboard-preview}/resource
     export SQUEEKBOARD_KEYBOARDSDIR=${../home/config/squeekboard-preview}/keyboards
-    exec ${python}/bin/python ${./tablet_proof_live.py}
+    exec ${python}/bin/python ${if gamingOnly then ./tablet_gaming_live.py else ./tablet_proof_live.py}
   '';
 }

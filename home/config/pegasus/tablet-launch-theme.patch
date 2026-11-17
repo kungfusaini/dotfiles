@@ -1,0 +1,52 @@
+--- a/theme.qml
++++ b/theme.qml
+@@ -92,6 +92,11 @@
+     property var sortByDisplay: ["title", "last played", "play count", "rating"]
+     property int sortByIndex: 0
+     property var orderBy: Qt.AscendingOrder
++    // Provided only by the tablet package; ordinary desktop themes are unchanged.
++    readonly property bool tabletLaunching: typeof tabletLaunchActive !== "undefined" && tabletLaunchActive
++    onTabletLaunchingChanged: {
++        if (!tabletLaunching && root.state === "launchgamescreen") previousScreen();
++    }
+     property string searchTerm: ""
+     property bool steam: currentCollection.name === "Steam"
+     function steamExists() {
+--- a/GameDetails/LaunchGame.qml
++++ b/GameDetails/LaunchGame.qml
+@@ -120,8 +120,14 @@
+         Text {
+         id: launchText
+
+-            text: "Press any button to return"//"Launching " + currentGame.title
+-            width: contentWidth
++            text: (typeof tabletLaunchActive !== "undefined" && tabletLaunchActive)
++                  ? (tabletLaunchPhase === "returning" ? "Finishing game session…"
++                     : tabletLaunchPhase === "unavailable" ? "Launch needs attention\n" + tabletLaunchError
++                     : "Launching " + currentGame.title + "…") : "Press any button to return"
++            textFormat: Text.PlainText
++            wrapMode: Text.Wrap
++            horizontalAlignment: Text.AlignHCenter
++            width: Math.min(contentWidth, vpx(900))
+             height: contentHeight
+             font.family: titleFont.name
+             font.pixelSize: vpx(24)
+@@ -146,6 +152,10 @@
+
+     // Input handling
+     Keys.onPressed: {
++        if (typeof tabletLaunchActive !== "undefined" && tabletLaunchActive) {
++            event.accepted = true;
++            return;
++        }
+
+         // Back
+         if (api.keys.isCancel(event) && !event.isAutoRepeat) {
+@@ -158,6 +168,7 @@
+
+     // Mouse/touch functionality
+     MouseArea {
++        enabled: !(typeof tabletLaunchActive !== "undefined" && tabletLaunchActive)
+         anchors.fill: parent
+         hoverEnabled: true
+         onClicked: {

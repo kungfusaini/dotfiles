@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -72,16 +73,17 @@ def identity(client):
     return {**{k: client[k] for k in ('address', 'pid', 'class', 'stableId')}, 'start': start(client['pid'])}
 
 
-def local(client):
+def local(client, allow_floating=False):
     return (client.get('mapped') and client.get('workspace', {}).get('name') == WORKSPACE
-            and not any(client.get(k) for k in ('pinned', 'grouped', 'floating'))
+            and not any(client.get(k) for k in ('pinned', 'grouped'))
+            and (allow_floating or not client.get('floating'))
             and bool(re.fullmatch('[0-9a-f]+', client.get('stableId', ''))))
 
 
 def find(record, clients):
     for client in clients:
         try:
-            if local(client) and identity(client) == record:
+            if local(client, allow_floating=True) and identity(client) == record:
                 return client
         except OSError:
             pass
@@ -138,7 +140,8 @@ class Games:
         token = uuid.uuid4().hex
         self.pending = {'token': token, 'previous': [c['address'] for c in self.hypr('clients')],
                         'deadline': time.monotonic() + 20}
-        self.dispatch('exec', '[workspace name:' + WORKSPACE + ' silent] env TABLET_PEGASUS_TOKEN=' + token + ' pegasus-fe')
+        binary = os.environ.get('TABLET_PEGASUS_BIN', 'pegasus-fe')
+        self.dispatch('exec', '[workspace name:' + WORKSPACE + ' silent] env TABLET_PEGASUS_TOKEN=' + token + ' ' + shlex.quote(binary))
 
     def tick(self):
         if not self.pending:
@@ -184,7 +187,7 @@ def clients():
 
 
 def authorized_game(client, command, owner, previous):
-    if not local(client) or client['address'] in previous:
+    if not local(client, allow_floating=True) or client['address'] in previous:
         return False
     if command[0] == 'steam-session':
         if len(command) != 2 or not command[1].isdigit():
@@ -298,13 +301,99 @@ def worker(command, request):
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         record.update(phase='unavailable', error=str(error))
         write('launch.json', record)
-        subprocess.run(['notify-send', 'Tablet game handoff unavailable', str(error)], check=False)
+        try:
+            subprocess.run(['notify-send', 'Tablet game handoff unavailable', str(error)], check=False)
+        except OSError:
+            pass  # A missing notification backend must not strand cleanup/receipt.
     # Never terminate a game/Steam cleanup worker. Returning from this command
     # (not just a launcher exit) is what lets Pegasus restore its frontend.
     code = child.wait() if child else 1
     record.update(phase='done', game=None, code=code)
     write('launch.json', record)
     return code
+
+
+def recovery_environment(pid, caller_start):
+    try:
+        return environment(pid)
+    except (FileNotFoundError, ProcessLookupError):
+        return {}  # Gone or zombie processes no longer have an address space.
+    except PermissionError as error:
+        # Protected session services can be same-UID but non-dumpable. An older
+        # process cannot descend from this request; an unreadable possible
+        # descendant remains a hard blocker. Still inspect every readable PID.
+        if int(start(pid)) < int(caller_start):
+            return {}
+        raise RuntimeError('Cannot inspect a possible launch descendant; receipt retained') from error
+
+
+def sync_directory(path):
+    directory = os.open(path, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(directory)
+    finally:
+        os.close(directory)
+
+
+def recover_failed(appid):
+    """Explicit recovery only after independently proving a failed Steam attempt idle."""
+    import fcntl
+    with (root() / 'launch.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        record = read('launch.json')
+        if (record.get('phase') != 'unavailable' or record.get('game')
+                or record.get('command') != command_hash(['steam-session', appid])):
+            raise RuntimeError('Only the exact failed Steam request can be recovered')
+        for role in ('caller', 'owner', 'child'):
+            value = record.get(role)
+            if not value or not value.get('pid') or not value.get('start'):
+                raise RuntimeError('Incomplete lifetime evidence; receipt retained')
+            try:
+                alive = start(value['pid']) == value['start']
+            except (FileNotFoundError, ProcessLookupError):
+                alive = False
+            if alive:
+                raise RuntimeError('Recorded game/worker lifetime is still alive; receipt retained')
+        state = json.loads(subprocess.check_output(['steam-library', 'status'], text=True, timeout=15))
+        if state.get('running') is not False or any(state.get('shutdown_blockers', {}).values()):
+            raise RuntimeError('Steam or protected activity still exists; receipt retained')
+        # Do not treat a dead worker or empty compositor as proof of game exit.
+        for proc in Path('/proc').iterdir():
+            if not proc.name.isdigit():
+                continue
+            try:
+                if proc.stat().st_uid == os.getuid():
+                    values = recovery_environment(int(proc.name), record['caller']['start'])
+                    if any(values.get(k) not in (None, '', '0') for k in ('SteamAppId', 'SteamGameId')):
+                        raise RuntimeError('Steam-tagged process still exists; receipt retained')
+            except (FileNotFoundError, ProcessLookupError):
+                pass
+        archive = Path(os.environ.get('XDG_STATE_HOME', str(Path.home() / '.local/state'))) / 'tablet-native/recovered-launch-receipts'
+        missing = []
+        parent = archive
+        while not parent.exists():
+            missing.append(parent)
+            parent = parent.parent
+        for directory in reversed(missing):
+            directory.mkdir(mode=0o700, exist_ok=True)
+            sync_directory(directory.parent)  # Persist each new ancestor link.
+        destination = archive / ('failed-steam-' + appid + '-' + uuid.uuid4().hex + '.json')
+        # Runtime is usually tmpfs, state is usually a different filesystem.
+        # Durably archive before unlinking; rename/replace would fail EXDEV.
+        source = root() / 'launch.json'
+        raw = source.read_bytes()
+        if json.loads(raw) != record:
+            raise RuntimeError('Launch receipt changed during recovery; retained')
+        fd = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, 'wb') as output:
+            output.write(raw)
+            output.flush()
+            os.fsync(output.fileno())
+        sync_directory(archive)
+        if source.read_bytes() != raw:
+            raise RuntimeError('Launch receipt changed after archival; retained')
+        source.unlink()
+        return str(destination)
 
 
 if __name__ == '__main__':
@@ -317,6 +406,11 @@ if __name__ == '__main__':
     if not command:
         raise SystemExit('Usage: tablet-game-launch -- COMMAND [ARG ...]')
     try:
+        if command[:1] == ['--recover-failed']:
+            if len(command) != 3 or not command[1].isdigit() or command[2] != '--approved':
+                raise RuntimeError('Usage: tablet-game-launch --recover-failed APPID --approved')
+            print(json.dumps({'recovered': True, 'archive': recover_failed(command[1])}))
+            raise SystemExit(0)
         raise SystemExit(worker(command, request) if request else launch(command))
     except (OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)

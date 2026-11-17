@@ -390,18 +390,57 @@ class NativeTests(unittest.TestCase):
         library = dict(self.client('0xce', 'fed', n.WORKSPACE), **{'class': 'pegasus-fe'})
         self.clients += [game, library]
         self.focus = game
-        status = dict(gameLaunching=False, gameRunning=False, gamesLaunching=False)
+        status = dict(gameLaunching=False, gameRunning=True, gamesLaunching=False)
+        game.update(floating=True, size=[960, 640])
         with patch.object(p, 'hypr', side_effect=self.queries), patch.object(p, 'start_time', return_value='process'), \
+                patch.object(n.gaming, 'start', return_value='process'), \
                 patch.object(p, 'dispatch', side_effect=self.dispatch), \
                 patch.object(self.native.games, 'status', return_value=status), \
                 patch.object(self.native.games, 'game', return_value=game) as playing, \
                 patch.object(self.native.games, 'launcher', return_value=library):
             self.native.poll_games()
             self.assertEqual(self.native.games_target['address'], game['address'])
+            self.assertEqual((game['fullscreen'], game['fullscreenClient']), (2, 2))
+            self.assertEqual(self.native.record['game_presentation']['internal'], 0)
+            self.native.release_game_presentation()
+            self.assertEqual((game['fullscreen'], game['fullscreenClient']), (0, 0))
+            status['gameRunning'] = False
             self.clients.remove(game); self.focus = library; playing.return_value = None
             self.native.poll_games()
             self.assertEqual(self.native.games_target['address'], library['address'])
         self.assertNotIn(('workspace', 'name:laptop'), self.events)
+
+    def test_live_ineligible_game_keeps_presentation_recovery_evidence(self):
+        self.enter(); self.native.active_app = 'games'
+        game = dict(self.client('0xcd', 'def', n.WORKSPACE), floating=True, size=[960, 640])
+        self.clients.append(game); self.focus = game
+        with patch.object(p, 'hypr', side_effect=self.queries), patch.object(p, 'start_time', return_value='process'), \
+                patch.object(n.gaming, 'start', return_value='process'), \
+                patch.object(p, 'dispatch', side_effect=self.dispatch):
+            self.assertTrue(self.native.present_game(game))
+            for change in ({'workspace': {'name': 'elsewhere'}}, {'pinned': True}, {'mapped': False}):
+                original = copy.deepcopy(game)
+                game.update(change)
+                with self.assertRaisesRegex(RuntimeError, 'ineligible live'):
+                    self.native.release_game_presentation()
+                self.assertIn('game_presentation', self.native.record)
+                game.clear(); game.update(original)
+
+    def test_explicit_game_recovery_covers_before_workspace_activation(self):
+        self.enter(); self.native.active_app = 'games'
+        game = dict(self.client('0xcd', 'def', n.WORKSPACE), floating=True, size=[960, 640])
+        self.clients.append(game); self.focus = game
+        with patch.object(p, 'hypr', side_effect=self.queries), patch.object(p, 'start_time', return_value='process'), \
+                patch.object(n.gaming, 'start', return_value='process'), \
+                patch.object(p, 'dispatch', side_effect=self.dispatch), \
+                patch.object(self.native, 'cover', side_effect=lambda **kw:self.events.append(('cover', 'ready'))):
+            self.native.present_game(game)
+            self.workspace = {'name': 'laptop', 'monitor': 'eDP-1'}; self.focus = self.laptop
+            self.events.clear()
+            self.native.release_game_presentation(activate=True)
+            self.assertEqual(self.events[:2], [('cover', 'ready'), ('workspace', 'name:' + n.WORKSPACE)])
+            self.assertNotIn('game_presentation', self.native.record)
+            self.assertEqual(game['fullscreen'], 0)
 
     def test_game_handoff_never_follows_user_workspace_escape(self):
         self.enter(); self.native.active_app = 'games'
@@ -415,13 +454,20 @@ class NativeTests(unittest.TestCase):
                 self.native.poll_games()
         dispatch.assert_not_called()
 
-    def test_launch_gap_is_covered_without_claiming_or_refocusing_window(self):
+    def test_launch_gap_keeps_real_pegasus_instead_of_tablet_home(self):
         self.enter(); self.native.active_app = 'games'; self.native.games_requested = True
+        library = dict(self.client('0xce', 'fed', n.WORKSPACE), **{'class': 'pegasus-fe'})
+        self.clients.append(library); self.focus = library
         status = dict(gameLaunching=True, gameRunning=False)
-        with patch.object(self.native.games, 'status', return_value=status), patch.object(p, 'dispatch') as dispatch:
+        with patch.object(p, 'hypr', side_effect=self.queries), \
+                patch.object(p, 'start_time', return_value='process'), \
+                patch.object(p, 'dispatch', side_effect=self.dispatch), \
+                patch.object(self.native.games, 'status', return_value=status), \
+                patch.object(self.native.games, 'game', return_value=None), \
+                patch.object(self.native.games, 'launcher', return_value=library):
             self.assertEqual(self.native.poll_games(), status)
-        self.assertTrue(self.native.home)
-        dispatch.assert_not_called()
+        self.assertFalse(self.native.home)
+        self.assertEqual(self.native.games_target['address'], library['address'])
 
     def test_failed_media_pause_during_switch_reveals_original_browser(self):
         self.enter()

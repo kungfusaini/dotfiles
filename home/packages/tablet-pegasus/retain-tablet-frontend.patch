@@ -1,0 +1,143 @@
+--- a/src/backend/FrontendLayer.cpp
++++ b/src/backend/FrontendLayer.cpp
+@@ -25,6 +25,10 @@
+ #include "platform/AndroidAppIconProvider.h"
+ #endif
+
++#include <QFile>
++#include <QJsonDocument>
++#include <QJsonObject>
++#include <QTimer>
+ #include <QQmlApplicationEngine>
+ #include <QQmlContext>
+ #include <QQmlNetworkAccessManagerFactory>
+@@ -52,10 +56,38 @@
+     , m_engine(nullptr)
+ {
+     // Note: the pointer to the Api is non-owning and constant during the runtime
++    if (!qgetenv("TABLET_PEGASUS_TOKEN").isEmpty()) {
++        auto* poll = new QTimer(this);
++        connect(poll, &QTimer::timeout, this, [this]() {
++            if (!m_engine)
++                return;
++            QFile file(QString::fromLocal8Bit(qgetenv("XDG_RUNTIME_DIR")) + QStringLiteral("/tablet-games/launch.json"));
++            if (!file.open(QIODevice::ReadOnly))
++                return;
++            const auto state = QJsonDocument::fromJson(file.readAll()).object();
++            if (state.value(QStringLiteral("token")).toString().toUtf8() != qgetenv("TABLET_PEGASUS_TOKEN")
++                || state.value(QStringLiteral("instance")).toString().toUtf8() != qgetenv("HYPRLAND_INSTANCE_SIGNATURE"))
++                return;
++            for (const auto& pair : {qMakePair(QStringLiteral("phase"), QStringLiteral("tabletLaunchPhase")),
++                                     qMakePair(QStringLiteral("error"), QStringLiteral("tabletLaunchError"))}) {
++                const auto value = state.value(pair.first).toString();
++                if (m_engine->rootContext()->contextProperty(pair.second).toString() != value)
++                    m_engine->rootContext()->setContextProperty(pair.second, value);
++            }
++        });
++        poll->start(150);
++    }
+ }
+
+ void FrontendLayer::rebuild()
+ {
++    // Tablet Pegasus owns its loading scene for the whole game lifetime.
++    // Desktop instances retain upstream's teardown/rebuild behavior.
++    if (m_engine && !qgetenv("TABLET_PEGASUS_TOKEN").isEmpty()) {
++        m_engine->rootContext()->setContextProperty(QStringLiteral("tabletLaunchActive"), false);
++        emit rebuildComplete();
++        return;
++    }
+     Q_ASSERT(!m_engine);
+
+     m_engine = new QQmlApplicationEngine(this);
+@@ -68,6 +100,11 @@
+     m_engine->addImageProvider(QStringLiteral("androidicons"), new AndroidAppIconProvider);
+ #endif
+
++    m_engine->rootContext()->setContextProperty(QStringLiteral("tabletManagedSession"),
++                                               !qgetenv("TABLET_PEGASUS_TOKEN").isEmpty());
++    m_engine->rootContext()->setContextProperty(QStringLiteral("tabletLaunchActive"), false);
++    m_engine->rootContext()->setContextProperty(QStringLiteral("tabletLaunchPhase"), QString());
++    m_engine->rootContext()->setContextProperty(QStringLiteral("tabletLaunchError"), QString());
+     m_engine->rootContext()->setContextProperty(QStringLiteral("api"), m_api_public);
+     m_engine->rootContext()->setContextProperty(QStringLiteral("Api"), m_api_public);
+     m_engine->rootContext()->setContextProperty(QStringLiteral("Internal"), m_api_private);
+@@ -79,6 +116,12 @@
+ void FrontendLayer::teardown()
+ {
+     Q_ASSERT(m_engine);
++
++    if (!qgetenv("TABLET_PEGASUS_TOKEN").isEmpty()) {
++        m_engine->rootContext()->setContextProperty(QStringLiteral("tabletLaunchActive"), true);
++        emit teardownComplete();
++        return;
++    }
+
+     // signal forwarding
+     connect(m_engine, &QQmlApplicationEngine::destroyed,
+--- a/src/backend/ProcessLauncher.cpp
++++ b/src/backend/ProcessLauncher.cpp
+@@ -263,6 +263,9 @@
+
+ void ProcessLauncher::onTeardownComplete()
+ {
++    // Do not block Qt's event loop: keep the actual loading window rendering.
++    if (!qgetenv("TABLET_PEGASUS_TOKEN").isEmpty())
++        return;
+ #ifndef Q_OS_ANDROID
+     Q_ASSERT(m_process);
+     m_process->waitForFinished(-1);
+@@ -283,6 +286,13 @@
+     Q_ASSERT(m_process);
+
+     const QString message = processerror_to_string(error).arg(m_process->program());
++
++    // A running/crashed process still emits finished; leave cleanup to that
++    // signal so it cannot race API reset or delete m_process twice.
++    if (!qgetenv("TABLET_PEGASUS_TOKEN").isEmpty() && error != QProcess::FailedToStart) {
++        emit processRuntimeError(message);
++        return;
++    }
+
+     switch (m_process->state()) {
+         case QProcess::Starting:
+@@ -307,8 +317,11 @@
+         case QProcess::NormalExit:
+             if (exitcode == 0)
+                 Log::info(LOGMSG("The external program has finished cleanly"));
+-            else
++            else {
+                 Log::warning(LOGMSG("The external program has finished with error code %1").arg(exitcode));
++                if (!qgetenv("TABLET_PEGASUS_TOKEN").isEmpty())
++                    emit processRuntimeError(LOGMSG("Game launch returned error code %1").arg(exitcode));
++            }
+             break;
+         case QProcess::CrashExit:
+             Log::warning(LOGMSG("The external program has crashed"));
+@@ -316,6 +329,8 @@
+     }
+
+     afterRun();
++    if (!qgetenv("TABLET_PEGASUS_TOKEN").isEmpty())
++        emit processFinished();
+ }
+
+ void ProcessLauncher::beforeRun(const QString& game_path)
+--- a/src/backend/Backend.cpp
++++ b/src/backend/Backend.cpp
+@@ -179,6 +179,15 @@
+
+     QObject::connect(m_launcher, &ProcessLauncher::processLaunchError,
+                      m_api_public, &model::ApiObject::onGameLaunchError);
++    QObject::connect(m_launcher, &ProcessLauncher::processLaunchError, [this]() {
++        if (!qgetenv("TABLET_PEGASUS_TOKEN").isEmpty())
++            m_frontend->rebuild();
++    });
++
++    QObject::connect(m_launcher, &ProcessLauncher::processRuntimeError, [this](const QString& message) {
++        if (!qgetenv("TABLET_PEGASUS_TOKEN").isEmpty())
++            emit m_api_public->eventLaunchError(message);
++    });
+
+     QObject::connect(m_launcher, &ProcessLauncher::processLaunchOk,
+                      [this](){ onProcessLaunched(); });

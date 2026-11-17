@@ -1,6 +1,7 @@
 { pkgs, lib, hyprland ? pkgs.hyprland, orientation,
   media ? pkgs.callPackage ./media { inherit hyprland; } }:
 let
+  pegasus = pkgs.callPackage ../tablet-pegasus { };
   registry = pkgs.writeText "tablet-native-apps.json" (builtins.toJSON
     (builtins.filter (app: app.id == "browser")
       (builtins.fromJSON (builtins.readFile ../../config/quickshell/tablet-home-preview/apps.json))));
@@ -12,12 +13,13 @@ let
   '';
   package = pkgs.writeShellApplication {
     name = "tablet-native";
-    runtimeInputs = with pkgs; [ python3 quickshell coreutils glib dconf squeekboard wireplumber brightnessctl libnotify vivaldi pegasus-frontend hyprland ];
+    runtimeInputs = with pkgs; [ python3 quickshell coreutils glib dconf squeekboard wireplumber brightnessctl libnotify vivaldi pegasus hyprland ];
     text = ''
       export TABLET_PROOF_QML=${ui}/shell.qml
       export TABLET_PROOF_SOURCE=${./controller.py}
       export TABLET_MEDIA_CLIENT_SOURCE=${./media/client.py}
       export TABLET_GAMING_SOURCE=${./gaming.py}
+      export TABLET_PEGASUS_BIN=${pegasus}/bin/pegasus-fe
       export TABLET_WINDOW_APPS_SOURCE=${../../scripts/desktop/tablet_apps.py}
       export TABLET_APPS_REGISTRY=${registry}
       export TABLET_STAGE_QML=${ui}/stage.qml
@@ -33,4 +35,4 @@ let
       exec python3 ${./native.py} "$@"
     '';
   };
-in { inherit package ui media; }
+in { inherit package ui media pegasus; }

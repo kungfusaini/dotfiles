@@ -105,6 +105,15 @@ class GamingTests(unittest.TestCase):
             self.window['workspace']['name'] = 'laptop'
             self.assertFalse(g.authorized_game(self.window, ['steam-session', '123'], {}, []))
 
+    def test_floating_game_requires_exact_steam_identity_and_workspace(self):
+        self.window['floating'] = True
+        self.assertFalse(g.local(self.window))  # Still not a Pegasus candidate.
+        with patch.object(g, 'environment', return_value={'SteamAppId': '123'}):
+            self.assertTrue(g.authorized_game(self.window, ['steam-session', '123'], {}, []))
+            self.assertFalse(g.authorized_game(self.window, ['steam-session', '124'], {}, []))
+            self.window['pinned'] = True
+            self.assertFalse(g.authorized_game(self.window, ['steam-session', '123'], {}, []))
+
     def test_native_handoff_requires_launch_descendant(self):
         with patch.object(g, 'descendant', return_value=False):
             self.assertFalse(g.authorized_game(self.window, ['pcsx2-qt'], {}, []))
@@ -179,6 +188,85 @@ class GamingTests(unittest.TestCase):
         self.assertIn('Multiple game windows', g.read('launch.json')['error'])
         notify.assert_called_once(); child.wait.assert_called_once()
         child.terminate.assert_not_called(); child.kill.assert_not_called()
+
+    def test_notification_failure_cannot_strand_a_confirmed_failed_child(self):
+        command = ['test-game']
+        g.write('launch.json', dict(request='nonce', token='token', command=g.command_hash(command),
+                                  phase='launching', game=None, caller={'pid': 10, 'start': 'lifetime'}))
+        child = Mock(pid=20); child.poll.return_value = 7; child.wait.return_value = 7
+        with patch.object(g.subprocess, 'Popen', return_value=child), \
+                patch.object(g.subprocess, 'run', side_effect=FileNotFoundError('notify-send')), \
+                patch.object(g, 'clients', return_value=[]):
+            self.assertEqual(g.worker(command, 'nonce'), 7)
+        self.assertEqual(g.read('launch.json')['phase'], 'done')
+        self.assertEqual(g.read('launch.json')['code'], 7)
+        self.assertIn('could not be verified', g.read('launch.json')['error'])
+        child.terminate.assert_not_called(); child.kill.assert_not_called()
+
+    def test_explicit_recovery_archives_only_dead_idle_exact_failed_request(self):
+        with patch.dict(os.environ, XDG_STATE_HOME=self.tmp.name + '/state'):
+            record = dict(phase='unavailable', game=None, command=g.command_hash(['steam-session', '123']),
+                          caller={'pid': 10, 'start': 'dead'}, owner={'pid': 11, 'start': 'dead'},
+                          child={'pid': 12, 'start': 'dead'})
+            g.write('launch.json', record)
+            with patch.object(g.subprocess, 'check_output', return_value=json.dumps({'running': False, 'shutdown_blockers': {}})), \
+                    patch.object(g, 'environment', return_value={}), \
+                    patch.object(g, 'sync_directory', wraps=g.sync_directory) as sync:
+                with self.assertRaisesRegex(RuntimeError, 'exact failed'):
+                    g.recover_failed('124')
+                archive = g.recover_failed('123')
+                state = Path(self.tmp.name) / 'state'
+                self.assertEqual([c.args[0] for c in sync.call_args_list], [
+                    Path(self.tmp.name), state, state / 'tablet-native',
+                    state / 'tablet-native/recovered-launch-receipts'])
+            self.assertFalse((g.root() / 'launch.json').exists())
+            self.assertEqual(json.loads(Path(archive).read_text())['phase'], 'unavailable')
+            self.assertEqual(Path(archive).stat().st_mode & 0o777, 0o600)
+
+    def test_gone_or_zombie_process_has_no_environment_to_inspect(self):
+        for error in (FileNotFoundError('gone'), ProcessLookupError('zombie environ')):
+            with patch.object(g, 'environment', side_effect=error):
+                self.assertEqual(g.recovery_environment(42, '200'), {})
+
+    def test_unreadable_preexisting_service_is_not_a_launch_descendant(self):
+        with patch.object(g, 'environment', side_effect=PermissionError('protected service')), \
+                patch.object(g, 'start', return_value='10'):
+            self.assertEqual(g.recovery_environment(3795, '200'), {})
+        for born in ('200', '300'):
+            with patch.object(g, 'environment', side_effect=PermissionError('protected child')), \
+                    patch.object(g, 'start', return_value=born):
+                with self.assertRaisesRegex(RuntimeError, 'possible launch descendant'):
+                    g.recovery_environment(42, '200')
+
+    def test_failed_recovery_archives_across_filesystems_without_rename(self):
+        if not Path('/dev/shm').is_dir():
+            self.skipTest('No private tmpfs fixture available')
+        with tempfile.TemporaryDirectory(prefix='tablet-receipt-test.', dir='/dev/shm') as memory:
+            if Path(memory).stat().st_dev == Path(self.tmp.name).stat().st_dev:
+                self.skipTest('Fixture directories are on the same filesystem')
+            with patch.dict(os.environ, XDG_RUNTIME_DIR=memory, XDG_STATE_HOME=self.tmp.name + '/state'):
+                g.write('launch.json', dict(phase='unavailable', game=None, command=g.command_hash(['steam-session', '123']),
+                    caller={'pid': 10, 'start': 'dead'}, owner={'pid': 11, 'start': 'dead'}, child={'pid': 12, 'start': 'dead'}))
+                raw = (g.root() / 'launch.json').read_bytes()
+                with patch.object(g.subprocess, 'check_output', return_value=json.dumps({'running': False, 'shutdown_blockers': {}})), \
+                        patch.object(g, 'environment', return_value={}):
+                    archive = Path(g.recover_failed('123'))
+                self.assertEqual(archive.read_bytes(), raw)
+                self.assertEqual(archive.stat().st_mode & 0o777, 0o600)
+                self.assertFalse((g.root() / 'launch.json').exists())
+
+    def test_recovery_refuses_alive_worker_or_running_steam(self):
+        record = dict(phase='unavailable', game=None, command=g.command_hash(['steam-session', '123']),
+                      caller={'pid': 10, 'start': 'lifetime'}, owner={'pid': 11, 'start': 'dead'},
+                      child={'pid': 12, 'start': 'dead'})
+        g.write('launch.json', record)
+        with self.assertRaisesRegex(RuntimeError, 'still alive'):
+            g.recover_failed('123')
+        record['caller']['start'] = 'dead'; g.write('launch.json', record)
+        with patch.object(g.subprocess, 'check_output', return_value=json.dumps({'running': True, 'shutdown_blockers': {}})):
+            with self.assertRaisesRegex(RuntimeError, 'protected activity'):
+                g.recover_failed('123')
+        self.assertTrue((g.root() / 'launch.json').exists())
 
     def test_curated_launches_use_wrapper_but_existing_steam_worker_is_unchanged(self):
         for path in (ROOT / 'home/config/pegasus').glob('*.pegasus.txt'):

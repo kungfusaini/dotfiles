@@ -29,7 +29,7 @@ def until(check, reason, timeout=25):
     raise AssertionError(reason+(': '+str(last) if last else ''))
 
 
-def outer():
+def outer(script=None):
     root=Path(tempfile.mkdtemp(prefix='twa.proof.'))
     (root/'r').mkdir(mode=0o700);(root/'home').mkdir()
     env={k:v for k,v in os.environ.items() if not k.startswith(('PI_','PROJECT_OBJECT_','HL_'))}
@@ -49,7 +49,7 @@ def outer():
     # weaken the production awake-internal-panel guard for the private proof.
     return subprocess.call(['bwrap','--bind','/','/','--dev-bind','/dev','/dev','--tmpfs','/tmp/.X11-unix','--tmpfs','/run/headless-mode',
                             '--ro-bind',str(headless),'/run/headless-mode/state',
-                            'dbus-run-session','--',sys.executable,__file__],env=env)
+                            'dbus-run-session','--',sys.executable,script or __file__],env=env)
 
 
 def inner():
@@ -569,13 +569,32 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             game_ui = root/'dummy-game.qml'
             game_ui.write_text('''import Quickshell
 import QtQuick
-ShellRoot { FloatingWindow { visible: true; width: 960; height: 640; title: "Tablet fixture game"; color: "#15b94d"; onClosed: Qt.quit() } }
+ShellRoot { FloatingWindow { visible: true; width: 480; height: 320; title: "Tablet fixture game"; color: "#15b94d"; onClosed: Qt.quit() } }
 ''')
-            launch = [sys.executable, os.environ['TABLET_GAMING_SOURCE'], '--', 'quickshell', '--path', str(game_ui)]
-            (games/'metadata.pegasus.txt').write_text('collection: Tablet fixture\n\ngame: Disposable tablet test\nfile: dummy.rom\nlaunch: '+shlex.join(launch)+'\n')
+            delayed = 'sleep 3; exec ' + shlex.join(['quickshell', '--path', str(game_ui)])
+            launch = [sys.executable, os.environ['TABLET_GAMING_SOURCE'], '--', 'sh', '-c', delayed]
+            failure = [sys.executable, os.environ['TABLET_GAMING_SOURCE'], '--', '/definitely-missing-tablet-test-game']
+            (games/'failed.rom').touch()
+            (games/'metadata.pegasus.txt').write_text('collection: Tablet fixture\n\ngame: 01 Disposable tablet test\nfile: dummy.rom\nlaunch: '+shlex.join(launch)+'\n\ngame: 02 Confirmed failure\nfile: failed.rom\nlaunch: '+shlex.join(failure)+'\n')
+            ctl('keyword', 'windowrule', 'match:title ^Tablet fixture game$, float on')
             pegasus_config = root/'config/pegasus-frontend'; pegasus_config.mkdir(parents=True, exist_ok=True)
             (pegasus_config/'game_dirs.txt').write_text(str(games)+'\n')
-            (pegasus_config/'settings.txt').write_text('general.fullscreen: true\nproviders.steam.enabled: false\n')
+            theme = pegasus_config/'themes/tablet-fixture'; theme.mkdir(parents=True)
+            (theme/'theme.cfg').write_text('name: Tablet fixture\nauthor: Private test\nversion: 1\n')
+            (theme/'theme.qml').write_text('''import QtQuick 2.15
+FocusScope {
+    Rectangle { anchors.fill: parent; color: tabletLaunchActive ? "#245ac7" : "#253b68" }
+    Text { anchors.centerIn: parent; color: "white"; text: tabletLaunchActive ? "Launching fixture game…" : "Tablet library: 1 play, 2 fail" }
+    Keys.onPressed: event => {
+        if (tabletLaunchActive) { event.accepted = true; return }
+        if (event.key === Qt.Key_1 || event.key === Qt.Key_2) {
+            event.accepted = true
+            api.allGames.get(event.key === Qt.Key_1 ? 0 : 1).launch()
+        }
+    }
+}
+''')
+            (pegasus_config/'settings.txt').write_text('general.fullscreen: true\nproviders.steam.enabled: false\ngeneral.theme: themes/tablet-fixture/\n')
             proof('start'); proof('games')
             until(lambda:status()['pegasusRunning'] and not status()['home'], 'real tablet-local Pegasus launch')
             time.sleep(1)
@@ -583,12 +602,25 @@ ShellRoot { FloatingWindow { visible: true; width: 960; height: 640; title: "Tab
             assert status()['activeApp']=='games'
             library = next(c for c in clients() if c['class'].startswith(('pegasus-fe','org.pegasus-frontend')))
             assert library['workspace']['name']=='tablet-trial'
-            # Return is sent only to the private compositor, never the host seat.
-            keys('-k','Return'); time.sleep(.5); keys('-k','Return')
-            until(lambda:status()['gameRunning'], 'verified dummy game handoff through Pegasus', timeout=45)
+            # Input is sent only to the private compositor, never the host seat.
+            keys('1')
+            until(lambda:status()['gameLaunching'], 'real Pegasus owns the delayed launch')
+            for sample in range(2):
+                assert status()['pegasusRunning'] and not status()['home'], 'launch fell back to Tablet Home'
+                assert any(c['address']==library['address'] and c['mapped'] for c in clients()), 'Pegasus loading window was torn down'
+                image=snapshot('pegasus-owned-loading-'+str(sample))
+                pixel=image.getpixel((40,40))
+                assert pixel==(36,90,199) or (pixel==(21,185,77) and status()['gameRunning']), 'neither Pegasus loading nor verified game is visible'
+                time.sleep(.35)
+            until(lambda:status()['gameRunning'] and not status()['home'] and json.loads(ctl('activewindow','-j')).get('title')=='Tablet fixture game', 'verified floating game visible above retained Pegasus', timeout=45)
             game = next(c for c in clients() if c.get('title')=='Tablet fixture game')
-            assert game['workspace']['name']=='tablet-trial'
+            assert game['workspace']['name']=='tablet-trial' and game['floating']
+            until(lambda:next(c for c in clients() if c['address']==game['address'])['size']==[960,640], 'floating game gets true screen-filling presentation')
+            assert snapshot('visible-floating-game').getpixel((40,40))==(21,185,77)
             proof('close')
+            restored=next(c for c in clients() if c['address']==game['address'])
+            assert restored['floating'] and restored['fullscreen']==0 and restored['fullscreenClient']==0, 'unfold did not release game presentation'
+            assert restored['size']==[480,320], restored
             assert any(c['address']==game['address'] for c in clients()), 'unfold closed a game'
             assert json.loads(ctl('activewindow','-j'))['address']==laptop_window['address']
             proof('start')
@@ -597,6 +629,19 @@ ShellRoot { FloatingWindow { visible: true; width: 960; height: 640; title: "Tab
             ctl('dispatch','closewindow','address:'+game['address'])
             until(lambda:status()['pegasusRunning'] and not status()['gameRunning'], 'return to Pegasus after dummy game exit')
             until(lambda:json.loads(ctl('activewindow','-j')).get('pid')==library['pid'], 'library focus restored')
+            assert any(c['address']==library['address'] for c in clients()), 'Pegasus did not retain the same window'
+            keys('2')
+            until(lambda:(lambda r:r.get('phase')=='done' and r.get('code')==1)(json.loads((runtime/'tablet-games/launch.json').read_text())), 'confirmed failed child releases its launch receipt', timeout=35)
+            until(lambda:status()['pegasusRunning'] and not status()['gameLaunching'] and not status()['home'], 'failure returns to Pegasus rather than Home')
+            caller=json.loads((runtime/'tablet-games/launch.json').read_text())['caller']['pid']
+            until(lambda:not (Path('/proc')/str(caller)).exists(), 'Pegasus launch wrapper returned after failed attempt', timeout=30)
+            time.sleep(.3)
+            keys('-k','Return')  # Dismiss the real Pegasus launch-error dialog.
+            keys('1')
+            until(lambda:status()['gameRunning'] and json.loads(ctl('activewindow','-j')).get('title')=='Tablet fixture game', 'retry after failed launch is not permanently locked', timeout=45)
+            retry=next(c for c in clients() if c.get('title')=='Tablet fixture game')
+            ctl('dispatch','closewindow','address:'+retry['address'])
+            until(lambda:status()['pegasusRunning'] and not status()['gameRunning'], 'retry returns to retained Pegasus')
             proof('app')
             assert status()['activeApp']=='vivaldi' and status()['browserRunning']
             proof('games')
