@@ -64,7 +64,8 @@ def validate_app(app, path):
     executable = Path(args[0]).name if args else ""
     if executable in ("vivaldi", "vivaldi-stable") and args[1:] == ["%U"]:
         return "vivaldi"
-    if executable == "zathura" and args[1:] in (["%U"], ["%f"], ["%F"]):
+    if ((executable == "zathura" and args[1:] in (["%U"], ["%f"], ["%F"]))
+            or (executable == "swayimg" and args[1:] == ["%F"])):
         if app.get_boolean("Terminal"):
             raise ValueError("This default application requires an unsupported terminal fallback")
         return "desktop"

@@ -43,7 +43,12 @@ def run(args):
     apps = home / ".local/share/applications"
     apps.mkdir(parents=True)
     (apps / "vivaldi-test.desktop").write_text("[Desktop Entry]\nType=Application\nName=Vivaldi test\nExec=vivaldi %U\nMimeType=text/html;\n")
-    # A real new GTK/terminal window stands in for each desktop viewer. GIO must
+    image_viewer = root / "swayimg"
+    image_viewer.write_text("#!/bin/sh\nexec " + shlex.quote(args.swayimg) + ' "$@" >> '
+                            + shlex.quote(str(root / "swayimg.log")) + " 2>&1\n")
+    image_viewer.chmod(0o700)
+    (apps / "swayimg.desktop").write_text("[Desktop Entry]\nType=Application\nName=Swayimg\nExec=" + str(image_viewer) + " %F\nMimeType=image/png;\n")
+    # A real new GTK/terminal window stands in for the PDF viewer. GIO must
     # expand its Exec fields without shell interpretation and preserve the path.
     viewer = root / "zathura"
     viewer.write_text("#!/bin/sh\nprintf '%s\\n' \"$1\" >> " + shlex.quote(str(root / "viewer-paths"))
@@ -54,16 +59,20 @@ def run(args):
     (apps / "editor.desktop").write_text("[Desktop Entry]\nType=Application\nName=Editor\nExec=nvim %F\nTerminal=true\nMimeType=text/plain;\n")
     config_dir = home / ".config"
     config_dir.mkdir(exist_ok=True)
-    (config_dir / "mimeapps.list").write_text("[Default Applications]\ntext/html=vivaldi-test.desktop\nimage/png=fixture.desktop\napplication/pdf=fixture.desktop\ninode/directory=folder.desktop\ntext/plain=editor.desktop\n")
+    (config_dir / "mimeapps.list").write_text("[Default Applications]\ntext/html=vivaldi-test.desktop\nimage/png=swayimg.desktop\napplication/pdf=fixture.desktop\ninode/directory=folder.desktop\ntext/plain=editor.desktop\n")
     kitty_dir = config_dir / "kitty"
     kitty_dir.mkdir()
-    (kitty_dir / "open-actions.conf").write_text("protocol file\naction launch --type=background " + args.opener + " ${URL}\n")
+    opener = root / "opener"
+    opener.write_text("#!/bin/sh\nexec " + shlex.quote(args.opener) + ' "$@" >> '
+                      + shlex.quote(str(root / "opener.log")) + " 2>&1\n")
+    opener.chmod(0o700)
+    (kitty_dir / "open-actions.conf").write_text("protocol file\naction launch --type=background " + str(opener) + " ${URL}\n")
     media = root / 'test files é ; $(no command)'
     media.mkdir()
     page = media / "gallery #100%.html"
     page.write_text('<title>Loading fixture</title><img src="asset.png" onload="document.title=\'Local file loaded\'">')
     image = media / "asset.png"
-    image.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aC0cAAAAASUVORK5CYII="))
+    image.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"))
     pdf = media / "test.pdf"
     pdf.write_bytes(b"%PDF-1.4\n% fixture default-app dispatch only\n")
     text = media / "notes.txt"
@@ -132,7 +141,10 @@ def run(args):
             assert window["workspace"]["name"] == "Clicked chat", window
             if path == page:
                 wait_for(lambda: any(c["address"] == window["address"] and c["title"] == "Local file loaded" for c in clients()))
-            elif path in (image, pdf):
+            elif path == image:
+                assert window["class"] == "swayimg", window
+                assert "asset.png" in window["title"], window
+            elif path == pdf:
                 wait_for(lambda: (root / "viewer-paths").exists() and str(path) in (root / "viewer-paths").read_text().splitlines())
             else:
                 assert window["class"] == "kitty", window
@@ -169,7 +181,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("hyprland", "hyprctl", "labwc", "kitty", "vivaldi", "opener"):
+    for name in ("hyprland", "hyprctl", "labwc", "kitty", "vivaldi", "swayimg", "opener"):
         parser.add_argument("--" + name, required=True)
     args = parser.parse_args()
     if os.environ.get("FILE_OPEN_PRIVATE_DBUS") != "1":

@@ -14,14 +14,14 @@ execute its contents. Arguments are never evaluated by a shell. Launch/placement
 failures return nonzero, print diagnostics and send a desktop notification.
 
 The supported installed defaults are normal Vivaldi (`%U`), Zathura
-(`%U`/`%f`/`%F`), Neovim (`%F`, opened in a new managed Kitty), and Kitty's
+(`%U`/`%f`/`%F`), Swayimg (`%F`, a new viewer process per launch), Neovim (`%F`, opened in a new managed Kitty), and Kitty's
 `+open %U` for directories only. Unknown command shapes and DBus-activated apps
 are rejected **before launch**: blindly invoking arbitrary defaults can activate
 an unrelated singleton before placement/focus can be checked. New default apps
 need an audited safe route rather than an optimistic generic fallback. Kitty's
 script/executable launching is intentionally not used for clicked files.
 
-Zathura/folder defaults launch through GIO with launch-scoped compositor rules
+Swayimg/Zathura/folder defaults launch through GIO with launch-scoped compositor rules
 suppressing initial focus and activation. The opener reuses `project-workspace-exec`'s
 existing new-window identity/placement verifier. Default associations are not
 changed by this feature.
@@ -47,6 +47,7 @@ python -m unittest discover -s tests -p test_file_open.py
 python tests/file_open_integration.py \
   --hyprland /path/to/Hyprland --hyprctl /path/to/hyprctl \
   --labwc /path/to/labwc --kitty /path/to/kitty --vivaldi /path/to/vivaldi \
+  --swayimg /path/to/swayimg \
   --opener /nix/store/...-project-object-0.4.0/bin/project-file-open
 ```
 
@@ -54,8 +55,9 @@ The acceptance test uses private headless compositors, DBus, HOME, MIME defaults
 and a disposable browser profile. It exercises Kitty's real `open_url` action and
 configured background launcher, rather than global mouse input. HTML is opened
 in real Vivaldi (including singleton handoff); relative-image loading sets
-a checked title. Image/PDF MIME dispatch uses a fixture desktop viewer,
-not a claim about production viewer rendering. Folder and text routes use real
+a checked title. Image MIME dispatch opens real Swayimg windows and checks their image titles,
+including repeat launches. PDF MIME dispatch uses a fixture desktop viewer,
+not a claim about production PDF rendering. Folder and text routes use real
 Kitty and Neovim. Mapping and transient focus
 are checked from compositor events, both on the active workspace and while the
 user is elsewhere. No private files/accounts are opened.

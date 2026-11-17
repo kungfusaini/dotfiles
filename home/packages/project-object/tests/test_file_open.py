@@ -93,6 +93,28 @@ class FileOpenTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "verification failed"):
                 opener.open_file(path.as_uri())
 
+    def test_swayimg_uses_verified_desktop_route(self):
+        app = Mock()
+        app.get_name.return_value = "Swayimg"
+        app.get_boolean.return_value = False
+        app.get_commandline.return_value = "/nix/store/test/bin/swayimg %F"
+        self.assertEqual(opener.validate_app(app, Path("/tmp/image.png")), "desktop")
+        api = self.workspace_api()
+        with patch.object(opener, "local_file", return_value=(Path("/tmp/image.png"), "")), \
+             patch.object(opener, "desktop_app", return_value=app), \
+             patch.object(opener.runpy, "run_path", return_value=api), \
+             patch.object(opener, "command", return_value="ok") as command:
+            opener.open_file("file:///tmp/image.png")
+            self.assertIn("no_initial_focus on", command.call_args.args[-1])
+            api["verify_window"].assert_called_once()
+        for commandline, flag in (("swayimg --ipc=/tmp/viewer %F", ""),
+                                  ("swayimg %U", ""), ("swayimg %F", "DBusActivatable"),
+                                  ("swayimg %F", "Terminal")):
+            app.get_commandline.return_value = commandline
+            app.get_boolean.side_effect = lambda key: key == flag
+            with self.subTest(commandline=commandline, flag=flag), self.assertRaises(ValueError):
+                opener.validate_app(app, Path("/tmp/image.png"))
+
     def test_unsupported_singleton_and_dbus_are_rejected_before_launch(self):
         app = Mock()
         app.get_name.return_value = "Unsupported viewer"
