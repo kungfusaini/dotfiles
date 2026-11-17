@@ -84,6 +84,7 @@ in
 
   # User-session tools used by Home Manager managed scripts/keybindings.
   home.packages = with pkgs; [
+    ardour
     brightnessctl
     cli-microsoft365
     nicotine-plus
