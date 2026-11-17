@@ -1,4 +1,4 @@
-{ config, pkgs, ... }:
+{ config, lib, pkgs, ... }:
 
 let
   cli-microsoft365 = pkgs.buildNpmPackage {
@@ -92,6 +92,17 @@ in
     poppler-utils
     swayimg
   ];
+
+  # Ardour writes this file itself; update only scaling rather than managing a
+  # read-only ui_config symlink. Never race a running instance's preferences.
+  home.activation.ardourScale = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    if ${pkgs.procps}/bin/pgrep -u "$UID" -x ArdourGUI >/dev/null; then
+      echo "Ardour is running; skipping its 125% UI scale preference."
+    else
+      run ${pkgs.python3}/bin/python3 ${./scripts/ardour-scale.py} \
+        "${config.xdg.configHome}/ardour9/ui_config"
+    fi
+  '';
 
   # Prune stale user and Home Manager generations alongside the system policy.
   nix.gc = {
