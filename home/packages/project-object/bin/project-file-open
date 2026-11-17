@@ -65,7 +65,10 @@ def validate_app(app, path):
     if executable in ("vivaldi", "vivaldi-stable") and args[1:] == ["%U"]:
         return "vivaldi"
     if ((executable == "zathura" and args[1:] in (["%U"], ["%f"], ["%F"]))
-            or (executable == "swayimg" and args[1:] == ["%F"])):
+            or (executable == "swayimg" and args[1:] == ["%F"])
+            or (executable == "loupe" and args[1:] == ["%U"]
+                and app.get_id() == "org.gnome.Loupe.desktop"
+                and app.get_boolean("X-ProjectObject-Independent"))):
         if app.get_boolean("Terminal"):
             raise ValueError("This default application requires an unsupported terminal fallback")
         return "desktop"

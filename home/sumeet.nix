@@ -1,6 +1,7 @@
 { config, lib, pkgs, ... }:
 
 let
+  loupeIndependent = pkgs.callPackage ./packages/loupe.nix { };
   cli-microsoft365 = pkgs.buildNpmPackage {
     pname = "cli-microsoft365";
     version = "11.11.0";
@@ -59,17 +60,18 @@ in
     mimeApps = {
       enable = true;
       defaultApplications = {
-        # Use a lightweight Wayland viewer rather than an editor/PDF fallback.
-        "image/avif" = "swayimg.desktop";
-        "image/bmp" = "swayimg.desktop";
-        "image/gif" = "swayimg.desktop";
-        "image/heif" = "swayimg.desktop";
-        "image/jpeg" = "swayimg.desktop";
-        "image/jxl" = "swayimg.desktop";
-        "image/png" = "swayimg.desktop";
-        "image/svg+xml" = "swayimg.desktop";
-        "image/tiff" = "swayimg.desktop";
-        "image/webp" = "swayimg.desktop";
+        # Loupe supports pinch zoom on both touchpads and touchscreens.
+        "image/avif" = "org.gnome.Loupe.desktop";
+        "image/bmp" = "org.gnome.Loupe.desktop";
+        "image/gif" = "org.gnome.Loupe.desktop";
+        "image/heic" = "org.gnome.Loupe.desktop";
+        "image/heif" = "org.gnome.Loupe.desktop";
+        "image/jpeg" = "org.gnome.Loupe.desktop";
+        "image/jxl" = "org.gnome.Loupe.desktop";
+        "image/png" = "org.gnome.Loupe.desktop";
+        "image/svg+xml" = "org.gnome.Loupe.desktop";
+        "image/tiff" = "org.gnome.Loupe.desktop";
+        "image/webp" = "org.gnome.Loupe.desktop";
         "x-scheme-handler/mailto" = "thunderbird.desktop";
         "x-scheme-handler/mid" = "thunderbird.desktop";
         "message/rfc822" = "thunderbird.desktop";
@@ -87,6 +89,7 @@ in
     ardour
     brightnessctl
     cli-microsoft365
+    loupeIndependent
     nicotine-plus
     nodejs
     poppler-utils

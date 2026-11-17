@@ -115,6 +115,28 @@ class FileOpenTests(unittest.TestCase):
             with self.subTest(commandline=commandline, flag=flag), self.assertRaises(ValueError):
                 opener.validate_app(app, Path("/tmp/image.png"))
 
+    def test_only_independent_loupe_desktop_is_supported(self):
+        app = Mock()
+        app.get_name.return_value = "Image Viewer"
+        app.get_id.return_value = "org.gnome.Loupe.desktop"
+        app.get_commandline.return_value = "/nix/store/test/bin/loupe %U"
+        app.get_boolean.side_effect = lambda key: key == "X-ProjectObject-Independent"
+        self.assertEqual(opener.validate_app(app, Path("/tmp/image.png")), "desktop")
+        for marker, dbus, terminal, app_id, command in (
+            (False, False, False, "org.gnome.Loupe.desktop", "loupe %U"),
+            (True, True, False, "org.gnome.Loupe.desktop", "loupe %U"),
+            (True, False, True, "org.gnome.Loupe.desktop", "loupe %U"),
+            (True, False, False, "other.desktop", "loupe %U"),
+            (True, False, False, "org.gnome.Loupe.desktop", "loupe --unknown %U"),
+        ):
+            values = {"X-ProjectObject-Independent": marker, "DBusActivatable": dbus,
+                      "Terminal": terminal}
+            app.get_boolean.side_effect = lambda key: values.get(key, False)
+            app.get_id.return_value = app_id
+            app.get_commandline.return_value = command
+            with self.subTest(values=values, app_id=app_id, command=command), self.assertRaises(ValueError):
+                opener.validate_app(app, Path("/tmp/image.png"))
+
     def test_unsupported_singleton_and_dbus_are_rejected_before_launch(self):
         app = Mock()
         app.get_name.return_value = "Unsupported viewer"

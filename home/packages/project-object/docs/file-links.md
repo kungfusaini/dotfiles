@@ -14,17 +14,33 @@ execute its contents. Arguments are never evaluated by a shell. Launch/placement
 failures return nonzero, print diagnostics and send a desktop notification.
 
 The supported installed defaults are normal Vivaldi (`%U`), Zathura
-(`%U`/`%f`/`%F`), Swayimg (`%F`, a new viewer process per launch), Neovim (`%F`, opened in a new managed Kitty), and Kitty's
+(`%U`/`%f`/`%F`), Swayimg (`%F`, a new viewer process per launch), our
+independent Loupe (`%U`), Neovim (`%F`, opened in a new managed Kitty), and Kitty's
 `+open %U` for directories only. Unknown command shapes and DBus-activated apps
 are rejected **before launch**: blindly invoking arbitrary defaults can activate
 an unrelated singleton before placement/focus can be checked. New default apps
 need an audited safe route rather than an optimistic generic fallback. Kitty's
 script/executable launching is intentionally not used for clicked files.
 
-Swayimg/Zathura/folder defaults launch through GIO with launch-scoped compositor rules
+Loupe/Swayimg/Zathura/folder defaults launch through GIO with launch-scoped compositor rules
 suppressing initial focus and activation. The opener reuses `project-workspace-exec`'s
-existing new-window identity/placement verifier. Default associations are not
-changed by this feature.
+existing new-window identity/placement verifier. The opener does not change MIME
+associations; Home Manager selects Loupe for images.
+
+`home/packages/loupe.nix` makes the packaged Loupe application `NON_UNIQUE` and
+sets `DBusActivatable=false` in its desktop entry, so each click starts a new
+independently verifiable process instead of activating a singleton elsewhere.
+The narrow source substitution fails on upstream changes. No private bus,
+disabled image-loader sandbox, profile copy or mutable launcher is needed.
+Only `org.gnome.Loupe.desktop` with `Exec=loupe %U` and our
+`X-ProjectObject-Independent=true` marker is accepted; stock singleton Loupe
+remains rejected. Swayimg stays installed as an alternative.
+
+Loupe's [documented controls](https://help.gnome.org/loupe/viewing-images.html.en)
+include touchpad and touchscreen pinch zoom, single-finger touchscreen panning,
+and two-finger rotation. These upstream gesture handlers are unchanged by our
+instance patch. Hidden-window tests verify launching and rendering, not physical
+touchscreen/touchpad gestures on the laptop.
 
 Vivaldi needs a dedicated local-document route because HTTP-to-file navigation is
 blocked and ordinary browser singleton handoff loses the new process's identity.
@@ -47,7 +63,7 @@ python -m unittest discover -s tests -p test_file_open.py
 python tests/file_open_integration.py \
   --hyprland /path/to/Hyprland --hyprctl /path/to/hyprctl \
   --labwc /path/to/labwc --kitty /path/to/kitty --vivaldi /path/to/vivaldi \
-  --swayimg /path/to/swayimg \
+  --swayimg /path/to/swayimg --loupe /path/to/patched/loupe --grim /path/to/grim \
   --opener /nix/store/...-project-object-0.4.0/bin/project-file-open
 ```
 
@@ -55,8 +71,10 @@ The acceptance test uses private headless compositors, DBus, HOME, MIME defaults
 and a disposable browser profile. It exercises Kitty's real `open_url` action and
 configured background launcher, rather than global mouse input. HTML is opened
 in real Vivaldi (including singleton handoff); relative-image loading sets
-a checked title. Image MIME dispatch opens real Swayimg windows and checks their image titles,
-including repeat launches. PDF MIME dispatch uses a fixture desktop viewer,
+a checked title. Image MIME dispatch opens real Swayimg and independently
+packaged Loupe windows, checks image titles, verifies separate Loupe process IDs
+on repeat clicks, and checks decoded test-image pixels in hidden screenshots.
+Loupe launches are checked both while elsewhere and on the invoking workspace. PDF MIME dispatch uses a fixture desktop viewer,
 not a claim about production PDF rendering. Folder and text routes use real
 Kitty and Neovim. Mapping and transient focus
 are checked from compositor events, both on the active workspace and while the

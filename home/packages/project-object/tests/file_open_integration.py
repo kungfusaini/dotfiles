@@ -1,18 +1,20 @@
 #!/usr/bin/env python3
 """Hidden file-link handoff acceptance; private DBus, compositors and browser profile."""
 import argparse
-import base64
+import configparser
 import json
 import os
 from pathlib import Path
 import shlex
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
 import threading
 import time
+import zlib
 from workspace_exec_integration import wait_for
 
 
@@ -57,6 +59,14 @@ def run(args):
     (apps / "fixture.desktop").write_text("[Desktop Entry]\nType=Application\nName=File fixture\nExec=" + str(viewer) + " %f\nMimeType=image/png;application/pdf;\n")
     (apps / "folder.desktop").write_text("[Desktop Entry]\nType=Application\nName=Folder\nExec=" + args.kitty + " +open %U\nMimeType=inode/directory;\n")
     (apps / "editor.desktop").write_text("[Desktop Entry]\nType=Application\nName=Editor\nExec=nvim %F\nTerminal=true\nMimeType=text/plain;\n")
+    # Use the package's actual audited desktop entry, not a permissive fixture.
+    loupe_desktop = Path(args.loupe).resolve().parent.parent / "share/applications/org.gnome.Loupe.desktop"
+    desktop = configparser.ConfigParser(interpolation=None)
+    desktop.read(loupe_desktop)
+    assert desktop["Desktop Entry"].getboolean("X-ProjectObject-Independent")
+    assert not desktop["Desktop Entry"].getboolean("DBusActivatable")
+    (apps / "org.gnome.Loupe.desktop").write_text(loupe_desktop.read_text())
+    env["PATH"] = str(Path(args.loupe).parent) + os.pathsep + env["PATH"]
     config_dir = home / ".config"
     config_dir.mkdir(exist_ok=True)
     (config_dir / "mimeapps.list").write_text("[Default Applications]\ntext/html=vivaldi-test.desktop\nimage/png=swayimg.desktop\napplication/pdf=fixture.desktop\ninode/directory=folder.desktop\ntext/plain=editor.desktop\n")
@@ -72,7 +82,12 @@ def run(args):
     page = media / "gallery #100%.html"
     page.write_text('<title>Loading fixture</title><img src="asset.png" onload="document.title=\'Local file loaded\'">')
     image = media / "asset.png"
-    image.write_bytes(base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC"))
+    def png_chunk(kind, data):
+        return struct.pack("!I", len(data)) + kind + data + struct.pack("!I", zlib.crc32(kind + data))
+    image.write_bytes(b"\x89PNG\r\n\x1a\n"
+                      + png_chunk(b"IHDR", struct.pack("!IIBBBBB", 128, 128, 8, 2, 0, 0, 0))
+                      + png_chunk(b"IDAT", zlib.compress((b"\0" + b"\xff\0\0" * 128) * 128))
+                      + png_chunk(b"IEND", b""))
     pdf = media / "test.pdf"
     pdf.write_bytes(b"%PDF-1.4\n% fixture default-app dispatch only\n")
     text = media / "notes.txt"
@@ -125,8 +140,12 @@ def run(args):
         ctl("dispatch", "exec", shlex.join([args.kitty, "--class", "unrelated-user", "sh", "-c", "sleep 180"]))
         user = wait_for(lambda: next((c for c in clients() if c["class"] == "unrelated-user"), None))
         wait_for(lambda: focus()[1] == user["address"])
-        for index, path in enumerate((page, page, image, pdf, media, page, image, pdf, media, text)):
+        previous_loupe = []
+        for index, path in enumerate((page, page, image, pdf, media, image, page, image, pdf, media, text, image)):
             if index == 5:
+                defaults = config_dir / "mimeapps.list"
+                defaults.write_text(defaults.read_text().replace("image/png=swayimg.desktop", "image/png=org.gnome.Loupe.desktop"))
+            if index == 6:
                 ctl("dispatch", "workspace", "name:Clicked chat")
                 chat = next(c for c in clients() if c["class"] == "clicked-chat")
                 ctl("dispatch", "focuswindow", "address:" + chat["address"])
@@ -142,8 +161,24 @@ def run(args):
             if path == page:
                 wait_for(lambda: any(c["address"] == window["address"] and c["title"] == "Local file loaded" for c in clients()))
             elif path == image:
-                assert window["class"] == "swayimg", window
-                assert "asset.png" in window["title"], window
+                expected = "swayimg" if index < 5 else "org.gnome.Loupe"
+                assert window["class"] == expected, window
+                wait_for(lambda: any(c["address"] == window["address"] and "asset.png" in c["title"] for c in clients()))
+                if expected == "org.gnome.Loupe":
+                    # Repeat clicks must not hand off to an existing process.
+                    assert window["pid"] not in {c["pid"] for c in previous_loupe}, window
+                    previous_loupe.append(window)
+                    if index >= 6:
+                        def image_rendered():
+                            current = next(c for c in clients() if c["address"] == window["address"])
+                            x, y = current["at"]
+                            w, h = current["size"]
+                            shot = subprocess.run([args.grim, "-t", "ppm", "-g", f"{x},{y} {w}x{h}", "-"],
+                                                  env=env, capture_output=True, check=True, timeout=5).stdout
+                            # Verify actual decoded pixels, not merely a filename
+                            # title that could also appear above a loader error.
+                            return shot.split(b"\n", 3)[-1].count(b"\xff\x00\x00") > 30
+                        wait_for(image_rendered, timeout=30)
             elif path == pdf:
                 wait_for(lambda: (root / "viewer-paths").exists() and str(path) in (root / "viewer-paths").read_text().splitlines())
             else:
@@ -181,7 +216,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for name in ("hyprland", "hyprctl", "labwc", "kitty", "vivaldi", "swayimg", "opener"):
+    for name in ("hyprland", "hyprctl", "labwc", "kitty", "vivaldi", "swayimg", "loupe", "grim", "opener"):
         parser.add_argument("--" + name, required=True)
     args = parser.parse_args()
     if os.environ.get("FILE_OPEN_PRIVATE_DBUS") != "1":
