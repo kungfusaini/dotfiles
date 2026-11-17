@@ -1,0 +1,189 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<Session version="7003" id-counter="491" rg-counter="0" name-counter="1" event-counter="12" vca-counter="1">
+  <ProgramVersion created-with="Ardour 9.7" modified-with="Ardour 9.7" />
+  <MIDIPorts>
+    <Port name="Cue Control in" type="midi" direction="Input" />
+    <Port name="MIDI Clock out" type="midi" direction="Output" />
+    <Port name="MMC in" type="midi" direction="Input" />
+    <Port name="MMC out" type="midi" direction="Output" />
+    <Port name="MTC out" type="midi" direction="Output" />
+    <Port name="Scene in" type="midi" direction="Input" />
+    <Port name="Scene out" type="midi" direction="Output" />
+    <Port name="x-virtual-keyboard" type="midi" direction="Output">
+      <Connection other="Sketch Piano/midi_in 1" />
+    </Port>
+  </MIDIPorts>
+  <Config>
+    <Option name="native-file-data-format" value="FormatFloat" />
+    <Option name="show-summary" value="0" />
+    <Option name="show-vertical-summary" value="0" />
+    <Option name="show-group-tabs" value="0" />
+    <Option name="default-time-domain" value="BeatTime" />
+  </Config>
+  <Metadata />
+  <Sources />
+  <TriggerBindings />
+  <Regions />
+  <Locations />
+  <Bundles />
+  <VCAManager />
+  <Routes>
+    <Route version="7003" id="26" name="Master" default-type="audio" strict-io="1" volume-applies-to-output="1" active="1" denormal-protection="0" meter-point="MeterOutput" disk-io-point="DiskIOPreFader" meter-type="MeterK14">
+      <ProgramVersion created-with="Ardour 9.7" modified-with="Ardour 9.7" />
+      <PresentationInfo order="0" flags="MasterOut,OrderSet" color="2855877119" />
+      <Controllable name="solo" id="34" flags="Toggle,RealTime" value="0" self-solo="0" soloed-by-upstream="0" soloed-by-downstream="0" />
+      <Controllable name="solo-iso" id="40" flags="Toggle,RealTime" value="0" solo-isolated="0" />
+      <Controllable name="solo-safe" id="42" flags="Toggle" value="0" solo-safe="0" />
+      <IO name="Master" id="55" direction="Input" default-type="audio">
+        <Port name="Master/audio_in 1" type="audio" direction="Input">
+          <Connection other="Sketch Piano/audio_out 1" />
+        </Port>
+        <Port name="Master/audio_in 2" type="audio" direction="Input">
+          <Connection other="Sketch Piano/audio_out 2" />
+        </Port>
+      </IO>
+      <IO name="Master" id="56" direction="Output" default-type="audio">
+        <Port name="Master/audio_out 1" type="audio" direction="Output">
+          <Connection other="system:playback_1" />
+        </Port>
+        <Port name="Master/audio_out 2" type="audio" direction="Output">
+          <Connection other="system:playback_2" />
+        </Port>
+      </IO>
+      <MuteMaster mute-point="PostFader,Listen,Main,SurroundSend" muted="0" />
+      <Controllable name="mute" id="36" flags="Toggle,RealTime" value="0" />
+      <Controllable name="phase" id="38" flags="Toggle" value="0" phase-invert="00" />
+      <Controllable name="mastervolume" id="63" flags="GainLike,NotAutomatable" value="1" />
+      <Pannable>
+        <Controllable name="pan-azimuth" id="45" flags="" value="0.5" />
+        <Controllable name="pan-width" id="49" flags="" value="0" />
+        <Controllable name="pan-elevation" id="47" flags="" value="0" />
+        <Controllable name="pan-frontback" id="51" flags="" value="0" />
+        <Controllable name="pan-lfe" id="53" flags="" value="0" />
+        <Automation>
+          <AutomationList automation-id="pan-azimuth" id="46" interpolation-style="Linear" time-domain="AudioTime" state="Off" />
+          <AutomationList automation-id="pan-elevation" id="48" interpolation-style="Linear" time-domain="AudioTime" state="Off" />
+          <AutomationList automation-id="pan-width" id="50" interpolation-style="Linear" time-domain="AudioTime" state="Off" />
+          <AutomationList automation-id="pan-frontback" id="52" interpolation-style="Linear" time-domain="AudioTime" state="Off" />
+          <AutomationList automation-id="pan-lfe" id="54" interpolation-style="Linear" time-domain="AudioTime" state="Off" />
+        </Automation>
+      </Pannable>
+      <Processor id="58" name="Polarity" active="1" user-latency="0" use-user-latency="0" type="polarity" />
+      <Processor id="59" name="Amp" active="1" user-latency="0" use-user-latency="0" type="trim">
+        <Controllable name="trimcontrol" id="32" flags="GainLike" value="1" />
+      </Processor>
+      <Processor id="57" name="Amp" active="1" user-latency="0" use-user-latency="0" type="amp">
+        <Controllable name="gaincontrol" id="30" flags="GainLike" value="1" />
+      </Processor>
+      <Processor id="61" name="Master" active="1" user-latency="0" use-user-latency="0" own-input="1" own-output="0" output="Master" type="main-outs" role="Main">
+        <PannerShell bypassed="0" user-panner="" linked-to-route="1" />
+      </Processor>
+      <Processor id="60" name="meter-Master" active="1" user-latency="0" use-user-latency="0" type="meter" />
+      <Slavable />
+    </Route>
+    <Route version="7003" id="119" name="Sketch Piano" default-type="midi" strict-io="0" active="1" denormal-protection="0" meter-point="MeterPostFader" disk-io-point="DiskIOPreFader" meter-type="MeterPeak" midi-playlist="198" alignment-choice="Automatic" playback-channel-mode="AllChannels" capture-channel-mode="AllChannels" playback-channel-mask="0xffff" capture-channel-mask="0xffff" note-mode="Sustained" step-editing="0" input-active="1" restore-pgm="1" chase-notes="1">
+      <ProgramVersion created-with="Ardour 9.7" modified-with="Ardour 9.7" />
+      <PresentationInfo order="1" flags="MidiTrack,OrderSet" color="4289374975" />
+      <Controllable name="solo" id="160" flags="Toggle,RealTime" value="0" self-solo="0" soloed-by-upstream="0" soloed-by-downstream="0" />
+      <Controllable name="solo-iso" id="166" flags="Toggle,RealTime" value="0" solo-isolated="0" />
+      <Controllable name="solo-safe" id="168" flags="Toggle" value="0" solo-safe="0" />
+      <IO name="Sketch Piano" id="181" direction="Input" default-type="midi">
+        <Port name="Sketch Piano/midi_in 1" type="midi" direction="Input">
+          <Connection other="x-virtual-keyboard" />
+        </Port>
+      </IO>
+      <IO name="Sketch Piano" id="182" direction="Output" default-type="midi">
+        <Port name="Sketch Piano/audio_out 1" type="audio" direction="Output">
+          <Connection other="Master/audio_in 1" />
+        </Port>
+        <Port name="Sketch Piano/audio_out 2" type="audio" direction="Output">
+          <Connection other="Master/audio_in 2" />
+        </Port>
+        <Port name="Sketch Piano/midi_out 1" type="midi" direction="Output" />
+      </IO>
+      <MuteMaster mute-point="PostFader,Listen,Main,SurroundSend" muted="0" />
+      <Controllable name="mute" id="162" flags="Toggle,RealTime" value="0" />
+      <Controllable name="phase" id="164" flags="Toggle" value="0" phase-invert="" />
+      <Pannable>
+        <Controllable name="pan-azimuth" id="171" flags="" value="0.5" />
+        <Controllable name="pan-width" id="175" flags="" value="0" />
+        <Controllable name="pan-elevation" id="173" flags="" value="0" />
+        <Controllable name="pan-frontback" id="177" flags="" value="0" />
+        <Controllable name="pan-lfe" id="179" flags="" value="0" />
+        <Automation>
+          <AutomationList automation-id="pan-azimuth" id="172" interpolation-style="Linear" time-domain="AudioTime" state="Off" />
+          <AutomationList automation-id="pan-elevation" id="174" interpolation-style="Linear" time-domain="AudioTime" state="Off" />
+          <AutomationList automation-id="pan-width" id="176" interpolation-style="Linear" time-domain="AudioTime" state="Off" />
+          <AutomationList automation-id="pan-frontback" id="178" interpolation-style="Linear" time-domain="AudioTime" state="Off" />
+          <AutomationList automation-id="pan-lfe" id="180" interpolation-style="Linear" time-domain="AudioTime" state="Off" />
+        </Automation>
+      </Pannable>
+      <Processor id="191" name="recorder:Sketch Piano" active="1" user-latency="0" use-user-latency="0" type="diskwriter" record-safe="0" />
+      <Processor id="190" name="player:Sketch Piano" active="1" user-latency="0" use-user-latency="0" type="diskreader" />
+      <Processor id="184" name="Polarity" active="1" user-latency="0" use-user-latency="0" type="polarity" />
+      <Processor id="207" name="ACE Reasonable Synth" active="1" user-latency="0" use-user-latency="0" type="lv2" unique-id="https://community.ardour.org/node/7596" count="1" custom="0">
+        <ConfiguredInput>
+          <Channels type="midi" count="1" />
+        </ConfiguredInput>
+        <CustomSinks>
+          <Channels type="midi" count="1" />
+        </CustomSinks>
+        <ConfiguredOutput>
+          <Channels type="audio" count="2" />
+          <Channels type="midi" count="1" />
+        </ConfiguredOutput>
+        <PresetOutput />
+        <InputMap-0>
+          <Channelmap type="midi" from="0" to="0" />
+        </InputMap-0>
+        <OutputMap-0>
+          <Channelmap type="audio" from="0" to="0" />
+          <Channelmap type="audio" from="1" to="1" />
+        </OutputMap-0>
+        <ThruMap />
+        <lv2 last-preset-uri="" last-preset-label="" parameter-changed-since-last-preset="0" />
+      </Processor>
+      <Processor id="183" name="Amp" active="1" user-latency="0" use-user-latency="0" type="amp">
+        <Controllable name="gaincontrol" id="156" flags="GainLike" value="1" />
+      </Processor>
+      <Processor id="187" name="meter-Sketch Piano" active="1" user-latency="0" use-user-latency="0" type="meter" />
+      <Processor id="188" name="Sketch Piano" active="1" user-latency="0" use-user-latency="0" own-input="1" own-output="0" output="Sketch Piano" type="main-outs" role="Main">
+        <PannerShell bypassed="0" user-panner="" linked-to-route="1" />
+      </Processor>
+      <Slavable />
+      <Controllable name="monitor" id="196" flags="RealTime" value="0" monitoring="" />
+      <Controllable name="rec-safe" id="194" flags="Toggle,RealTime" value="0" />
+      <Controllable name="rec-enable" id="192" flags="Toggle,RealTime" value="0" />
+    </Route>
+  </Routes>
+  <Playlists>
+    <Playlist id="198" name="Sketch Piano.1" type="midi" orig-track-id="119" pgroup-id="" shared-with-ids="" frozen="0" />
+  </Playlists>
+  <UnusedPlaylists />
+  <RouteGroups />
+  <Speakers>
+    <Speaker azimuth="240" elevation="0" distance="1" />
+    <Speaker azimuth="120" elevation="0" distance="1" />
+  </Speakers>
+  <TempoMap superclocks-per-second="282240000">
+    <Tempos>
+      <Tempo npm="120" enpm="120" note-type="4" type="Constant" locked-to-meter="0" continuing="0" active="1" sclock="0" quarters="0:0" bbt="1|1|0" omega="0" />
+    </Tempos>
+    <Meters>
+      <Meter note-value="4" divisions-per-bar="4" sclock="0" quarters="0:0" bbt="1|1|0" />
+    </Meters>
+    <MusicTimes />
+  </TempoMap>
+  <Extra>
+    <UI>
+      <GUIObjectState>
+        <Object id="rtav 26" height="78" />
+        <Object id="rtav 119" height="580" midnam-custom-device-mode="General MIDI" midnam-channel="Channel  1" note-range-min="48" note-range-max="72" />
+      </GUIObjectState>
+    </UI>
+    <RulerVisibility minsec="0" timecode="0" samples="0" bbt="1" meter="0" tempo="0" rangemarker="0" marker="0" arrangement="0" videotl="0" />
+  </Extra>
+  <description>
+    <content>One piano instrument, a large note lane, and musical time. Start simply; add tracks and open panels as needed.</content>
+  </description>
+</Session>

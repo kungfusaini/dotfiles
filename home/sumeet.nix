@@ -93,6 +93,9 @@ in
     swayimg
   ];
 
+  xdg.configFile."ardour9/templates/Musical Sketch/Musical Sketch.template".source =
+    ./config/ardour/musical-sketch.template;
+
   # Ardour writes this file itself; update only scaling rather than managing a
   # read-only ui_config symlink. Never race a running instance's preferences.
   home.activation.ardourScale = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
@@ -101,6 +104,10 @@ in
     else
       run ${pkgs.python3}/bin/python3 ${./scripts/ardour-scale.py} \
         "${config.xdg.configHome}/ardour9/ui_config"
+      run ${pkgs.python3}/bin/python3 ${./scripts/ardour-sketch.py} \
+        "${config.xdg.configHome}/ardour9" \
+        "${config.home.homeDirectory}/Music/ardour" \
+        ${./config/ardour/musical-sketch.template}
     fi
   '';
 

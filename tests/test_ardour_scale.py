@@ -42,7 +42,10 @@ class ArdourScaleTests(unittest.TestCase):
             activation = (activation.replace('${pkgs.procps}/bin/pgrep', 'false')
                           .replace('${pkgs.python3}/bin/python3', 'python3')
                           .replace('${./scripts/ardour-scale.py}', str(SOURCE))
-                          .replace('${config.xdg.configHome}', directory))
+                          .replace('${config.xdg.configHome}', directory)
+                          .replace('${./scripts/ardour-sketch.py}', str(SOURCE.with_name('ardour-sketch.py')))
+                          .replace('${config.home.homeDirectory}', directory)
+                          .replace('${./config/ardour/musical-sketch.template}', 'unused-template'))
             # Home Manager's run helper logs commands instead of running them
             # in dry-run mode. A direct invocation would create the file here.
             result = subprocess.run(['bash', '-eu', '-c',
