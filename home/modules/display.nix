@@ -3,6 +3,7 @@
 let
   control = pkgs.callPackage ../packages/hyprland-control { };
   networkDisplays = pkgs.callPackage ../packages/gnome-network-displays { };
+  doubletake = pkgs.callPackage ../packages/doubletake { };
 
   displayWallpaperRefresh = pkgs.writeShellApplication {
     name = "display-wallpaper-refresh";
@@ -93,7 +94,8 @@ in
   # Keep wallpaper restart as a manual fallback, never a normal transition.
   # Use the packaged casting client and its bundled GStreamer dependencies.
   # Network discovery and wireless lid policy are separate host-level choices.
-  home.packages = [ clamshellMode headlessMode displayWallpaperRefresh networkDisplays control ];
+  # Experimental AirPlay sender, manual CLI only: no daemon or auto-connect.
+  home.packages = [ clamshellMode headlessMode displayWallpaperRefresh networkDisplays control doubletake ];
 
   # Runtime safety identity, separate from executable Lua text. This avoids a
   # headlessMode ↔ watcher package dependency cycle without parsing config code.

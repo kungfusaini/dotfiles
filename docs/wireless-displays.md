@@ -69,6 +69,16 @@ being powered on is not proof it is advertising a compatible receiver. Google
 Cast support is model-dependent. Follow the [LG wireless-PC guidance](https://www.lg.com/us/support/help-library/lg-tv-connection-connecting-a-pc-wirelessly--20154629490990)
 and check the specific model rather than opening more firewall ports speculatively.
 
+## Experimental AirPlay sender
+
+`doubletake` and `doubletake-ctl` are also packaged for manual AirPlay trials.
+Network Displays itself still supports Cast/Miracast, not AirPlay. There is no
+AirPlay autostart or automatic connection. See
+[`home/packages/doubletake/README.md`](../home/packages/doubletake/README.md) for
+capture-free tests, pairing/privacy warnings, and the existing portal/VA-plugin
+limitations. LG mirroring remains unverified; an AirPlay advertisement alone is
+not a successful streaming test.
+
 ## Headless verification
 
 The receiver-first package has compiled callback/lifetime tests and a real GTK
