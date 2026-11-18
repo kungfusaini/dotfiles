@@ -2,6 +2,7 @@
 # No host display/socket, input devices, microphone, settings or Pi session.
 { pkgs }:
 let
+  control = pkgs.callPackage ../home/packages/hyprland-control { };
   stub = pkgs.writeShellScript "tablet-iteration-status-stub" ''
     if test "''${1:-}" = agent-state; then
       exec ${pkgs.quickshell}/bin/quickshell ipc --path ${../home/config/quickshell/tablet-home-preview}/agent.qml call tabletAgent snapshot
@@ -9,6 +10,7 @@ let
     printf '{"running":true,"visible":true,"view":"%s","recording":false,"transcribing":false,"uncertain":false,"ready":false,"error":""}\n' "$TABLET_ITERATION_TEST_VIEW"
   '';
   liveHelper = pkgs.writeShellScript "tablet-native-live-helper" ''
+    export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
     exec ${pkgs.python3}/bin/python ${../home/scripts/desktop/tablet-iterate.py} "$@"
   '';
   goodUi = pkgs.runCommand "tablet-live-good-ui" {} ''
@@ -45,6 +47,8 @@ PY
     exec ${pkgs.python3}/bin/python ${./fake_pi_rpc.py} "$@"
   '';
 in pkgs.runCommand "tablet-iteration-shell-smoke" { } ''
+  export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
+  export HYPRLAND_CONTROL_TEST_BACKEND=legacy
   export PATH=${pkgs.quickshell}/bin:${pkgs.wlrctl}/bin:${pkgs.wtype}/bin:${pkgs.squeekboard}/bin:${pkgs.dbus}/bin:${pkgs.lib.getBin pkgs.glib}/bin:${pkgs.wf-recorder}/bin:${pkgs.ffmpeg}/bin:$PATH
   export QT_QPA_PLATFORM=wayland
   export QT_QUICK_BACKEND=software

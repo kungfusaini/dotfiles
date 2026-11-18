@@ -1,6 +1,7 @@
 { lib, buildNpmPackage, callPackage, writeText, python3, chromium, bitwarden-desktop, hyprland, makeWrapper, nodejs }:
 
 let
+  control = callPackage ../hyprland-control { inherit hyprland; };
   bitwardenExtension = callPackage ./bitwarden-extension.nix { };
   projectExtension = callPackage ../project-object/nix/browser-extension.nix { };
   managedChromium = chromium.override (args: let
@@ -31,6 +32,8 @@ buildNpmPackage {
   nativeCheckInputs = [ python3 ];
   doCheck = true;
   checkPhase = ''
+    export PYTHONPATH=${control.pythonPath}
+    export HYPRLAND_CONTROL_TEST_BACKEND=legacy
     PYTHONDONTWRITEBYTECODE=1 ${python3}/bin/python3 -m unittest discover -s tests -v
   '';
   installPhase = ''
@@ -57,6 +60,7 @@ buildNpmPackage {
       --replace-fail '@DAEMON@' "$out/lib/pi-browser/node_modules/playwright-core/lib/entry/cliDaemon.js" \
       --replace-fail '@HYPRCTL@' '${hyprland}/bin/hyprctl'
     makeWrapper ${python3}/bin/python3 "$out/bin/pi-browser" \
+      --prefix PYTHONPATH : ${control.pythonPath} \
       --add-flags "$out/lib/pi-browser/browser.py" \
       --prefix PATH : ${lib.makeBinPath [ python3 managedChromium ]} \
       --set PYTHONDONTWRITEBYTECODE 1

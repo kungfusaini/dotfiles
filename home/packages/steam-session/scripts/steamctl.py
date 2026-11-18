@@ -8,6 +8,7 @@ from contextlib import contextmanager
 import fcntl
 import html
 import json
+from hyprland_control import uses_lua, rule_args, desktop_argv
 import os
 import re
 import shutil
@@ -398,6 +399,15 @@ def configure_hidden_rule() -> dict[str, bool]:
     with visibility_lock():
         if manual_session_pids():
             return {"manual": True}
+        executable = os.environ.get('STEAM_VISIBILITY_HYPRCTL', 'hyprctl')
+        if uses_lua(executable):
+            result = subprocess.run([executable, *rule_args('project-object-steam-hidden', {
+                'match': {'class':'^([Ss]team)$'}, 'workspace':'special:steam-hidden silent',
+                'no_initial_focus':True, 'suppress_event':'activate activatefocus',
+            })], capture_output=True, text=True, check=False, timeout=5)
+            if result.returncode or result.stdout.strip() != 'ok':
+                raise SteamError('Could not install the Steam-only hidden-window policy.')
+            return {'manual':False}
         # Disable while configuring; an incomplete rule must never match all apps.
         rule = "windowrule[project-object-steam-hidden]"
         effects = (("enable", "0"), ("match:class", "^([Ss]team)$"),
@@ -430,12 +440,12 @@ def _hide_windows() -> int:
         if not address:
             continue
         result = subprocess.run(
-            [
+            desktop_argv([
                 hyprctl,
                 "dispatch",
                 "movetoworkspacesilent",
                 "special:steam-hidden,address:" + str(address),
-            ],
+            ]),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             timeout=5,

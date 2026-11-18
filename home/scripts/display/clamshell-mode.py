@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Lid-only display transitions; logind retains ownership of suspend policy."""
 import fcntl
+from hyprland_control import desktop_args, uses_lua, call
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,7 @@ PANEL = "eDP-1"
 
 
 def hypr(*args):
-    return subprocess.run(["hyprctl", *args], check=True, capture_output=True,
+    return subprocess.run(["hyprctl", *desktop_args('hyprctl', args)], check=True, capture_output=True,
                           text=True, timeout=4).stdout
 
 
@@ -72,6 +73,20 @@ def rule(m, position=None, mirror=False):
     return result
 
 
+def set_monitor(m, position=None, mirror=False):
+    if uses_lua():
+        spec = {'output':m['name'], 'mode':f"{m['width']}x{m['height']}@{m['refreshRate']}",
+                'position':position or f"{m['x']}x{m['y']}", 'scale':m['scale'],
+                'transform':m.get('transform', 0), 'reset':True}
+        if mirror and m.get('mirrorOf', 'none') != 'none':
+            spec['mirror'] = str(m.get('mirrorTarget', m['mirrorOf']))
+        result = hypr('eval', call('monitor', spec))
+    else:
+        result = hypr('keyword', 'monitor', rule(m, position, mirror))
+    if result.strip() != 'ok':
+        raise RuntimeError('Monitor rule was refused: ' + result)
+
+
 class Clamshell:
     def __init__(self, runtime, instance):
         self.path = runtime / "clamshell-mode" / "state.json"
@@ -125,7 +140,7 @@ class Clamshell:
         panel = next(m for m in state["outputs"] if m["name"] == PANEL)
         # Panel first: failures in optional external/workspace restoration must
         # never leave the user with no screen. Keep the journal until success.
-        hypr("keyword", "monitor", rule(panel, None if external else "0x0"))
+        set_monitor(panel, None if external else '0x0')
         settled = wait_monitors(lambda ms: any(m["name"] == PANEL and enabled(m)
                                                and m.get("mirrorOf", "none") == "none" for m in ms))
         if not next(m for m in settled if m["name"] == PANEL).get("dpmsStatus", True):
@@ -133,7 +148,7 @@ class Clamshell:
             wait_monitors(lambda ms: any(m["name"] == PANEL and m.get("dpmsStatus", True) for m in ms))
         for m in state["outputs"]:
             if m["name"] != PANEL and m["name"] in connected:
-                hypr("keyword", "monitor", rule(m, mirror=True))
+                set_monitor(m, mirror=True)
         expected = {m["name"]: m.get("mirrorOf", "none") for m in state["outputs"]
                     if m["name"] != PANEL and m["name"] in connected}
         wait_monitors(lambda ms: all(any(m["name"] == name and enabled(m)
@@ -200,14 +215,16 @@ class Clamshell:
             for index, m in enumerate(externals):
                 # A mirror cannot survive losing its source. Convert it to a
                 # real output before disabling the panel. Preserve other screens.
-                hypr("keyword", "monitor", rule(m, "0x0" if index == 0 else "auto-right"))
+                set_monitor(m, '0x0' if index == 0 else 'auto-right')
             wait_monitors(lambda ms: all(any(m["name"] == saved["name"] and enabled(m)
                                               and m.get("mirrorOf", "none") == "none" for m in ms)
                                          for saved in externals))
             if not lid_closed() or not any(m["name"] != PANEL and enabled(m) for m in monitors()):
                 self.restore(self.load())
                 return
-            hypr("keyword", "monitor", f"{PANEL},disable")
+            request = ['eval', call('monitor', {'output':PANEL, 'disabled':True, 'reset':True})] if uses_lua() else ['keyword', 'monitor', f'{PANEL},disable']
+            if hypr(*request).strip() != 'ok':
+                raise RuntimeError('Panel disable was refused')
             wait_monitors(lambda ms: not any(m["name"] == PANEL and enabled(m) for m in ms)
                           and any(m["name"] != PANEL and enabled(m) for m in ms))
         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):

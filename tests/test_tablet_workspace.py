@@ -233,7 +233,7 @@ class TabletWorkspaceTests(unittest.TestCase):
         self.state()
         with patch.object(trial, "foreground", return_value=True), patch.object(trial, "dispatch") as dispatch:
             trial.action("browser")
-        dispatch.assert_called_once_with("exec", "[workspace name:tablet-trial silent] vivaldi --new-window about:blank")
+        dispatch.assert_called_once_with('exec', {'command':'vivaldi --new-window about:blank', 'rules':{'workspace':'name:tablet-trial silent'}})
 
     def test_status_hides_panel_outside_trial(self):
         self.state()

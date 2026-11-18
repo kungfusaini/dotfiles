@@ -1,0 +1,50 @@
+diff --git a/src/desktop/rule/RuleWithEffects.hpp b/src/desktop/rule/RuleWithEffects.hpp
+--- a/src/desktop/rule/RuleWithEffects.hpp
++++ b/src/desktop/rule/RuleWithEffects.hpp
+@@ -31,6 +31,11 @@ namespace Desktop::Rule {
+             return {};
+         }
+ 
++        void clearEffects() {
++            m_effects.clear();
++            m_effectSet.clear();
++        }
++
+         const std::vector<TEffect>& effects() {
+             return m_effects;
+         }
+diff --git a/src/config/lua/objects/LuaWindowRule.cpp b/src/config/lua/objects/LuaWindowRule.cpp
+--- a/src/config/lua/objects/LuaWindowRule.cpp
++++ b/src/config/lua/objects/LuaWindowRule.cpp
+@@ -48,6 +48,22 @@ static int windowRuleSetEnabled(lua_State* L) {
+     return 0;
+ }
+ 
++// Explicitly clear a disabled rule instead of accumulating effects on each
++// update. Existing hl.window_rule semantics remain unchanged.
++static int windowRuleClearEffects(lua_State* L) {
++    auto* ref = sc<WP<Desktop::Rule::CWindowRule>*>(luaL_checkudata(L, 1, MT));
++    const auto rule = ref->lock();
++    if (!rule)
++        return luaL_error(L, "clear_effects: expired window rule");
++    if (rule->isEnabled())
++        return luaL_error(L, "clear_effects: disable the rule before clearing effects");
++
++    const auto count = rule->effects().size();
++    rule->clearEffects();
++    lua_pushinteger(L, count);
++    return 1;
++}
++
+ static int windowRuleIsEnabled(lua_State* L) {
+     auto*      ref = sc<WP<Desktop::Rule::CWindowRule>*>(luaL_checkudata(L, 1, MT));
+ 
+@@ -68,6 +84,8 @@ static int windowRuleIndex(lua_State* L) {
+ 
+     if (key == "set_enabled")
+         lua_pushcfunction(L, windowRuleSetEnabled);
++    else if (key == "clear_effects")
++        lua_pushcfunction(L, windowRuleClearEffects);
+     else if (key == "is_enabled")
+         lua_pushcfunction(L, windowRuleIsEnabled);
+     else

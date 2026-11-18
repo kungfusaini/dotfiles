@@ -128,8 +128,8 @@ in
   '';
 
   wayland.windowManager.hyprland.settings = {
-    windowrule = [
-      "match:class ^(pegasus-fe|org\\.pegasus-frontend\\.)$, fullscreen on"
+    window_rule = [
+      { match.class = "^(pegasus-fe|org\\.pegasus-frontend\\.)$"; fullscreen = true; }
       # Automated Steam installs a toggleable named rule in the verified
       # workspace launcher. No permanent rule may hide human-opened Steam.
     ];

@@ -1,6 +1,7 @@
 { pkgs, hyprland, native ? false, gamingOnly ? false }:
 assert !gamingOnly || native;
 let
+  control = pkgs.callPackage ../home/packages/hyprland-control { inherit hyprland; };
   sensor = pkgs.writeShellScriptBin "monitor-sensor" ''
     while true; do
       printf 'Has accelerometer\n    Accelerometer orientation: %s\n    Accelerometer tilt: upright\n' "$(< "$TABLET_TEST_ORIENTATION")"
@@ -11,6 +12,7 @@ let
     name = "tablet-orientation";
     runtimeInputs = [pkgs.python3 hyprland pkgs.quickshell pkgs.coreutils pkgs.procps sensor];
     text = ''
+      export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       export TABLET_ORIENTATION_SESSION=native
       export TABLET_ORIENTATION_POLICY=${pkgs.writeText "private-orientation-policy.json" (builtins.toJSON { monitor="eDP-1"; devices=[]; })}
       export TABLET_ROTATION_FADE_QML=${../home/config/quickshell/tablet-rotation-fade}
@@ -48,6 +50,7 @@ let
     ffmpeg -v error -f lavfi -i 'color=c=0x15b94d:s=960x640:d=2:r=25' -c:v libvpx -b:v 300k -an -f webm "$out"
   '';
   helper = pkgs.writeShellScript "tablet-proof-private-helper" ''
+    export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
     export TABLET_PROOF_QML=${proof.ui}/shell.qml
     export TABLET_PROOF_BIN="$0"
     export PATH="$TABLET_TEST_FAKE_BIN:$PATH"
@@ -65,6 +68,7 @@ in pkgs.writeShellApplication {
   name = if gamingOnly then "tablet-pegasus-test" else if native then "tablet-native-fold-test" else "tablet-proof-native-test";
   runtimeInputs = [python hyprland pkgs.quickshell pkgs.labwc pkgs.bubblewrap pkgs.dbus pkgs.glib pkgs.dconf pkgs.wtype pkgs.grim pkgs.squeekboard pkgs.vivaldi pkgs.pegasus-frontend];
   text = ''
+    export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
     export TABLET_TEST_NATIVE_FOLD=${if native then "1" else "0"}
     export TABLET_TEST_PROOF_DRIVER=${./tablet_proof_live.py}
     export TABLET_TEST_NATIVE_SOURCE=${../home/packages/tablet-proof/native.py}

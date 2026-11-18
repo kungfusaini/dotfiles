@@ -224,7 +224,8 @@ class NativeTests(unittest.TestCase):
         caps.verify_launch.assert_called_once()
         command, argument = dispatch.call_args.args
         self.assertEqual(command, 'exec')
-        self.assertTrue(argument.startswith('[workspace name:tablet-trial silent] vivaldi --new-window '))
+        self.assertTrue(argument['command'].startswith('vivaldi --new-window '))
+        self.assertEqual(argument['rules'], {'workspace':'name:tablet-trial silent'})
         self.assertIn(self.laptop['address'], self.native.pending['previous'])
 
     def test_custom_profile_cannot_authorize_cold_normal_browser_launch(self):

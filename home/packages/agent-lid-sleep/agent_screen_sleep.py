@@ -11,6 +11,14 @@ import sys
 import time
 
 from agent_lid_sleep import agents_working, SETTLE_SECONDS
+from hyprland_control import desktop_args
+
+
+def set_dpms(action):
+    result = subprocess.run(['hyprctl', *desktop_args('hyprctl', ['dispatch','dpms',action])],
+                            capture_output=True, text=True, check=True, timeout=5)
+    if result.stdout.strip() != 'ok':
+        raise RuntimeError('Compositor refused display power change: ' + result.stdout.strip())
 
 
 class SleepRequest:
@@ -110,8 +118,7 @@ def main():
                 return False
             if request.armed and not display_off:
                 display_off = True
-                subprocess.run(["hyprctl", "dispatch", "dpms", "off"], check=True,
-                               timeout=5)
+                set_dpms('off')
                 logging.info("Display off; waiting for tracked agents")
         except Exception:
             failed = True
@@ -208,7 +215,11 @@ def main():
                 monitor.wait()
             monitor.stdout.close()
         if display_off:
-            subprocess.run(["hyprctl", "dispatch", "dpms", "on"], timeout=5, check=False)
+            try:
+                set_dpms('on')
+            except Exception:
+                failed = True
+                logging.exception('Display restoration failed')
         os.close(fd)
     if failed:
         raise SystemExit(1)

@@ -39,7 +39,7 @@ class RequestTests(unittest.TestCase):
 class RunnerTests(unittest.TestCase):
     """Real GLib/pipe handling, fake Wayland monitor and power/display commands."""
     def run_request(self, body, *, working=False, external_sleep=False, fail_off=False,
-                    owner_lost=False, bus_lost=False, input_during_scan=False):
+                    owner_lost=False, bus_lost=False, input_during_scan=False, reject_off=False):
         import dbus
         from gi.repository import GLib
 
@@ -78,7 +78,7 @@ class RunnerTests(unittest.TestCase):
                 GLib.timeout_add(100, resume)
             if fail_off and args[-1] == "off":
                 raise subprocess.CalledProcessError(1, args)
-            return subprocess.CompletedProcess(args, 0)
+            return subprocess.CompletedProcess(args, 0, stdout='refused' if reject_off and args[-1]=='off' else 'ok', stderr='')
 
         clock = iter(range(0, 1000, 3))
         with tempfile.TemporaryDirectory() as directory:
@@ -142,6 +142,11 @@ class RunnerTests(unittest.TestCase):
     def test_bus_loss_cancels_request(self):
         calls = self.run_request("print('idle', flush=True)\ntime.sleep(10)", bus_lost=True)
         self.assertEqual([c[-1] for c in calls], ["off", "on"])
+
+    def test_zero_exit_with_rejected_blanking_never_suspends(self):
+        calls = self.run_request("print('idle', flush=True)\ntime.sleep(10)", reject_off=True)
+        self.assertEqual([c[-1] for c in calls], ['off','on'])
+        self.assertNotIn(['systemctl','suspend'], calls)
 
     def test_failed_blanking_never_suspends(self):
         calls = self.run_request("print('idle', flush=True)\ntime.sleep(10)", fail_off=True)

@@ -1,6 +1,8 @@
 { config, pkgs, lib, osConfig, ... }:
 
 let
+  control = pkgs.callPackage ../packages/hyprland-control { };
+  layerPolicy = { match.namespace = "^tablet-rotation-fade$"; no_anim = true; };
   nativeAutomatic = config.programs.tablet-native.automatic;
   tabletOskPackage = pkgs.writeShellApplication {
     name = "tablet-osk";
@@ -30,6 +32,7 @@ let
     name = "tablet-orientation";
     runtimeInputs = with pkgs; [ coreutils procps python3 quickshell osConfig.hardware.sensor.iio.package osConfig.programs.hyprland.package ];
     text = ''
+      export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       export TABLET_ORIENTATION_POLICY=${orientationPolicy}
       export TABLET_ROTATION_FADE_QML=${../config/quickshell/tablet-rotation-fade}
       exec python3 ${../scripts/desktop/tablet-orientation.py} "$@"
@@ -77,6 +80,7 @@ let
     inherit name;
     runtimeInputs = with pkgs; [ coreutils python3 procps glib dconf squeekboard quickshell wtype wl-clipboard libnotify voxtype vivaldi tabletWorkspace osConfig.programs.hyprland.package ] ++ lib.optionals native [ tabletPi osConfig.nix.package ];
     text = ''
+      export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       export QT_QUICK_CONTROLS_STYLE=Basic
       export TABLET_NATIVE_CHAT=${if native then "1" else "0"}
       export TABLET_CHAT_PI=${tabletPi}/bin/pi
@@ -108,6 +112,7 @@ let
     name = "tablet-orientation";
     runtimeInputs = with pkgs; [ coreutils procps python3 quickshell osConfig.hardware.sensor.iio.package osConfig.programs.hyprland.package ];
     text = ''
+      export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       export TABLET_ORIENTATION_SESSION=native
       export TABLET_ORIENTATION_POLICY=${orientationPolicy}
       export TABLET_ROTATION_FADE_QML=${../config/quickshell/tablet-rotation-fade}
@@ -125,6 +130,7 @@ let
     text = if nativeAutomatic then ''
       exec ${tabletNative}/bin/tablet-native watch-fold
     '' else ''
+      export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       export TABLET_WORKSPACE_SOURCE=${../scripts/desktop/tablet-workspace.py}
       exec python3 ${../scripts/desktop/tablet-fold-watch.py}
     '';
@@ -133,6 +139,7 @@ let
     name = "tablet-workspace";
     runtimeInputs = with pkgs; [ python3 libnotify vivaldi osConfig.programs.hyprland.package quickshell tabletOskPackage tabletOrientation ];
     text = ''
+      export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       export TABLET_PANEL_QML=${../config/quickshell/tablet-workspace/shell.qml}
       exec python3 ${../scripts/desktop/tablet-workspace.py} "$@"
     '';
@@ -146,6 +153,7 @@ in
   };
 
   config = {
+    _module.args.tabletFoldWatch = tabletFoldWatch;
     # Install immutable assets/host without changing Vivaldi's load-extension list
     # or other profiles. Human extension consent/pairing precedes native routing.
     xdg.dataFile."tablet-media-companion".source = tabletNativeBundle.media.extension;
@@ -164,7 +172,7 @@ in
     # A transform-only monitor command is a no-op without a named rule on this
     # Hyprland build. Keep the generic rule for other displays unchanged.
     wayland.windowManager.hyprland.settings.monitor = lib.mkAfter [
-      "eDP-1, preferred, auto, 1.25"
+      { output = "eDP-1"; mode = "preferred"; position = "auto"; scale = 1.25; }
     ];
 
     xdg.desktopEntries.tablet-workspace = {
@@ -180,13 +188,18 @@ in
     # Keep this deployed policy: Hyprland's layers IPC exposes alpha.goal(), not
     # current fade opacity. Qt animates content inside these opaque surfaces.
     # Do not rename/remove the rule independently of the tablet presentation gate.
-    wayland.windowManager.hyprland.settings.layerrule = lib.mkAfter [
-      "match:namespace ^tablet-rotation-fade$, no_anim on"
+    wayland.windowManager.hyprland.settings.layer_rule = lib.mkAfter [
+      layerPolicy
     ];
+    wayland.windowManager.hyprland.extraConfig = ''
+      desktop_policy = ${lib.generators.toLua { } { no_animation.tablet-rotation-fade = layerPolicy.no_anim; }}
+    '';
 
-    wayland.windowManager.hyprland.settings.exec-once = lib.mkAfter [
-      "${tabletFoldWatch}/bin/tablet-fold-watch >> \"$XDG_RUNTIME_DIR/tablet-fold-watch.log\" 2>&1"
-    ];
+    wayland.windowManager.hyprland.settings.on = lib.mkAfter [{
+      _args = [ "hyprland.start" (lib.generators.mkLuaInline ''function()
+        hl.exec_cmd(${lib.generators.toLua { } "${tabletFoldWatch}/bin/tablet-fold-watch >> \"$XDG_RUNTIME_DIR/tablet-fold-watch.log\" 2>&1"})
+      end'') ];
+    }];
 
   };
 }

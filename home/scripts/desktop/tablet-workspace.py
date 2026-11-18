@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Reversible tablet workspace with automatic ThinkPad fold transitions."""
 import argparse
+from hyprland_control import desktop_args
 import fcntl
 import json
 import os
@@ -18,7 +19,9 @@ def hypr(*args, json_output=False):
 
 
 def dispatch(*args):
-    hypr("dispatch", *args)
+    result = hypr(*desktop_args('hyprctl', ['dispatch', *args]))
+    if result.strip() != 'ok':
+        raise RuntimeError('Compositor refused tablet workspace operation')
 
 
 def state_path():
@@ -133,7 +136,7 @@ def action(command):
     if command == "browser":
         # Bypass project-browser: this is an explicitly separate new window,
         # not a project link and not a request to move an existing browser.
-        dispatch("exec", "[workspace name:tablet-trial silent] vivaldi --new-window about:blank")
+        dispatch('exec', {'command':'vivaldi --new-window about:blank', 'rules':{'workspace':'name:tablet-trial silent'}})
     elif command == "keyboard":
         subprocess.run(["tablet-osk", "toggle"], check=True)
     elif command == "next":

@@ -498,6 +498,9 @@ def release_lock():
 
 
 def run(command):
+    from hyprland_control import desktop_argv
+    if command[:1] == [HYPRCTL]:
+        command = desktop_argv(command)
     return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=False)
 
 

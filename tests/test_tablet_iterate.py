@@ -17,7 +17,7 @@ class IterationTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.env = patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.temp.name,
-                                          "HYPRLAND_INSTANCE_SIGNATURE": "instance"}, clear=True)
+                                          "HYPRLAND_INSTANCE_SIGNATURE": "instance", "HYPRLAND_CONTROL_TEST_BACKEND":"legacy"}, clear=True)
         self.env.start()
         self.target = {"instance": "instance", "stream": "stream-id", "pid": 123,
                        "start": "45", "address": "0xabc", "workspace": "Machine · Tablet Mode"}

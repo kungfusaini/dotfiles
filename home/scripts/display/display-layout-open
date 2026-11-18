@@ -1,8 +1,6 @@
 set -euo pipefail
 
-hyprctl keyword windowrule 'match:title ^Display Layout$, float on' >/dev/null
-hyprctl keyword windowrule 'match:title ^Display Layout$, center on' >/dev/null
-hyprctl keyword windowrule 'match:title ^Display Layout$, size 760 560' >/dev/null
+hypr-control rule display-layout-runtime '{"match":{"title":"^Display Layout$"},"float":true,"center":true,"size":"760 560"}' >/dev/null
 
 geometry_output=$(
   hyprctl monitors all -j | python3 -c '

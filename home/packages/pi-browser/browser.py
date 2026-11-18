@@ -4,6 +4,7 @@
 import fcntl
 from contextlib import contextmanager
 import hashlib
+from hyprland_control import uses_lua, rule_args
 import json
 import os
 import re
@@ -291,6 +292,15 @@ def placement_rule(root, env):
     hyprctl = env.get("PROJECT_PICKER_HYPRCTL", "@HYPRCTL@")
     state = {"rule": rule, "hyprctl": hyprctl, "class": browser_class}
     try:
+        if uses_lua(hyprctl):
+            state['lua_rule'] = 'pi-browser-' + root.name
+            result = subprocess.run([hyprctl, *rule_args(state['lua_rule'], {
+                'match': {'class': '^' + browser_class + '$'}, 'no_initial_focus': True,
+                'suppress_event': 'activate activatefocus', 'workspace': 'name:' + workspace + ' silent',
+            })], env=env, capture_output=True, text=True, timeout=5, check=False)
+            if result.returncode or result.stdout.strip() != 'ok':
+                raise ValueError('Could not install the native browser placement rule')
+            return state
         for key, value in (("enable", "0"), ("match:class", "^" + browser_class + "$"),
                            ("no_initial_focus", "on"), ("suppress_event", "activate activatefocus"),
                            ("workspace", "name:" + workspace + " silent"), ("enable", "1")):
@@ -306,7 +316,8 @@ def placement_rule(root, env):
 
 def release_rule(state):
     if state.get("rule"):
-        result = subprocess.run([state["hyprctl"], "keyword", state["rule"] + ":enable", "0"],
+        request = rule_args(state['lua_rule']) if state.get('lua_rule') else ['keyword', state['rule'] + ':enable', '0']
+        result = subprocess.run([state["hyprctl"], *request],
                                 capture_output=True, text=True, timeout=5, check=False)
         if result.returncode or result.stdout.strip() != "ok":
             print("pi-browser: could not disable its exact-class placement rule", file=sys.stderr)

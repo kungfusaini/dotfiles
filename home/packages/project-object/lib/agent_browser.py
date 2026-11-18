@@ -7,6 +7,7 @@ Call with the project-browser lock held: the named rule is deliberately reused.
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+from hyprland_control import uses_lua, rule_args
 import os
 import re
 import secrets
@@ -73,6 +74,19 @@ def keyword(hyprctl, key, value):
 
 @contextmanager
 def placement_rule(hyprctl, workspace, pattern):
+    if uses_lua(hyprctl):
+        try:
+            result = command(hyprctl, *rule_args("project-object-agent-launch", {
+                "match": {"class": pattern}, "no_initial_focus": True,
+                "suppress_event": "activate activatefocus", "workspace": "name:" + workspace + " silent",
+            }))
+            if result.strip() != "ok":
+                raise RuntimeError("Hyprland refused the native agent browser rule")
+            yield
+        finally:
+            if command(hyprctl, *rule_args("project-object-agent-launch")).strip() != "ok":
+                raise RuntimeError("Could not disable the native agent browser rule")
+        return
     # Disable before changing matches/effects. Never briefly match all windows.
     keyword(hyprctl, "enable", "0")
     try:

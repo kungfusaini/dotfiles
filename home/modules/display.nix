@@ -1,6 +1,7 @@
 { pkgs, ... }:
 
 let
+  control = pkgs.callPackage ../packages/hyprland-control { };
   networkDisplays = pkgs.callPackage ../packages/gnome-network-displays { };
 
   displayWallpaperRefresh = pkgs.writeShellApplication {
@@ -25,6 +26,7 @@ let
     name = "display-layout-open";
     runtimeInputs = with pkgs; [
       displayLayoutApply
+      control
       networkDisplays
       hyprland
       python3
@@ -37,6 +39,7 @@ let
     name = "display-mode-toggle";
     runtimeInputs = with pkgs; [
       displayLayoutApply
+      control
       hyprland
       python3
       util-linux
@@ -48,6 +51,7 @@ let
     name = "clamshell-mode";
     runtimeInputs = with pkgs; [ hyprland python3 ];
     text = ''
+      export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       exec python3 ${../scripts/display/clamshell-mode.py} "$@"
     '';
   };
@@ -58,6 +62,7 @@ let
       coreutils
       displayLayoutApply
       displayModeToggle
+      control
       hyprland
       python3
       util-linux
@@ -88,7 +93,14 @@ in
   # Keep wallpaper restart as a manual fallback, never a normal transition.
   # Use the packaged casting client and its bundled GStreamer dependencies.
   # Network discovery and wireless lid policy are separate host-level choices.
-  home.packages = [ clamshellMode headlessMode displayWallpaperRefresh networkDisplays ];
+  home.packages = [ clamshellMode headlessMode displayWallpaperRefresh networkDisplays control ];
+
+  # Runtime safety identity, separate from executable Lua text. This avoids a
+  # headlessMode ↔ watcher package dependency cycle without parsing config code.
+  xdg.configFile."hypr/desktop-policy.json".text = builtins.toJSON {
+    version = 1;
+    headlessWatcher = "${headlessMonitorWatch}/bin/headless-monitor-watch";
+  };
 
   xdg.configFile = {
     "quickshell/display-layout/shell.qml".source =

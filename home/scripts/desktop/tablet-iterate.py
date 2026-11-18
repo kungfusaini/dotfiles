@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Reversible tablet iteration trial. Never start another Pi or record implicitly."""
 import argparse
+from hyprland_control import desktop_args, guarded_layer
 import fcntl
 import json
 import hashlib
@@ -35,7 +36,9 @@ def hypr(*args):
 
 
 def dispatch(command, argument):
-    run("hyprctl", "dispatch", command, argument)
+    result = run("hyprctl", *desktop_args('hyprctl', ['dispatch', command, argument]), text=True)
+    if result.stdout.strip() != 'ok':
+        raise RuntimeError('Compositor refused tablet operation: ' + result.stdout.strip())
 
 
 def directory():
@@ -183,7 +186,7 @@ class Trial:
 
     @staticmethod
     def app_dispatch(command, argument):
-        result = run("hyprctl", "dispatch", command, argument, text=True)
+        result = run("hyprctl", *desktop_args('hyprctl', ['dispatch', command, argument]), text=True)
         if result.stdout.strip() != "ok":
             raise RuntimeError("App window operation refused: " + result.stdout.strip())
 
@@ -368,9 +371,7 @@ class Trial:
     def verify_presentation_policy(self):
         # Hyprland layers JSON reports alpha.goal(), NOT current animation
         # opacity. Only the existing no_anim namespace makes that a safe gate.
-        path = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "hypr/hyprland.conf"
-        pattern = r"(?m)^\s*layerrule\s*=\s*match:namespace\s+\^tablet-rotation-fade\$\s*,\s*no_anim\s+on\s*$"
-        if not path.is_file() or not re.search(pattern, path.read_text()):
+        if not guarded_layer(GUARDED_NAMESPACE):
             raise RuntimeError("Safe tablet presentation requires the deployed tablet no_anim policy; refusing workspace entry")
 
     def start_stage(self, source):

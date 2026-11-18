@@ -1,4 +1,4 @@
-{ lib, pkgs, unstable, ... }:
+{ config, lib, pkgs, unstable, ... }:
 
 let
   # hyprgrass is tightly coupled to Hyprland internals. The nixpkgs copy is
@@ -96,7 +96,7 @@ let
 
   xdgDesktopPortalHyprland = portalWithCurrentHyprEnv
     "xdg-desktop-portal-hyprland-current"
-    "${unstable.xdg-desktop-portal-hyprland}/libexec/xdg-desktop-portal-hyprland";
+    "${config.programs.hyprland.portalPackage}/libexec/xdg-desktop-portal-hyprland";
 in
 {
   # Hyprland desktop launched through UWSM.
@@ -105,7 +105,14 @@ in
 
   programs.hyprland = {
     enable = true;
-    package = unstable.hyprland;
+    # Keep reusable native launch rules bounded without changing the existing
+    # hl.window_rule update semantics. Only disabled rules may clear effects.
+    package = unstable.hyprland.overrideAttrs (old: {
+      patches = (old.patches or [ ]) ++ [
+        ./patches/hyprland-window-rule-clear-effects.patch
+        ./patches/hyprland-monitor-reset.patch
+      ];
+    });
     portalPackage = unstable.xdg-desktop-portal-hyprland;
     withUWSM = true;
     xwayland.enable = true;
@@ -120,10 +127,9 @@ in
 
   xdg.portal = {
     enable = true;
-    extraPortals = [
-      unstable.xdg-desktop-portal-hyprland
-      pkgs.xdg-desktop-portal-gtk
-    ];
+    # The Hyprland module adds its portal after pairing it with the configured
+    # compositor. Adding the unpaired package here produces duplicate units.
+    extraPortals = [ pkgs.xdg-desktop-portal-gtk ];
   };
 
   systemd.packages = with pkgs; [

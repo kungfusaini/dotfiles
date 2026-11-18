@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """One-window Hyprland tablet proof. No app launch, workspace move or fold hook."""
 import argparse
+from hyprland_control import desktop_args, desktop_exec_args, config_path
 import fcntl
 import json
 import os
@@ -24,10 +25,18 @@ def hypr(*args):
 
 
 def dispatch(command, argument):
+    if command == 'exec' and isinstance(argument, dict):
+        return exec_command(**argument)
     # Stop hyprctl's flag parser before negative tag-removal arguments.
-    result = run('hyprctl', 'dispatch', command, '--', argument)
+    result = run('hyprctl', *desktop_args('hyprctl', ['dispatch', command, '--', argument]))
     if result != 'ok':
         raise RuntimeError('Compositor refused ' + command + ': ' + result)
+
+
+def exec_command(command, rules=None):
+    result = run('hyprctl', *desktop_exec_args('hyprctl', command, rules))
+    if result != 'ok':
+        raise RuntimeError('Compositor refused native launch: ' + result)
 
 
 def start_time(pid):

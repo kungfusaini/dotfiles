@@ -26,7 +26,7 @@ def client(workspace="Command Center · Agents", pid=123, address="0xabc", **ext
 
 class WorkspaceExecTests(unittest.TestCase):
     def setUp(self):
-        self.environment = mock.patch.dict(os.environ, {}, clear=True)
+        self.environment = mock.patch.dict(os.environ, {'HYPRLAND_CONTROL_TEST_BACKEND':'legacy'}, clear=True)
         self.environment.start()
         self.addCleanup(self.environment.stop)
 

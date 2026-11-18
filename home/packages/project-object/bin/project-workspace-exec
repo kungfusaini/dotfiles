@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+from hyprland_control import desktop_argv, desktop_exec_args
 import os
 from pathlib import Path
 import re
@@ -141,7 +142,7 @@ def verify_window(workspace, launch_id, before):
             selected_address = address
             if client_workspace(client) != workspace:
                 result = subprocess.run(
-                    [HYPRCTL, "dispatch", "movetoworkspacesilent", f"name:{workspace},address:{address}"],
+                    desktop_argv([HYPRCTL, "dispatch", "movetoworkspacesilent", f"name:{workspace},address:{address}"]),
                     capture_output=True, text=True, check=False,
                 )
                 if result.returncode != 0 or result.stdout.strip() != "ok":
@@ -252,7 +253,7 @@ def verify_steam_game(workspace, appid, before):
             selected = address
             if client_workspace(client) != workspace:
                 result = subprocess.run(
-                    [HYPRCTL, "dispatch", "movetoworkspacesilent", f"name:{workspace},address:{address}"],
+                    desktop_argv([HYPRCTL, "dispatch", "movetoworkspacesilent", f"name:{workspace},address:{address}"]),
                     capture_output=True, text=True, check=False)
                 if result.returncode or result.stdout.strip() != "ok":
                     raise RuntimeError("could not silently place the verified Steam game window")
@@ -341,8 +342,8 @@ def main():
         # Steam's client and descendants begin hidden. The game URI branch below
         # promotes only a window whose live process belongs to the exact app ID.
         target = "special:steam-hidden" if steam_background else "name:" + workspace
-        payload = f"[workspace {target} silent] {shlex.join(contextual_command)}"
-        result = subprocess.run([HYPRCTL, "dispatch", "exec", payload], capture_output=True, text=True, check=False)
+        request = desktop_exec_args(HYPRCTL, shlex.join(contextual_command), {"workspace": target + " silent"})
+        result = subprocess.run([HYPRCTL, *request], capture_output=True, text=True, check=False)
         if result.returncode != 0 or result.stdout.strip() != "ok":
             raise RuntimeError("Hyprland refused to launch the command")
         if steam_background:

@@ -1,5 +1,6 @@
 { pkgs, hyprland ? pkgs.hyprland, preloadedTestOrigins ? [] }:
 let
+  control = pkgs.callPackage ../../hyprland-control { inherit hyprland; };
   extensionId = "cfepbdnljmjhpbaoephifiehkdahpgll";
   original = builtins.fromJSON (builtins.readFile ./manifest.json);
   manifest = original // {
@@ -25,6 +26,7 @@ let
       # Vivaldi injects its private C++ library path into native hosts. Keep
       # packaged Python/hyprctl on their own Nix RPATHs, not Chromium's ABI.
       unset LD_LIBRARY_PATH LD_PRELOAD
+      export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       export TABLET_PROOF_SOURCE=${../controller.py}
       export TABLET_MEDIA_EXTENSION_ID=${extensionId}
       exec python3 ${./host.py} "$@"

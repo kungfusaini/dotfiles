@@ -2,6 +2,7 @@
 # input and settings are private. The render node is used only for rendering.
 { pkgs, hyprland }:
 let
+  control = pkgs.callPackage ../home/packages/hyprland-control { inherit hyprland; };
   python = pkgs.python3.withPackages (p: [ p.pillow ]);
   pointer = pkgs.stdenv.mkDerivation {
     name = "tablet-private-pointer";
@@ -36,6 +37,7 @@ let
     }
   '';
   helper = pkgs.writeShellScript "tablet-window-helper" ''
+    export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
     exec ${python}/bin/python ${../home/scripts/desktop/tablet-iterate.py} "$@"
   '';
   fakePi = pkgs.writeShellScript "tablet-window-fake-pi" ''
@@ -57,6 +59,7 @@ in pkgs.writeShellApplication {
   name = "tablet-window-apps-test";
   runtimeInputs = [ python hyprland pkgs.quickshell pkgs.labwc pkgs.dbus pkgs.wlrctl pkgs.wtype pkgs.grim pkgs.wf-recorder pkgs.ffmpeg pkgs.squeekboard pkgs.glib pkgs.vivaldi ];
   text = ''
+    export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
     export TABLET_TEST_HYPRLAND=${hyprland}/bin/Hyprland
     export TABLET_TEST_HYPRCTL=${hyprland}/bin/hyprctl
     export TABLET_TEST_VIVALDI=${pkgs.vivaldi}/bin/vivaldi

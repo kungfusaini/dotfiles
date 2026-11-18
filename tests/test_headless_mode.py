@@ -48,6 +48,11 @@ elif args == ['keyword', 'monitor', 'eDP-1,disable']:
         p.write_text(json.dumps(ms))
 elif args[0] != 'notify': raise SystemExit('Unexpected compositor mutation: '+repr(args))
 ''')
+        self.exe('hypr-control', '''import os, sys
+if sys.argv[1:] != ['monitor','--output','eDP-1','--disabled','--reset']:
+    raise SystemExit('Unexpected typed desktop mutation: '+repr(sys.argv[1:]))
+os.execvp('hyprctl', ['hyprctl','keyword','monitor','eDP-1,disable'])
+''')
         self.exe("sleep", "pass\n")
         source = (SCRIPTS / "headless-mode").read_text()
         source = source.replace("control=/run/current-system/sw/bin/headless-mode-control",

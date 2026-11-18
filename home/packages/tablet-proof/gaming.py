@@ -141,7 +141,8 @@ class Games:
         self.pending = {'token': token, 'previous': [c['address'] for c in self.hypr('clients')],
                         'deadline': time.monotonic() + 20}
         binary = os.environ.get('TABLET_PEGASUS_BIN', 'pegasus-fe')
-        self.dispatch('exec', '[workspace name:' + WORKSPACE + ' silent] env TABLET_PEGASUS_TOKEN=' + token + ' ' + shlex.quote(binary))
+        self.dispatch('exec', {'command': 'env TABLET_PEGASUS_TOKEN=' + token + ' ' + shlex.quote(binary),
+                               'rules': {'workspace': 'name:' + WORKSPACE + ' silent'}})
 
     def tick(self):
         if not self.pending:

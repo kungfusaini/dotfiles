@@ -4,7 +4,7 @@
 let
   home = config.home-manager.users.sumeet;
   sessions = config.services.displayManager.sessionData.sessionNames;
-  autostart = home.wayland.windowManager.hyprland.settings.exec-once;
+  autostart = map builtins.toJSON home.wayland.windowManager.hyprland.settings.on;
 in
 assert !config.services.desktopManager.gnome.enable;
 assert !config.services.displayManager.gdm.enable;
@@ -19,8 +19,9 @@ assert builtins.elem "intel_hid.enable_sw_tablet_mode=0" config.boot.kernelParam
 assert builtins.length (builtins.filter (entry: builtins.match ".*/bin/tablet-fold-watch.*" entry != null) autostart) == 1;
 assert !(builtins.any (entry: builtins.match ".*/bin/tablet-workspace watch.*" entry != null) autostart);
 assert builtins.match ".*/bin/tablet-chat start-home" home.xdg.desktopEntries.tablet-workspace.exec != null;
-assert builtins.any (entry: builtins.match ".*/bin/tablet-chat toggle" entry != null)
-  home.wayland.windowManager.hyprland.settings.bind;
+# The frozen current baseline has no automatic/manual toggle binding.
+assert !(builtins.any (entry: builtins.match ".*tablet-chat toggle.*" (builtins.toJSON entry) != null)
+  home.wayland.windowManager.hyprland.settings.bind);
 assert !(builtins.any (entry: builtins.match ".*tablet-osk.*" entry != null) autostart);
 {
   inherit sessions;

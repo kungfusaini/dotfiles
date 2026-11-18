@@ -2,7 +2,7 @@
 set -euo pipefail
 
 workspace="comms"
-hyprctl dispatch workspace "name:${workspace}" >/dev/null 2>&1 || true
+hypr-control workspace "name:${workspace}" >/dev/null 2>&1 || true
 
 node <<'NODE'
 const { execFileSync, spawn } = require("node:child_process");
@@ -27,7 +27,8 @@ function hypr(args) {
 }
 
 function dispatch(...args) {
-  hypr(["dispatch", ...args]);
+  try { execFileSync("hypr-control", ["dispatch", ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); }
+  catch (_) { /* Preserve the existing best-effort grouping behavior. */ }
 }
 
 function sleep(ms) {

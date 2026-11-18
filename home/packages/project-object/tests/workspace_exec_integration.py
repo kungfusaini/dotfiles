@@ -107,6 +107,9 @@ def run(args):
         return process
 
     def ctl(*command):
+        if args.lua and command[:1] == ('dispatch',):
+            from hyprland_control import dispatch_args
+            command = dispatch_args(*command[1:])
         return subprocess.run([args.hyprctl, *command], env=env, capture_output=True, text=True, check=True, timeout=5).stdout
 
     def clients():
@@ -116,8 +119,8 @@ def run(args):
         start([args.labwc, "-C", str(root / "labwc")], "labwc")
         socket = wait_for(lambda: next((p for p in runtime.glob("wayland-*") if p.is_socket()), None))
         env["WAYLAND_DISPLAY"] = socket.name
-        config = root / "config.conf"
-        config.write_text("monitor=,960x640@60,auto,1\nmisc {\n disable_hyprland_logo=true\n disable_splash_rendering=true\n}\nxwayland {\n enabled=false\n}\ndebug {\n disable_logs=false\n}\n")
+        config = root / ('config.lua' if args.lua else 'config.conf')
+        config.write_text('hl.monitor({output="",mode="960x640@60",position="auto",scale=1})\nhl.config({misc={disable_hyprland_logo=true,disable_splash_rendering=true},xwayland={enabled=false},debug={disable_logs=false}})\n' if args.lua else "monitor=,960x640@60,auto,1\nmisc {\n disable_hyprland_logo=true\n disable_splash_rendering=true\n}\nxwayland {\n enabled=false\n}\ndebug {\n disable_logs=false\n}\n")
         start([args.hyprland, "-c", str(config)], "hyprland")
         ipc = wait_for(lambda: next((runtime / "hypr").glob("*/.socket.sock"), None))
         env["HYPRLAND_INSTANCE_SIGNATURE"] = ipc.parent.name
@@ -206,6 +209,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ["hyprland", "hyprctl", "labwc", "kitty", "chromium"]:
         parser.add_argument("--" + name, required=True)
+    parser.add_argument('--lua', action='store_true', help='Exercise native Lua config and IPC')
     parser.add_argument("--check-transient-focus", action="store_true")
     parser.add_argument("--simulate-human-consent", action="store_true",
                         help="Allow only explicitly bounded private test-human consent focus events")

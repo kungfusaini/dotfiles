@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from hyprland_control import desktop_args, desktop_exec_args, uses_lua, rule_args
 import os
 from pathlib import Path
 import re
@@ -17,7 +18,7 @@ import steamctl as steam
 
 
 def hypr(*args):
-    result = subprocess.run(["hyprctl", *args], capture_output=True, text=True,
+    result = subprocess.run(["hyprctl", *desktop_args('hyprctl', args)], capture_output=True, text=True,
                             check=False, timeout=5)
     if result.returncode:
         raise steam.SteamError("Could not control Steam visibility: " + result.stderr.strip())
@@ -83,7 +84,8 @@ def open_manual(target, arguments):
         # Protect startup as well as a pre-existing automated client. A failed
         # opener cannot leave an opt-out that affects future client lifetimes.
         steam.record_manual_session([os.getpid(), *steam.steam_main_pids()])
-        if hypr("keyword", "windowrule[project-object-steam-hidden]:enable", "0") != "ok":
+        request = rule_args('project-object-steam-hidden') if uses_lua() else ['keyword', 'windowrule[project-object-steam-hidden]:enable', '0']
+        if hypr(*request) != "ok":
             raise steam.SteamError("Could not release the automated Steam window rule.")
     steam.stop_hide_watch()
     routed = set()
@@ -92,7 +94,8 @@ def open_manual(target, arguments):
     # Steam instance receives the normal URI; its exact windows are placed above
     # and revalidated below. No global input or special-workspace toggle is used.
     command = [executable, *(arguments or ["steam://open/main"])]
-    if hypr("dispatch", "exec", f"[workspace name:{target} silent] {shlex.join(command)}") != "ok":
+    request = desktop_exec_args('hyprctl', shlex.join(command), {'workspace':'name:' + target + ' silent'})
+    if hypr(*request) != 'ok':
         raise steam.SteamError("Could not request the manual Steam window.")
     deadline = time.monotonic() + 60
     last_new_at = time.monotonic()

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Resume a dedicated tablet workspace without borrowing laptop applications."""
 import fcntl
+from hyprland_control import config_path, guarded_layer, setting_args
 import importlib.util
 import json
 import os
@@ -144,12 +145,15 @@ class Native(p.Proof):
                        'input:follow_mouse': (0, (0, 1, 2, 3))}
 
     def config_token(self):
-        config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'hypr/hyprland.conf'
+        config = config_path()
         stat = config.stat()
         return [str(config.resolve()), stat.st_mtime_ns, stat.st_size]
 
     def posture_value(self, option):
-        value = json.loads(p.run('hyprctl', 'getoption', option, '-j')).get('int')
+        reply = json.loads(p.run('hyprctl', 'getoption', option, '-j'))
+        value = reply.get('int')
+        if value is None and type(reply.get('bool')) is bool:
+            value = int(reply['bool'])
         if type(value) is not int or value not in self.POSTURE_OPTIONS[option][1]:
             raise RuntimeError('Unsupported tablet interaction baseline: ' + option)
         return value
@@ -170,7 +174,7 @@ class Native(p.Proof):
                 continue
             lease['applied'].append(key)  # Journal intent before a potentially interrupted IPC.
             self.journal()
-            if p.run('hyprctl', 'keyword', key, str(desired)) != 'ok' or self.posture_value(key) != desired:
+            if p.run('hyprctl', *setting_args(key, desired)) != 'ok' or self.posture_value(key) != desired:
                 raise RuntimeError('Could not acquire tablet interaction setting: ' + key)
 
     def restore_posture(self, record=None):
@@ -193,7 +197,7 @@ class Native(p.Proof):
         if not record.get('config_changed') and lease.get('config') == self.config_token():
             for key in list(reversed(applied)):
                 if self.posture_value(key) == self.POSTURE_OPTIONS[key][0]:
-                    if p.run('hyprctl', 'keyword', key, str(baseline[key])) != 'ok':
+                    if p.run('hyprctl', *setting_args(key, baseline[key])) != 'ok':
                         raise RuntimeError('Tablet interaction restoration deferred: ' + key)
                     if self.posture_value(key) != baseline[key]:
                         raise RuntimeError('Tablet interaction restoration not verified: ' + key)
@@ -255,8 +259,7 @@ class Native(p.Proof):
         raise RuntimeError('Tablet Home cover did not render; no uncovered workspace transition allowed')
 
     def start_stage(self, allow_stopping=False):
-        config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'hypr/hyprland.conf'
-        if not re.search(r'(?m)^\s*layerrule\s*=\s*match:namespace\s+\^tablet-rotation-fade\$\s*,\s*no_anim\s+on\s*$', config.read_text()):
+        if not guarded_layer('tablet-rotation-fade'):
             raise RuntimeError('Tablet entry requires the installed guarded no-animation policy')
         environment = dict(os.environ, TABLET_STAGE_PRESENTATION_ONLY='1',
                            TABLET_STAGE_OWNER_PID=str(os.getpid()),
@@ -401,7 +404,7 @@ class Native(p.Proof):
         # Target the persistent tablet workspace at creation. The nonce can
         # confirm only the NEW window; no laptop window is moved to fit it.
         try:
-            p.dispatch('exec', '[workspace name:' + WORKSPACE + ' silent] ' + shlex.join(command))
+            p.dispatch('exec', {'command': shlex.join(command), 'rules': {'workspace': 'name:' + WORKSPACE + ' silent'}})
         except (OSError, RuntimeError, subprocess.SubprocessError):
             raise RuntimeError('Tablet browser launch failed') from None  # Do not log registration URLs.
         self.capabilities = capabilities

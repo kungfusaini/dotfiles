@@ -20,7 +20,7 @@ class NativeChatTests(unittest.TestCase):
         self.project.mkdir()
         self.env = patch.dict(os.environ, {"XDG_RUNTIME_DIR": self.temp.name, "XDG_STATE_HOME": self.temp.name + "/state",
                                           "HOME": self.temp.name, "TABLET_NATIVE_CHAT": "1",
-                                          "HYPRLAND_INSTANCE_SIGNATURE": "instance"}, clear=True)
+                                          "HYPRLAND_INSTANCE_SIGNATURE": "instance", "HYPRLAND_CONTROL_TEST_BACKEND":"legacy"}, clear=True)
         self.env.start()
         self.config = Path(self.temp.name) / ".config/hypr/hyprland.conf"
         self.config.parent.mkdir(parents=True)

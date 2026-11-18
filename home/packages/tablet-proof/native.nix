@@ -1,6 +1,7 @@
 { pkgs, lib, hyprland ? pkgs.hyprland, orientation,
   media ? pkgs.callPackage ./media { inherit hyprland; } }:
 let
+  control = pkgs.callPackage ../hyprland-control { inherit hyprland; };
   pegasus = pkgs.callPackage ../tablet-pegasus { };
   registry = pkgs.writeText "tablet-native-apps.json" (builtins.toJSON
     (builtins.filter (app: app.id == "browser")
@@ -15,6 +16,7 @@ let
     name = "tablet-native";
     runtimeInputs = with pkgs; [ python3 quickshell coreutils glib dconf squeekboard wireplumber brightnessctl libnotify vivaldi pegasus hyprland ];
     text = ''
+      export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       export TABLET_PROOF_QML=${ui}/shell.qml
       export TABLET_PROOF_SOURCE=${./controller.py}
       export TABLET_MEDIA_CLIENT_SOURCE=${./media/client.py}

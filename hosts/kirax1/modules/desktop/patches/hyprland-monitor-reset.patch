@@ -1,0 +1,31 @@
+diff --git a/src/config/lua/bindings/LuaBindingsConfigRules.cpp b/src/config/lua/bindings/LuaBindingsConfigRules.cpp
+--- a/src/config/lua/bindings/LuaBindingsConfigRules.cpp
++++ b/src/config/lua/bindings/LuaBindingsConfigRules.cpp
+@@ -1120,9 +1120,17 @@ static int hlMonitor(lua_State* L) {
+     lua_pop(L, 1);
+ 
+     CMonitorRuleParser parser(output);
++
++    lua_getfield(L, 1, "reset");
++    if (!lua_isnil(L, -1) && !lua_isboolean(L, -1)) {
++        lua_pop(L, 1);
++        return Internal::configError(L, "hl.monitor: reset must be a boolean");
++    }
++    const bool reset = lua_toboolean(L, -1);
++    lua_pop(L, 1);
+ 
+     const auto         existing = std::ranges::find_if(Config::monitorRuleMgr()->all(), [&output](const auto& rule) { return rule.m_name == output; });
+-    if (existing != Config::monitorRuleMgr()->all().end())
++    if (!reset && existing != Config::monitorRuleMgr()->all().end())
+         parser.rule() = *existing;
+ 
+     lua_pushnil(L);
+@@ -1134,7 +1142,7 @@ static int hlMonitor(lua_State* L) {
+ 
+         const char* key = lua_tostring(L, -2);
+ 
+-        if (std::string_view{key} == "output") {
++        if (std::string_view{key} == "output" || std::string_view{key} == "reset") {
+             lua_pop(L, 1);
+             continue;
+         }

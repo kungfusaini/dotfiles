@@ -100,6 +100,9 @@ def run(args):
         return p
 
     def ctl(*arguments):
+        if args.lua and arguments[:1] == ('dispatch',):
+            from hyprland_control import dispatch_args
+            arguments = dispatch_args(*arguments[1:])
         return subprocess.run([args.hyprctl, *arguments], env=env, capture_output=True, text=True, check=True, timeout=5).stdout
 
     def clients():
@@ -119,8 +122,8 @@ def run(args):
         start([args.labwc, "-C", str(root / "labwc")], "labwc")
         outer = wait_for(lambda: next((p for p in runtime.glob("wayland-*") if p.is_socket()), None))
         env["WAYLAND_DISPLAY"] = outer.name
-        config = root / "hyprland.conf"
-        config.write_text("monitor=,960x640@60,auto,1\nmisc {\n disable_hyprland_logo=true\n disable_splash_rendering=true\n}\nxwayland {\n enabled=false\n}\n")
+        config = root / ('hyprland.lua' if args.lua else 'hyprland.conf')
+        config.write_text('hl.monitor({output="",mode="960x640@60",position="auto",scale=1})\nhl.config({misc={disable_hyprland_logo=true,disable_splash_rendering=true},xwayland={enabled=false}})\n' if args.lua else "monitor=,960x640@60,auto,1\nmisc {\n disable_hyprland_logo=true\n disable_splash_rendering=true\n}\nxwayland {\n enabled=false\n}\n")
         start([args.hyprland, "-c", str(config)], "hyprland")
         ipc = wait_for(lambda: next((runtime / "hypr").glob("*/.socket.sock"), None))
         env["HYPRLAND_INSTANCE_SIGNATURE"] = ipc.parent.name
@@ -221,6 +224,7 @@ def run(args):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--lua', action='store_true', help='Exercise native Lua config and IPC')
     for name in ("hyprland", "hyprctl", "labwc", "kitty", "vivaldi", "swayimg", "loupe", "grim", "opener"):
         parser.add_argument("--" + name, required=True)
     args = parser.parse_args()

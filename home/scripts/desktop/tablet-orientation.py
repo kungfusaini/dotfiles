@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Rotate only an explicitly entered, foreground tablet workspace."""
 import argparse
+from hyprland_control import config_path, uses_lua, call
 from contextlib import nullcontext
 import fcntl
 import json
@@ -179,7 +180,7 @@ class Backend:
         self.native = os.environ.get("TABLET_ORIENTATION_SESSION") == "native"
         self.prefix = "tablet-native-orientation" if self.native else "tablet-orientation"
         self.journal = self.runtime / (self.prefix + ".json")
-        self.config = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home()/".config"))) / "hypr/hyprland.conf"
+        self.config = config_path()
 
     def hypr(self, *args, json_output=False, timeout=3):
         reply = subprocess.run(["hyprctl", *args], check=True, capture_output=True, text=True, timeout=timeout).stdout
@@ -309,16 +310,23 @@ class Backend:
         return .55
 
     def apply(self, snapshot, delta):
+        native = uses_lua()
         commands = []
+        native_calls = []
         for device in snapshot["inputs"]:
             output = self.monitor if delta is not None else (device["output"] or "[[EMPTY]]")
             transform = (device["transform"] + delta) % 4 if delta is not None else device["transform"]
             commands.extend([f"keyword device[{device['name']}]:output {output}",
                              f"keyword device[{device['name']}]:transform {transform}"])
+            native_calls.append(call('device', {'name':device['name'], 'output':'' if output in ('[[EMPTY]]','[[Auto]]') else output, 'transform':transform}))
         target = (snapshot["transform"] + delta) % 4 if delta is not None else snapshot["transform"]
         # This short form changes only transform on the named monitor rule.
         # The module supplies that named rule without replacing the generic one.
         commands.append(f"keyword monitor {self.monitor},transform,{target}")
+        # Deliberately partial: unlike full display-layout updates, rotation
+        # must preserve all named monitor fields, mode, scale and position.
+        native_calls.append(call('monitor', {'output':self.monitor, 'transform':target}))
+        native_calls.append('hl.exec_scheduled_prop_refresh_immediately()')
         panel = self.panel()
         if not panel:
             raise RuntimeError("Internal panel unavailable before rotation")
@@ -338,9 +346,10 @@ class Backend:
                 # Revalidate the owned cover after potentially slow gate IPC,
                 # immediately before the first mutating request.
                 cover.ensure_covered(reserve)
-            reply = self.hypr("--batch", "; ".join(commands),
-                              timeout=cover.timeout(reserve, cap=3) if changing else 3)
-            if [line.strip() for line in reply.splitlines() if line.strip()] != ["ok"] * len(commands):
+            request = ['eval', ';'.join(native_calls)] if native else ['--batch', '; '.join(commands)]
+            reply = self.hypr(*request, timeout=cover.timeout(reserve, cap=3) if changing else 3)
+            expected = ['ok'] if native else ['ok'] * len(commands)
+            if [line.strip() for line in reply.splitlines() if line.strip()] != expected:
                 raise RuntimeError("Hyprland rejected orientation transaction: " + reply)
             deadline = time.monotonic() + 2
             while time.monotonic() < deadline:

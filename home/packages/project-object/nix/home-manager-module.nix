@@ -79,7 +79,24 @@ in
       invisible = false;
     };
 
-    wayland.windowManager.hyprland.settings = lib.mkIf cfg.enableHyprlandBinding {
+    wayland.windowManager.hyprland.settings = lib.mkIf cfg.enableHyprlandBinding (if config.wayland.windowManager.hyprland.configType == "lua" then {
+      terminal._var = lib.mkForce "${package}/bin/project-terminal";
+      bind = lib.mkAfter (map (entry: {
+        _args = [ (builtins.elemAt entry 0)
+          (lib.generators.mkLuaInline "hl.dsp.exec_cmd(${lib.generators.toLua { } (builtins.elemAt entry 1)})") ];
+      }) [
+        [ "SUPER + P" "${package}/bin/project-picker" ]
+        [ "SUPER + X" "${package}/bin/project-picker --close-active-workspace" ]
+        [ "SUPER + n" "${package}/bin/project-picker --next-attention" ]
+        [ "SUPER + SHIFT + n" "${package}/bin/project-picker --previous-attention" ]
+      ]);
+      on = lib.mkAfter [{ _args = [ "hyprland.start" (lib.generators.mkLuaInline ''function()
+        hl.exec_cmd(${lib.generators.toLua { } "${package}/bin/project-picker --preload"})
+      end'') ]; }];
+      window_rule = lib.mkAfter (map (effects: {
+        match.class = "^(dev.project_object.Picker|project-picker)$";
+      } // effects) [ { float = true; } { center = true; } { size = "760 570"; } ]);
+    } else {
       "$terminal" = lib.mkForce "${package}/bin/project-terminal";
       bind = lib.mkAfter [
         "$mod, P, exec, ${package}/bin/project-picker"
@@ -93,6 +110,6 @@ in
         "match:class ^(dev.project_object.Picker|project-picker)$, center on"
         "match:class ^(dev.project_object.Picker|project-picker)$, size 760 570"
       ];
-    };
+    });
   };
 }

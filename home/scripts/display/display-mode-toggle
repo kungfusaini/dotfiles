@@ -66,13 +66,13 @@ if [[ "$mirrored" == 1 ]]; then
   # wlr-output-management does not carry Hyprland's compositor-specific mirror
   # relationship, so clear that rule explicitly before restoring coordinates.
   # auto-right gives the output a valid non-overlapping intermediate position.
-  hyprctl keyword monitor "$external,preferred,auto-right,$external_scale" >/dev/null
+  hypr-control monitor --output "$external" --mode preferred --position auto-right --scale "$external_scale" --reset >/dev/null
   DISPLAY_LAYOUT_SILENT=1 display-layout-apply custom "$dx" "$dy" 1
   hyprctl notify -1 2500 'rgb(00ff99)' "Extended desktop — $external" >/dev/null
 else
   position_file="${XDG_STATE_HOME:-$HOME/.local/state}/external-display-position"
   mkdir -p "${position_file%/*}"
   printf '%s %s\n' "$current_dx" "$current_dy" > "$position_file"
-  hyprctl keyword monitor "$external,preferred,auto,$external_scale,mirror,eDP-1" >/dev/null
+  hypr-control monitor --output "$external" --mode preferred --position auto --scale "$external_scale" --mirror eDP-1 --reset >/dev/null
   hyprctl notify -1 2500 'rgb(00ff99)' "Mirroring eDP-1 to $external" >/dev/null
 fi

@@ -99,6 +99,12 @@ class PostureTests(unittest.TestCase):
         finally:
             left.close(); right.close()
 
+    def test_native_boolean_option_reply_preserves_integer_lease_contract(self):
+        with patch.object(n.p,'run',return_value=json.dumps({'bool':True})):
+            self.assertEqual(self.native.posture_value('gestures:workspace_swipe_touch'),1)
+        with patch.object(n.p,'run',return_value=json.dumps({'bool':False})):
+            self.assertEqual(self.native.posture_value('gestures:workspace_swipe_touch'),0)
+
     def test_snapshot_precedes_mutation_and_exact_baseline_is_restored(self):
         self.values['input:follow_mouse'] = 3
         self.native.acquire_posture()

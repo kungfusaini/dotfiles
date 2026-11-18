@@ -85,7 +85,7 @@ print(e.get("scale") or 1 if e else 1)
   # wlr-randr blocked for 17 seconds after external loss. Enable the panel
   # through Hyprland first, then bound every optional wlr-randr fallback.
   log_timing "restore: enabling eDP-1 at $panel_pos through Hyprland"
-  if ! timeout -k 1 2 hyprctl keyword monitor "eDP-1,preferred,$panel_pos,1.25" >/dev/null; then
+  if ! timeout -k 1 2 hypr-control monitor --output eDP-1 --mode preferred --position "$panel_pos" --scale 1.25 --reset >/dev/null; then
     log_timing 'restore: native panel command timed out or failed'
   fi
   if ! timeout -k 1 2 hyprctl monitors all -j | python3 -c '
@@ -110,7 +110,7 @@ raise SystemExit(not (i and e and ((i.get("x"),i.get("y"))!=(ix,iy) or (e.get("x
     log_timing 'restore: positioning external before sensor reload'
     if ! timeout -k 1 2 wlr-randr --output eDP-1 --on --preferred --pos "$panel_wlr_pos" --scale 1.25 \
       --output "${geometry[2]}" --on --preferred --pos "${geometry[3]}" --scale "${geometry[4]}"; then
-      timeout -k 1 2 hyprctl keyword monitor "${geometry[2]},preferred,${geometry[3]/,/x},${geometry[4]}" >/dev/null || true
+      timeout -k 1 2 hypr-control monitor --output "${geometry[2]}" --mode preferred --position "${geometry[3]/,/x}" --scale "${geometry[4]}" --reset >/dev/null || true
     fi
   fi
   log_timing 'restore: panel and layout attempted; reloading sensors'
@@ -127,9 +127,9 @@ raise SystemExit(not (i and e and ((i.get("x"),i.get("y"))!=(ix,iy) or (e.get("x
     local workspace
     read -r workspace < "$workspace_file" || true
     if [[ -n ${workspace:-} ]]; then
-      timeout -k 1 2 hyprctl dispatch moveworkspacetomonitor "$workspace eDP-1" >/dev/null || true
-      timeout -k 1 2 hyprctl dispatch focusmonitor eDP-1 >/dev/null || true
-      timeout -k 1 2 hyprctl dispatch workspace "$workspace" >/dev/null || true
+      timeout -k 1 2 hypr-control moveworkspacetomonitor "$workspace" eDP-1 >/dev/null || true
+      timeout -k 1 2 hypr-control focusmonitor eDP-1 >/dev/null || true
+      timeout -k 1 2 hypr-control workspace "$workspace" >/dev/null || true
     fi
     rm -f "$workspace_file"
   fi
@@ -144,7 +144,7 @@ raise SystemExit(not (i and e and ((i.get("x"),i.get("y"))!=(ix,iy) or (e.get("x
 # Use Hyprland's native rule as well as the atomic wlr transaction. The
 # latter alone is transient and can be undone by a compositor config reload.
 panel_off() {
-  timeout -k 1 2 hyprctl keyword monitor 'eDP-1,disable' >/dev/null || return 1
+  timeout -k 1 2 hypr-control monitor --output eDP-1 --disabled --reset >/dev/null || return 1
   local attempt
   for ((attempt=0; attempt<20; attempt++)); do
     if timeout -k 1 2 hyprctl monitors all -j | python3 -c '
@@ -192,8 +192,14 @@ prime_mode() {
   local -a ext
   local watcher_pid="" expected_watcher=""
   [[ -r "$runtime/watcher.pid" ]] && read -r watcher_pid < "$runtime/watcher.pid" || true
-  expected_watcher=$(grep -m1 '^exec-once=/nix/store/.*-headless-monitor-watch/bin/headless-monitor-watch$' \
-    "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/hyprland.conf" 2>/dev/null | cut -d= -f2-)
+  expected_watcher=$(python3 -c '
+import json, pathlib, re, sys
+policy=json.loads(pathlib.Path(sys.argv[1]).read_text())
+value=policy.get("headlessWatcher", "")
+if policy.get("version") != 1 or not re.fullmatch(r"/nix/store/[a-z0-9]{32}-headless-monitor-watch/bin/headless-monitor-watch", value):
+    raise SystemExit(1)
+print(value)
+' "${XDG_CONFIG_HOME:-$HOME/.config}/hypr/desktop-policy.json" 2>/dev/null) || true
   if [[ ! ${watcher_pid:-} =~ ^[0-9]+$ ]] ||
      [[ -z "$expected_watcher" ]] ||
      ! kill -0 "$watcher_pid" 2>/dev/null ||
@@ -277,9 +283,9 @@ print(("name:" if not w.isdecimal() else "")+w if w and w!="-1" else "")
       local workspace
       read -r workspace < "$workspace_file" || true
       if [[ -n ${workspace:-} ]]; then
-        timeout -k 1 2 hyprctl dispatch moveworkspacetomonitor "$workspace ${ext[0]}" >/dev/null || true
-        timeout -k 1 2 hyprctl dispatch focusmonitor "${ext[0]}" >/dev/null || true
-        timeout -k 1 2 hyprctl dispatch workspace "$workspace" >/dev/null || true
+        timeout -k 1 2 hypr-control moveworkspacetomonitor "$workspace" "${ext[0]}" >/dev/null || true
+        timeout -k 1 2 hypr-control focusmonitor "${ext[0]}" >/dev/null || true
+        timeout -k 1 2 hypr-control workspace "$workspace" >/dev/null || true
       fi
     fi
     hyprctl notify -1 3000 'rgb(00ff99)' 'Headless active — double-tap F7 to restore' >/dev/null || true

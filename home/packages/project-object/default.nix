@@ -14,10 +14,12 @@
 , libsecret
 , fd
 , git
+, callPackage
 }:
 
 let
   pythonEnv = python3.withPackages (packages: [ packages.pygobject3 ]);
+  control = callPackage ../hyprland-control { inherit hyprland; };
 in
 stdenvNoCC.mkDerivation {
   pname = "project-object";
@@ -44,27 +46,35 @@ stdenvNoCC.mkDerivation {
     cp -R integrations/pi/skills/init "$out/share/project-object/pi/skills/"
     chmod 0555 "$out/bin/project-picker" "$out/bin/project-picker-gui" "$out/bin/project-picker-tui" "$out/bin/project-snapshot" "$out/bin/project-terminal" "$out/bin/project-workspace-exec" "$out/bin/project-api" "$out/bin/project-browser" "$out/bin/project-browser-host" "$out/bin/project-file-open" "$out/share/project-object/pi/skills/init/scripts/mark.py"
     patchShebangs "$out/bin"
+    wrapProgram "$out/bin/project-picker" --prefix PYTHONPATH : ${control.pythonPath}
     runHook postInstall
   '';
 
   postFixup = ''
     wrapGApp "$out/bin/project-picker-gui" \
+      --prefix PYTHONPATH : ${control.pythonPath} \
       --prefix PATH : ${lib.makeBinPath [ fd git hyprland libnotify ]} \
       --set PROJECT_OBJECT_TERMINAL "$out/bin/project-terminal"
     wrapProgram "$out/bin/project-picker-tui" \
+      --prefix PYTHONPATH : ${control.pythonPath} \
       --prefix PATH : ${lib.makeBinPath [ git kitty hyprland libnotify ]} \
       --set PROJECT_OBJECT_TERMINAL "$out/bin/project-terminal"
     wrapProgram "$out/bin/project-snapshot" \
+      --prefix PYTHONPATH : ${control.pythonPath} \
       --prefix PATH : ${lib.makeBinPath [ hyprland ]}
     wrapProgram "$out/bin/project-api" \
       --prefix PATH : ${lib.makeBinPath [ libsecret ]}
     wrapProgram "$out/bin/project-terminal" \
+      --prefix PYTHONPATH : ${control.pythonPath} \
       --prefix PATH : ${lib.makeBinPath [ git kitty hyprland libnotify ]}
     wrapProgram "$out/bin/project-workspace-exec" \
+      --prefix PYTHONPATH : ${control.pythonPath} \
       --prefix PATH : ${lib.makeBinPath [ hyprland ]}
     wrapProgram "$out/bin/project-browser" \
+      --prefix PYTHONPATH : ${control.pythonPath} \
       --prefix PATH : ${lib.makeBinPath [ hyprland libnotify vivaldi ]}
     wrapProgram "$out/bin/project-file-open" \
+      --prefix PYTHONPATH : ${control.pythonPath} \
       --prefix PATH : ${lib.makeBinPath [ hyprland libnotify vivaldi kitty neovim ]}
   '';
 

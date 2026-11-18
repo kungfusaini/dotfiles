@@ -76,7 +76,8 @@ class GamingTests(unittest.TestCase):
     def test_launch_uses_creation_workspace_and_new_token(self):
         self.clients.clear()
         self.games.launch()
-        self.assertIn('[workspace name:tablet-trial silent] env TABLET_PEGASUS_TOKEN=', self.dispatch.call_args.args[1])
+        self.assertIn('env TABLET_PEGASUS_TOKEN=', self.dispatch.call_args.args[1]['command'])
+        self.assertEqual(self.dispatch.call_args.args[1]['rules'], {'workspace':'name:tablet-trial silent'})
         self.dispatch.assert_called_once()
         self.games.launch()
         self.dispatch.assert_called_once()

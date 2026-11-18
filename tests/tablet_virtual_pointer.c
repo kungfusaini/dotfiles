@@ -33,6 +33,8 @@ int main(void) {
         unsigned x,y,w,h;
         if (sscanf(line,"move %u %u %u %u",&x,&y,&w,&h)==4)
             zwlr_virtual_pointer_v1_motion_absolute(pointer,ms,x,y,w,h);
+        else if (!strncmp(line,"right-down",10)) zwlr_virtual_pointer_v1_button(pointer,ms,0x111,WL_POINTER_BUTTON_STATE_PRESSED);
+        else if (!strncmp(line,"right-up",8)) zwlr_virtual_pointer_v1_button(pointer,ms,0x111,WL_POINTER_BUTTON_STATE_RELEASED);
         else if (!strncmp(line,"down",4)) zwlr_virtual_pointer_v1_button(pointer,ms,0x110,WL_POINTER_BUTTON_STATE_PRESSED);
         else if (!strncmp(line,"up",2)) zwlr_virtual_pointer_v1_button(pointer,ms,0x110,WL_POINTER_BUTTON_STATE_RELEASED);
         else return 3;

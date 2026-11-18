@@ -1,5 +1,6 @@
 { pkgs, lib, hyprland ? pkgs.hyprland }:
 let
+  control = pkgs.callPackage ../hyprland-control { inherit hyprland; };
   visuals = ../../config/quickshell/tablet-home-preview;
   keyboardLayout = ../../config/squeekboard-preview;
   ui = pkgs.runCommand "tablet-native-proof-ui" {} ''
@@ -14,6 +15,7 @@ let
     name = "tablet-proof";
     runtimeInputs = with pkgs; [ python3 quickshell coreutils glib dconf squeekboard wireplumber brightnessctl hyprland ];
     text = ''
+      export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       export TABLET_PROOF_QML=${ui}/shell.qml
       export TABLET_PROOF_BIN
       TABLET_PROOF_BIN="$(readlink -f "$0")"

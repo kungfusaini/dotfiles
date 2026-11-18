@@ -5,7 +5,7 @@ let
   home = config.home-manager.users.sumeet;
   packages = map (p: p.pname or p.name) home.home.packages;
   castingClient = builtins.head (builtins.filter (p: (p.pname or p.name) == "gnome-network-displays") home.home.packages);
-  displayBindings = builtins.filter (bind: builtins.match ".*XF86Display.*" bind != null)
+  displayBindings = builtins.filter (bind: builtins.match ".*XF86Display.*" (builtins.elemAt bind._args 0) != null)
     home.wayland.windowManager.hyprland.settings.bind;
   avahi = config.services.avahi;
   firewall = config.networking.firewall;
@@ -22,8 +22,8 @@ assert config.networking.networkmanager.wifi.backend == "wpa_supplicant";
 assert config.services.pipewire.enable;
 assert config.xdg.portal.enable;
 assert builtins.length displayBindings == 2;
-assert builtins.any (bind: builtins.match ", XF86Display, exec, .*/bin/display-key-handler" bind != null) displayBindings;
-assert builtins.any (bind: builtins.match "SHIFT, XF86Display, exec, .*/bin/display-layout-open" bind != null) displayBindings;
+assert builtins.any (bind: builtins.elemAt bind._args 0 == "XF86Display" && builtins.match ".*/bin/display-key-handler.*" (builtins.elemAt bind._args 1).expr != null) displayBindings;
+assert builtins.any (bind: builtins.elemAt bind._args 0 == "SHIFT + XF86Display" && builtins.match ".*/bin/display-layout-open.*" (builtins.elemAt bind._args 1).expr != null) displayBindings;
 assert avahi.enable;
 assert avahi.allowInterfaces == [ "wlp0s20f3" ];
 assert !avahi.openFirewall;
