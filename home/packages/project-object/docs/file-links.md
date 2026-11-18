@@ -38,7 +38,8 @@ The narrow source substitution fails on upstream changes. No private bus,
 disabled image-loader sandbox, profile copy or mutable launcher is needed.
 Only `org.gnome.Loupe.desktop` with `Exec=loupe %U` and our
 `X-ProjectObject-Independent=true` marker is accepted; stock singleton Loupe
-remains rejected. Swayimg stays installed as an alternative.
+remains rejected. Loupe is the installed default; the Swayimg route remains
+supported if that viewer is installed separately.
 
 Loupe's [documented controls](https://help.gnome.org/loupe/viewing-images.html.en)
 include touchpad and touchscreen pinch zoom, single-finger touchscreen panning,
