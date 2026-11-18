@@ -25,6 +25,7 @@ TestCase {
         }
     }
     Component { id: signalSpyComponent; SignalSpy {} }
+    Component { id: nativeFrameComponent; Rectangle { width: 900; height: 700; x: -1800; color: "#ff0000" } }
     Component { id: tileComponent; Tablet.GlassTile { width: 180; height: 100 } }
     Component { id: controlsComponent; Tablet.ControlCenter { width: 392; height: 480 } }
     function test_native_control_center_hides_exit_without_changing_preview_default() {
@@ -68,6 +69,7 @@ TestCase {
     }
     function test_native_home_handoff_does_not_flash_app_while_backend_is_delayed() {
         const surface = makeSurface()
+        surface.nativeSourceItem = createTemporaryObject(nativeFrameComponent, testCase)
         surface.nativePresentation = true
         surface.nativeAppVisible = true
         tryCompare(surface, "homePresentationProgress", 0)
@@ -78,8 +80,8 @@ TestCase {
         verify(surface.homePresentationProgress > .2)
         const before = surface.homePresentationProgress
         sequence.release(0, handle, 90, -110).commit()
-        verify(surface.nativeHomePending)
         verify(surface.homePresentationProgress >= before - .01, "Release must not expose the app again")
+        tryCompare(surface, "nativeHomePending", true)
         wait(250) // Backend deliberately hasn't acknowledged Home yet.
         compare(surface.homePresentationProgress, 1)
         verify(surface.nativeAppVisible)

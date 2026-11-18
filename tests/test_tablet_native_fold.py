@@ -1,4 +1,5 @@
 import copy
+from contextlib import contextmanager, ExitStack
 import importlib.util
 import json
 import os
@@ -597,6 +598,239 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.tick(n.FoldEdges(), '1', {'recovery': True}), ['status'])
         self.workspaces.append({'name': n.WORKSPACE, 'monitor': 'DP-1'})
         self.assertEqual(self.tick(n.FoldEdges(), '1', {}), [])
+
+    @contextmanager
+    def switcher_fixture(self):
+        browser = self.client('0xcd', 'def', n.WORKSPACE)
+        self.clients.append(browser)
+        self.workspaces.append({'name': n.WORKSPACE, 'monitor': 'eDP-1'})
+        with ExitStack() as stack:
+            for patcher in self.runtime(): stack.enter_context(patcher)
+            stack.enter_context(patch.object(n, 'uses_lua', return_value=True))
+            stack.enter_context(patch.object(n.gaming, 'start', return_value='process'))
+            self.native.setup(None)
+            yield browser
+
+    def test_switcher_sources_are_exact_registered_windows_not_shared_pid(self):
+        with self.switcher_fixture() as browser:
+            foreign = self.client('0xef', 'aaa', n.WORKSPACE)
+            self.clients.append(foreign)
+            sources = self.native.card_sources()
+            self.assertEqual(set(sources), {'vivaldi'})
+            self.assertEqual(sources['vivaldi']['address'], browser['address'])
+            self.assertEqual(sources['vivaldi']['stableId'], browser['stableId'])
+            self.assertEqual(sources['vivaldi']['start'], 'process')
+            self.assertEqual(sources['vivaldi']['instance'], 'instance')
+            self.assertEqual(sources['vivaldi']['tag'], self.native.record['tag'])
+
+    def test_switcher_moved_or_untagged_window_is_not_captured_or_closed(self):
+        with self.switcher_fixture() as browser, patch.object(self.native, 'owned_window_action') as operation:
+            target = self.native.card_sources()['vivaldi']
+            browser['workspace']['name'] = 'laptop'
+            self.assertEqual(self.native.card_sources(), {})
+            self.assertEqual(self.native.card_state()[0]['vivaldi']['stableId'], browser['stableId'])
+            with self.assertRaisesRegex(RuntimeError, 'unavailable or changed'):
+                self.native.dismiss_app({'app': 'vivaldi', 'window': target})
+            operation.assert_not_called()
+            browser['workspace']['name'] = n.WORKSPACE
+            browser['tags'] = []
+            self.assertEqual(self.native.card_sources(), {})
+
+    def test_switcher_ineligible_live_browser_retains_card_without_capture_permission(self):
+        with self.switcher_fixture() as browser:
+            for change in ({'mapped': False}, {'pinned': True}, {'grouped': ['0xcd']},
+                           {'floating': True}, {'workspace': {'name': 'laptop'}}):
+                original = copy.deepcopy(browser)
+                browser.update(change)
+                state = self.native.state()
+                self.assertIn('vivaldi', state['cardLifetimes'])
+                self.assertNotIn('vivaldi', state['cardSources'])
+                self.assertIsNotNone(self.native.source)
+                self.assertFalse(self.native.record.get('home_only'))  # Still owns its attached browser lease.
+                self.assertTrue(self.native.action('home')['running'])
+                with self.assertRaises(RuntimeError): self.native.modes(0, 0)
+                browser.clear(); browser.update(original)
+
+    def test_switcher_stale_resume_never_launches_or_replaces_registered_browser(self):
+        with self.switcher_fixture() as browser, patch.object(self.native, 'owned_window_action') as operation, \
+                patch.object(self.native, 'launch_browser') as launch, patch.object(self.native, 'select_browser') as select:
+            target = self.native.card_sources()['vivaldi']
+            source = copy.deepcopy(self.native.source)
+            self.native.record = self.native.home_record()
+            self.native.active_app = 'games'
+            browser['workspace']['name'] = 'laptop'
+            with self.assertRaisesRegex(RuntimeError, 'no replacement'):
+                self.native.resume_app({'app': 'vivaldi', 'window': target})
+            with self.assertRaisesRegex(RuntimeError, 'no replacement'):
+                self.native.action('app')
+            self.assertEqual(self.native.source, source)
+            operation.assert_not_called(); launch.assert_not_called(); select.assert_not_called()
+
+    def test_switcher_exact_active_resume_is_addressed_and_does_not_launch(self):
+        with self.switcher_fixture(), patch.object(self.native, 'owned_window_action') as operation, \
+                patch.object(self.native, 'launch_browser') as launch:
+            target = self.native.card_sources()['vivaldi']; self.native.home = True
+            state = self.native.resume_app({'app': 'vivaldi', 'window': target})
+            operation.assert_called_once_with(target, 'focus')
+            self.assertFalse(state['home'])
+            launch.assert_not_called()
+
+    def test_switcher_expected_browser_vanishing_during_resume_cannot_fall_back_to_launch(self):
+        with self.switcher_fixture(), patch.object(self.native, 'launch_browser') as launch, \
+                patch.object(self.native, 'ipc', return_value='ok'):
+            target = self.native.card_sources()['vivaldi']
+            source = copy.deepcopy(self.native.source)
+            self.native.record = self.native.home_record()
+            with patch.object(self.native, 'card_sources', return_value={'vivaldi': target}), \
+                    patch.object(n.gaming, 'find', return_value=None):
+                with self.assertRaisesRegex(RuntimeError, 'no replacement'): self.native.select_browser(expected=target)
+            self.assertEqual(self.native.source, source)
+            launch.assert_not_called()
+
+    def test_switcher_stale_game_resume_never_selects_library_or_launches(self):
+        with self.switcher_fixture(), patch.object(self.native, 'owned_window_action') as operation, \
+                patch.object(self.native, 'select_games') as select, patch.object(self.native.games, 'launch') as launch:
+            game = self.client('0xef', 'aaa', n.WORKSPACE)
+            game.update(floating=True, **{'class': 'org.quickshell'})
+            library = self.client('0xfa', 'bbb', n.WORKSPACE); library['class'] = 'pegasus-fe'
+            self.clients.extend([game, library])
+            with patch.object(self.native.games, 'game', return_value=game) as playing, \
+                    patch.object(self.native.games, 'launcher', return_value=library):
+                target = self.native.card_sources()['games']
+                game['mapped'] = False; playing.return_value = None
+                with self.assertRaisesRegex(RuntimeError, 'no replacement'):
+                    self.native.resume_app({'app': 'games', 'window': target})
+                with self.assertRaisesRegex(RuntimeError, 'no replacement'): self.native.action('games')
+            operation.assert_not_called(); select.assert_not_called(); launch.assert_not_called()
+
+    def test_switcher_live_ineligible_game_is_not_replaced_by_its_library(self):
+        with self.switcher_fixture():
+            game = self.client('0xef', 'aaa', n.WORKSPACE)
+            game.update(floating=True, **{'class': 'org.quickshell'})
+            library = self.client('0xfa', 'bbb', n.WORKSPACE)
+            library['class'] = 'pegasus-fe'
+            self.clients.extend([game, library])
+            with patch.object(self.native.games, 'game', return_value=game) as playing, \
+                    patch.object(self.native.games, 'launcher', return_value=library):
+                self.assertEqual(self.native.card_state()[0]['games']['stableId'], 'aaa')
+                game['mapped'] = False; playing.return_value = None
+                lives, sources = self.native.card_state()
+                self.assertEqual(lives['games']['stableId'], 'aaa')
+                self.assertNotIn('games', sources)
+                self.clients.remove(game)
+                lives, sources = self.native.card_state()
+                self.assertEqual(lives['games']['stableId'], 'bbb')
+                self.assertIn('games', sources)
+
+    def test_switcher_process_exit_with_lingering_client_does_not_end_session(self):
+        with self.switcher_fixture() as browser:
+            def start(pid):
+                if pid == browser['pid']: raise FileNotFoundError('process exited before compositor unmap')
+                return 'process'
+            with patch.object(p, 'start_time', side_effect=start):
+                state = self.native.state()
+            self.assertTrue(state['running'])
+            self.assertTrue(state['home'])
+            self.assertFalse(state['browserRunning'])
+            self.assertEqual(state['cardLifetimes'], {})
+            self.assertTrue(self.native.record['home_only'])
+            self.assertIn(browser, self.clients)  # Lingering snapshot is not re-adopted.
+
+    def test_switcher_process_lookup_race_is_exact_disappearance(self):
+        with self.switcher_fixture():
+            with patch.object(p, 'start_time', side_effect=ProcessLookupError('exited')):
+                self.assertIsNone(self.native.refresh_browser())
+            self.assertIsNone(self.native.source)
+            self.assertTrue(self.native.record['home_only'])
+
+    def test_switcher_recycled_window_never_replaces_snapshot_close_target(self):
+        with self.switcher_fixture() as browser, patch.object(self.native, 'owned_window_action') as operation:
+            target = self.native.card_sources()['vivaldi']
+            browser['stableId'] = 'bad'
+            with self.assertRaisesRegex(RuntimeError, 'unavailable or changed'):
+                self.native.dismiss_app({'app': 'vivaldi', 'window': target})
+            operation.assert_not_called()
+            self.assertIsNone(self.native.source)
+            self.assertTrue(self.native.record['home_only'])
+            self.assertIn(browser, self.clients)
+
+    def test_switcher_unreadable_lifetime_is_not_disappearance(self):
+        with self.switcher_fixture():
+            source = copy.deepcopy(self.native.source)
+            with patch.object(p, 'start_time', side_effect=PermissionError('unreadable')):
+                with self.assertRaises(PermissionError): self.native.refresh_browser()
+            self.assertEqual(self.native.source, source)
+            self.assertFalse(self.native.record.get('home_only'))
+
+    def test_switcher_normal_close_keeps_card_and_reveals_confirmation(self):
+        with self.switcher_fixture() as browser, patch.object(self.native, 'owned_window_action') as operation:
+            target = self.native.card_sources()['vivaldi']
+            self.native.home = True
+            self.native.resume_overview = True
+            state = self.native.dismiss_app({'app': 'vivaldi', 'window': target})
+            self.assertEqual(operation.call_args_list, [call(target, 'focus'), call(target, 'close')])
+            self.assertFalse(state['home'])
+            self.assertFalse(state['resumeOverview'])
+            self.assertEqual(state['cardSources']['vivaldi'], target)
+            self.assertEqual(state['closePending'], 'vivaldi')
+            self.assertIn(browser, self.clients)
+            self.keyboard.hide.assert_called()
+
+    def test_switcher_actual_close_prunes_only_dead_window_and_keeps_posture(self):
+        with self.switcher_fixture() as browser:
+            target = self.native.card_sources()['vivaldi']
+            laptop = copy.deepcopy(self.laptop)
+            posture = {'owned': 'fixture'}
+            self.native.posture = posture
+            self.native.record['posture'] = posture
+            def operation(record, action):
+                self.assertEqual(record, target)
+                if action == 'close': self.clients.remove(browser); self.focus = {}
+            with patch.object(self.native, 'owned_window_action', side_effect=operation):
+                state = self.native.dismiss_app({'app': 'vivaldi', 'window': target})
+            self.assertTrue(state['running'])
+            self.assertTrue(state['home'])
+            self.assertFalse(state['browserRunning'])
+            self.assertEqual(state['cardSources'], {})
+            self.assertEqual(state['closePending'], '')
+            self.assertEqual(self.clients, [laptop])
+            self.assertEqual(self.native.record['posture'], posture)
+            self.assertIsNone(n.memory()['source'])
+
+    def test_switcher_confirmation_focus_can_be_observed_without_lease_mutation(self):
+        with self.switcher_fixture() as browser:
+            dialog = self.client('0xef', 'bbb', n.WORKSPACE)
+            dialog.update(floating=True, **{'class': 'confirmation'})
+            self.clients.append(dialog); self.focus = dialog
+            self.assertTrue(self.native.state()['running'])
+            self.assertEqual(self.native.card_sources()['vivaldi']['address'], browser['address'])
+            with self.assertRaises(RuntimeError): self.native.modes(0, 0)
+            self.assertEqual(self.focus, dialog)
+
+    def test_switcher_close_rejects_external_workspace_or_invalid_app(self):
+        with self.switcher_fixture(), patch.object(self.native, 'owned_window_action') as operation:
+            target = self.native.card_sources()['vivaldi']
+            with self.assertRaises(RuntimeError): self.native.dismiss_app({'app': 'laptop', 'window': target})
+            self.workspace['name'] = 'laptop'
+            with self.assertRaisesRegex(RuntimeError, 'no longer foreground'):
+                self.native.dismiss_app({'app': 'vivaldi', 'window': target})
+            operation.assert_not_called()
+
+    def test_switcher_atomic_close_checks_lifetime_and_scope_in_one_callback(self):
+        with self.switcher_fixture(), patch.object(p, 'run', return_value='ok') as ipc:
+            target = self.native.card_sources()['vivaldi']
+            self.native.owned_window_action(target, 'close')
+            args = ipc.call_args.args
+            self.assertEqual(args[:2], ('hyprctl', 'eval'))
+            code = args[2]
+            for guard in ('hl.get_window', 'w.pid==42', 'w.stable_id', 'w.workspace.name',
+                          'w.tags', 'not w.pinned', 'not w.group', 'w.floating==false', 'hl.get_active_workspace', 'hl.get_active_monitor'):
+                self.assertIn(guard, code)
+            self.assertIn('hl.dsp.window.close({window=w})', code)
+            self.assertNotIn('kill', code)
+            self.assertLess(code.index('assert(w'), code.index('hl.dsp.window.close'))
+            with patch.object(n, 'uses_lua', return_value=False):
+                with self.assertRaisesRegex(RuntimeError, 'native Lua'): self.native.owned_window_action(target, 'close')
 
 
 if __name__ == '__main__': unittest.main()

@@ -299,8 +299,11 @@ class Proof:
                 'source': {'address': self.record['address'], 'pid': self.record['pid']},
                 'error': self.error, **self.values}
 
+    def action_guard(self):
+        return self.guard()
+
     def action(self, command, value=None):
-        self.guard()
+        self.action_guard()
         if command != 'status':
             self.error = ''
         if command == 'ui-ready':

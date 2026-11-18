@@ -63,6 +63,7 @@ def inner():
     requests=[]
     playback = {}
     attempts = {'tablet': False}
+    close_guard = {'enabled': False}
     server=None
     def start(command,name):
         p=subprocess.Popen(command,stdout=(root/(name+'.log')).open('w'),stderr=subprocess.STDOUT,start_new_session=True)
@@ -186,11 +187,50 @@ def inner():
         pointer_command(f"move {x} {y} {geometry['width']} {geometry['height']}")
         pointer_command('down');time.sleep(.06);pointer_command('up')
         mark('touch:'+action, x=x, y=y)
-    def touch_target(name):
+    def target_rect(name):
         rect=json.loads(subprocess.check_output(['quickshell','ipc','--path',os.environ['TABLET_TEST_PROOF_QML'],
             'call','tabletNativeScene','targetRect',name],text=True,timeout=5))
         assert rect, ('missing visible touch target', name)
+        return rect
+    def touch_target(name):
+        rect=target_rect(name)
         touch_point(rect['x']+rect['width']/2, rect['y']+rect['height']/2, name)
+    def touch_hold_switcher(name):
+        until(lambda:scene()['captureReady'], name+' source export ready')
+        geometry=scene();rect=geometry['navigationInput'];w,h=geometry['width'],geometry['height']
+        x=rect['x']+rect['width']/2;y=rect['y']+rect['height']/2
+        mark(name+':begin')
+        pointer_command(f'move {x} {y} {w} {h}');pointer_command('down')
+        for i in range(1,9):
+            pointer_command(f'move {x} {y-i*18} {w} {h}');time.sleep(.035)
+        time.sleep(.4);pointer_command('up')
+        app=status()['activeApp']
+        until(lambda:scene()['overview'] and not scene()['capturing'] and app in scene()['previewImages'], name+' retains real preview')
+        mark(name+':preview-ready', app=app)
+        return snapshot(name)
+    def touch_dismiss_card(app, name, metadata_update=False, replacement=None):
+        until(lambda:not scene()['capturing'], 'preview capture finishes before card dismissal')
+        geometry=scene();rect=target_rect('appCard-'+app);w,h=geometry['width'],geometry['height']
+        x=rect['x']+rect['width']/2;y=rect['y']+rect['height']/2
+        assert 0<x<w and 0<y<h, ('card must actually be onscreen',app,rect)
+        mark(name+':begin')
+        pointer_command(f'move {x} {y} {w} {h}');pointer_command('down')
+        for i in range(1,9):
+            pointer_command(f'move {x} {max(0,y-i*28)} {w} {h}');time.sleep(.035)
+            if metadata_update and i==3:
+                proof('adopt-fold')  # Benign private status update must not destroy the grabbed card.
+                mark(name+':metadata-update')
+            if replacement and i==3:
+                replacement()
+                mark(name+':identity-replaced')
+        pointer_command('up')
+        if replacement:
+            time.sleep(.2)
+            assert scene()['overview'], 'replacement identity consumed an old close gesture'
+            mark(name+':replacement-cancelled')
+            return
+        until(lambda:not scene()['overview'], name+' reveals original for normal close')
+        mark(name+':requested')
     def edge_home(name, inset=0):
         geometry=scene();w,h=geometry['width'],geometry['height'];x=w/2;y=h-inset-1
         mark(name+':begin')
@@ -216,6 +256,9 @@ def inner():
         class Page(BaseHTTPRequestHandler):
             def do_GET(self):
                 requests.append(self.path)
+                if self.path=='/close-guard':
+                    self.send_response(200);self.send_header('Content-Type','application/json');self.end_headers()
+                    self.wfile.write(json.dumps(close_guard).encode());return
                 if self.path.startswith('/state/'):
                     _, _, role, state = self.path.split('/')
                     playback[role] = state == 'playing'
@@ -252,6 +295,12 @@ if(role==='frame'){
 }
 document.onclick=e=>{fetch('/clicked-'+e.target.tagName);if(e.target.id==='full'){video.play();video.requestFullscreen()}};
 if(role==='tablet'){text.onfocus=()=>fetch('/focused');text.oninput=()=>fetch('/typed-'+encodeURIComponent(text.value))}
+if(role==='tablet'){
+  let guarded=false;
+  setInterval(()=>fetch('/close-guard').then(r=>r.json()).then(s=>{
+    if(guarded!==s.enabled){guarded=s.enabled;fetch('/close-guard-'+guarded)}}),100);
+  addEventListener('beforeunload',e=>{if(guarded){fetch('/close-attempted',{keepalive:true});e.preventDefault();e.returnValue=''}});
+}
 document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);report(video,role);
 </script>'''.replace(b'__NATIVE__',b'true' if native else b'false'))
             def log_message(self,*args):pass
@@ -430,6 +479,11 @@ desktop_policy={no_animation={["tablet-rotation-fade"]=true}}
             pointer_command('up')
             until(lambda:scene()['overview'],'original app switcher gesture over media')
             assert target()['fullscreenClient']==2
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                until(lambda:'vivaldi' in scene()['previewImages'] and not scene()['capturing'], 'native video preview retained')
+                preview=snapshot('real-video-preview')
+                green=sum(1 for pixel in preview.get_flattened_data() if pixel[:3]==(43,181,76) or (pixel[1]>120 and pixel[0]<70 and pixel[2]<120))
+                assert green>30000, 'switcher card lacks actual green video pixels'
             snapshot('original-design-switcher')
             if os.environ.get('TABLET_TEST_LUA') == '1': touch_point(480,320,'switcher-resume')
             else: click(480,320)
@@ -642,8 +696,36 @@ desktop_policy={no_animation={["tablet-rotation-fade"]=true}}
             # A later Home launch creates its own new tablet-local window,
             # never borrows the still-running laptop Vivaldi or laptop app.
             closed_identity = next(c for c in clients() if c['address']==address)
-            ctl('dispatch','closewindow','address:'+address)
-            until(lambda:not any(c['address']==address for c in clients()),'private tablet window closed')
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                proof('start');proof('app');proof('hide-keyboard')
+                until(lambda:not scene()['home'] and not scene()['transitioning'] and status()['keyboardInset']==0, 'browser ready for close confirmation test')
+                touch_point(100,220,'activate-close-guard-page')
+                close_guard['enabled']=True
+                until(lambda:'/close-guard-true' in requests, 'fixture beforeunload enabled')
+                unaffected={c['stableId']:meta(c) for c in clients() if c['address']!=address}
+                preview=touch_hold_switcher('browser-close-preview')
+                red=sum(1 for pixel in preview.get_flattened_data() if pixel[0]>140 and pixel[1]<90 and pixel[2]<120)
+                assert red>10000, 'browser card is a text placeholder, not its actual red page'
+                touch_dismiss_card('vivaldi','browser-confirmed-close')
+                until(lambda:'/close-attempted' in requests, 'real close reaches beforeunload')
+                time.sleep(.35)
+                assert any(c['address']==address and c['stableId']==closed_identity['stableId'] for c in clients()), 'beforeunload bypassed'
+                assert status()['running'] and 'vivaldi' in status()['cardSources'] and not scene()['overview'] and not scene()['home'], 'confirmation hidden or card prematurely removed'
+                snapshot('browser-normal-close-confirmation')
+                keys('-k','Escape')
+                close_guard['enabled']=False
+                until(lambda:'/close-guard-false' in requests, 'fixture beforeunload disabled after cancellation')
+                touch_hold_switcher('browser-close-after-cancel')
+                touch_dismiss_card('vivaldi','browser-normal-close')
+                until(lambda:not any(c['address']==address for c in clients()), 'swipe closes exact browser normally')
+                until(lambda:status()['home'] and not status()['cardSources'] and not scene()['previewImages'], 'closed card and cached pixels removed without ending native session')
+                assert status()['running'] and not status().get('recovery')
+                assert {c['stableId']:meta(c) for c in clients()}==unaffected, 'close touched another window sharing its process'
+                snapshot('home-after-browser-swipe-close')
+                proof('close')
+            else:
+                ctl('dispatch','closewindow','address:'+address)
+                until(lambda:not any(c['address']==address for c in clients()),'private tablet window closed')
             ctl('dispatch','focuswindow','address:'+laptop_window['address'])
             before_home = {c['address']:meta(c) for c in clients()}
             proof('start')
@@ -756,7 +838,29 @@ FocusScope {
             proof('start')
             assert status()['activeApp']=='games' and status()['gameRunning']
             assert json.loads(ctl('activewindow','-j'))['address']==game['address']
-            ctl('dispatch','closewindow','address:'+game['address'])
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                old_game=dict(game)
+                touch_hold_switcher('game-replacement-preview')
+                def replace_game_during_drag():
+                    ctl('dispatch','closewindow','address:'+old_game['address'])  # Private fixture simulates game exit, not a card action.
+                    until(lambda:not status()['gameRunning'] and status()['pegasusRunning'], 'game exits while its card is grabbed')
+                    until(lambda:scene()['cardWindows'].get('games')==library['stableId'], 'UI now represents the different library lifetime')
+                touch_dismiss_card('games','game-to-library-replacement',replacement=replace_game_during_drag)
+                assert any(c['stableId']==library['stableId'] for c in clients()), 'old game gesture closed its replacement library'
+                assert status()['cardSources']['games']['stableId']==library['stableId']
+                snapshot('library-survives-old-game-gesture')
+                touch_target('appCard-games')
+                until(lambda:not scene()['overview'] and not scene()['home'], 'resume exact surviving library')
+                until(lambda:json.loads((runtime/'tablet-games/launch.json').read_text()).get('phase')=='done', 'old game worker completes')
+                keys('1')
+                until(lambda:status()['gameRunning'] and any(c.get('title')=='Tablet fixture game' and c['stableId']!=old_game['stableId'] for c in clients()), 'second disposable game launch')
+                game=next(c for c in clients() if c.get('title')=='Tablet fixture game' and c['stableId']!=old_game['stableId'])
+                until(lambda:game['stableId']==status()['cardSources']['games']['stableId'], 'new game is exact current card')
+                preview=touch_hold_switcher('game-switcher-preview')
+                assert sum(1 for pixel in preview.get_flattened_data() if pixel[1]>120 and pixel[0]<70 and pixel[2]<120)>10000, 'game preview lacks actual game pixels'
+                touch_dismiss_card('games','game-normal-close', metadata_update=True)
+                until(lambda:not any(c['address']==game['address'] for c in clients()), 'swipe normally closes selected game only')
+            else: ctl('dispatch','closewindow','address:'+game['address'])
             until(lambda:status()['pegasusRunning'] and not status()['gameRunning'], 'return to Pegasus after dummy game exit')
             until(lambda:json.loads(ctl('activewindow','-j')).get('pid')==library['pid'], 'library focus restored')
             assert any(c['address']==library['address'] for c in clients()), 'Pegasus did not retain the same window'
@@ -785,6 +889,38 @@ FocusScope {
                 until(lambda:status()['pegasusRunning'] and not status()['home'], 'touch switches browser to library')
             else: proof('games')
             assert status()['pegasusRunning'] and not status()['home']
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                until(lambda:not scene()['transitioning'], 'library view settles before final close')
+                preview=touch_hold_switcher('library-switcher-preview')
+                assert sum(1 for pixel in preview.get_flattened_data() if all(abs(a-b)<=2 for a,b in zip(pixel[:3],(37,59,104))))>10000, 'library preview lacks its real blue content'
+                browser_identity=next(c for c in clients() if c['address']==new_source)
+                old_card=status()['cardSources']['vivaldi']
+                until(lambda:'vivaldi' in scene()['previewImages'], 'inactive browser thumbnail retained')
+                ctl('dispatch','movetoworkspacesilent','name:private-ineligible-card,address:'+new_source)
+                until(lambda:'vivaldi' in status()['cardLifetimes'] and 'vivaldi' not in status()['cardSources']
+                      and 'vivaldi' in scene()['previewImages'] and 'vivaldi' not in scene()['eligibleCards'],
+                      'live moved window retains cached card but loses capture/close permission')
+                unchanged={c['stableId']:meta(c) for c in clients()}
+                for operation in ('dismiss-app', 'resume-app'):
+                    refused=subprocess.run([os.environ['TABLET_PROOF_BIN'],operation,'--target',
+                        json.dumps({'app':'vivaldi','window':old_card})],capture_output=True,text=True,timeout=10)
+                    assert refused.returncode and 'no replacement opened or closed' in refused.stderr, 'stale ineligible card operation was accepted'
+                    mark('ineligible-card-'+operation+'-refused')
+                assert {c['stableId']:meta(c) for c in clients()}==unchanged, 'stale card operation changed windows or launched a replacement'
+                assert any(c['stableId']==browser_identity['stableId'] and c['workspace']['name']=='private-ineligible-card' for c in clients()), 'ineligible shared-process window closed/moved'
+                snapshot('cached-ineligible-card-no-new-capture')
+                ctl('dispatch','movetoworkspacesilent','name:tablet-trial,address:'+new_source)
+                until(lambda:'vivaldi' in status()['cardSources'], 'same verified window becomes eligible again')
+                touch_dismiss_card('games','library-normal-close')
+                until(lambda:not status()['pegasusRunning'] and 'games' not in status()['cardSources'], 'swipe normally closes exact library')
+                assert any(c['stableId']==browser_identity['stableId'] for c in clients()), 'library close affected retained browser'
+                until(lambda:'games' not in scene()['previewImages'], 'closed library cache released')
+                snapshot('home-after-library-swipe-close')
+                touch_target('app-vivaldi')
+                until(lambda:not scene()['home'] and not scene()['transitioning'] and scene()['captureReady'], 'returned exact browser export becomes usable again')
+                assert status()['source']['address']==new_source
+                touch_hold_switcher('reeligible-browser-preview')
+                assert 'vivaldi' in scene()['previewImages'], 're-eligible source did not get a usable preview'
             proof('close')
             assert json.loads(ctl('activewindow','-j'))['address']==laptop_window['address']
             assert not (runtime/'tablet-proof/recovery.json').exists()

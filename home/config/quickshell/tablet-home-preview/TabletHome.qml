@@ -13,6 +13,7 @@ Control {
     signal settingsRequested()
     property bool nativePresentation: false
     property bool nativeAppVisible: false
+    property Item nativeSourceItem: null
     property string nativeAppId: ""
     property real keyboardInset: 0
     signal nativeHomeRequested()
@@ -48,6 +49,8 @@ Control {
     readonly property bool navigationBusy: navigator.dragging
     property bool navigationBlocked: false
     property bool navigationUrgent: false
+    property var appAvailable: app => true
+    property var appContext: app => null
     property var appSummary: app => app.id === "tablet-improve" ? "Your Pi conversation" : "Preview · no application launched"
     AppHistory { id: localHistory; apps: root.apps }
     onActiveAppChanged: {
@@ -67,7 +70,9 @@ Control {
     readonly property bool homeVisible: nativePresentation ? !nativeAppVisible : activeApp === ""
     signal appRequested(string id, string label)
     signal exitRequested()
-    signal windowCloseRequested(string id)
+    signal windowCloseRequested(string id, var context, int token)
+    function finishWindowDismissal(id, token) { navigator.finishDismissal(id, token) }
+    signal windowResumeRequested(string id, var context)
 
     function openApp(id, label) { navigator.leave(() => { navigator.overview = false; root.appRequested(id, label) }) }
     function openSwitcher() { navigator.showSwitcher() }
@@ -239,26 +244,32 @@ Control {
         id: navigator
         anchors.fill: parent
         visible: root.settingsProgress === 0
-        sourceItem: root.nativePresentation || root.homeVisible ? null : mockSurface
+        sourceItem: root.nativePresentation ? root.nativeSourceItem : (root.homeVisible ? null : mockSurface)
         history: root.history
         apps: root.history.cards()
         activeAppId: root.nativePresentation ? (root.nativeAppVisible ? root.nativeAppId : "") : (root.apps.find(app => app.label === root.activeApp) || {}).id || ""
         keyboardInset: root.keyboardInset
         navigationWidth: root.nativePresentation ? Math.min(180, navigator.width) : navigator.width
         edgeAnchored: root.nativePresentation
+        externalAppActions: root.nativePresentation
         blocked: root.navigationBlocked || root.nativeHomePending
         urgentInput: root.navigationUrgent
         summary: root.appSummary
+        appAvailable: root.appAvailable
+        appContext: root.appContext
         onHomeRequested: {
             if (root.nativePresentation) {
                 if (!root.homeVisible) root.nativeHomePending = true
                 root.nativeHomeRequested()
             } else root.showHome()
         }
-        onAppRequested: (id, label) => root.appRequested(id, label)
-        onCloseRequested: id => {
+        onAppRequested: (id, label, context) => {
+            if (root.nativePresentation) root.windowResumeRequested(id, context)
+            else root.appRequested(id, label)
+        }
+        onCloseRequested: (id, context, token) => {
             const app = root.apps.find(app => app.id === id)
-            if (app && app.kind === "window") { root.windowCloseRequested(id); return }
+            if (app && app.kind === "window") { root.windowCloseRequested(id, context, token); return }
             if (id === activeAppId) { overview = false; root.showHome() }
             root.history.close(id)
         }

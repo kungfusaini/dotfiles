@@ -6,18 +6,30 @@ QtObject {
     // Keep ItemGrabResult objects alive: their URLs are in-memory Qt images,
     // not files. Shared by both windows so inactive cards retain their content.
     property var previews: ({})
+    property var sourceIdentities: ({})
     property bool capturing: false
+    function setSource(id, identity) {
+        if ((sourceIdentities[id] || "") === identity) return
+        const identities = Object.assign({}, sourceIdentities)
+        identities[id] = identity
+        sourceIdentities = identities
+        const next = Object.assign({}, previews)
+        delete next[id]
+        previews = next
+    }
     function capture(id, item, done) {
         const finish = ok => { if (done) done(ok) }
         if (!id || !item || item.width <= 0 || item.height <= 0) { finish(true); return }
         if (capturing) { finish(false); return }
         capturing = true
+        const identity = sourceIdentities[id] || ""
         const accepted = item.grabToImage(result => {
             const next = Object.assign({}, previews)
-            if (opened.includes(id)) next[id] = result
+            const current = (sourceIdentities[id] || "") === identity
+            if (opened.includes(id) && current) next[id] = result
             previews = next
             capturing = false
-            finish(true)
+            finish(current)
         }, Qt.size(Math.max(1, Math.round(item.width * Math.min(1, 900 / Math.max(item.width, item.height)))),
                    Math.max(1, Math.round(item.height * Math.min(1, 900 / Math.max(item.width, item.height))))))
         if (!accepted) { capturing = false; finish(false) }
@@ -27,6 +39,9 @@ QtObject {
         const next = Object.assign({}, previews)
         delete next[id]
         previews = next
+        const identities = Object.assign({}, sourceIdentities)
+        delete identities[id]
+        sourceIdentities = identities
     }
     function open(id) {
         if (!apps.some(app => app.id === id)) return

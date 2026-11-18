@@ -15,22 +15,33 @@ Item {
     property real keyboardInset: 0
     property bool urgentInput: false
     property bool overview: false
+    property var appAvailable: app => true
+    property var appContext: app => null
     property var summary: app => app.id === "tablet-improve" ? "Your Pi conversation" : "Preview · no application launched"
-    readonly property real progress: overview ? 1 : Math.min(1, gesture.pull / Math.max(120, height * .30))
+    property bool homeCommitPending: false
+    property real committedProgress: 0
+    readonly property real progress: overview ? 1 : (homeCommitPending ? committedProgress
+        : Math.min(1, gesture.pull / Math.max(120, height * .30)))
     readonly property bool navigating: overview || progress > 0
     readonly property bool dragging: gesture.dragging || capturing || cards.draggingCard
     readonly property bool contactActive: gesture.pressed || gesture.dragging
     // Single geometry source for the layer-shell input mask and visible handle.
     property real navigationWidth: width
     property bool edgeAnchored: false
+    property bool externalAppActions: false
     readonly property rect navigationInputRect: Qt.rect(gesture.x, gesture.y, gesture.width, gesture.height)
+    readonly property real availableHeight: edgeAnchored ? Math.max(120, height - keyboardInset - gesture.height - 4) : height
     readonly property real cardWidth: Math.min(width * .76, 760)
-    readonly property real cardHeight: height * .70
-    readonly property real cardTop: height * .15
+    readonly property real cardTop: edgeAnchored ? Math.max(52, availableHeight * .15) : height * .15
+    readonly property real cardHeight: edgeAnchored
+        ? Math.max(80, Math.min(availableHeight * .70, availableHeight - cardTop - 16)) : height * .70
     readonly property int activeIndex: apps.findIndex(app => app.id === activeAppId)
-    signal closeRequested(string id)
+    property var pendingDismissals: ({})
+    property int dismissalSerial: 0
+    onOverviewChanged: { if (!overview) pendingDismissals = ({}) }
+    signal closeRequested(string id, var context, int token)
     signal homeRequested()
-    signal appRequested(string id, string label)
+    signal appRequested(string id, string label, var context)
     signal gestureBegan()
     signal blockedRequested()
     onBlockedChanged: { if (blocked) gesture.cancel() }
@@ -45,24 +56,61 @@ Item {
         cards.currentIndex = Math.max(0, activeIndex)
         cards.positionViewAtIndex(cards.currentIndex, ListView.Center)
     }
-    function leave(action) {
-        if (blocked || capturing) { blockedRequested(); return }
-        if (history) history.capture(activeAppId, sourceItem, ok => { if (ok && !blocked) action() })
+    function leave(action, failed) {
+        if (blocked || capturing) { blockedRequested(); if (failed) failed(); return }
+        if (history) history.capture(activeAppId, sourceItem, ok => {
+            if (ok && !blocked) action()
+            else if (failed) failed()
+        })
         else action()
     }
     function goHome() {
-        leave(() => { overview = false; homeRequested() })
+        // Retaining a real window frame is asynchronous too. Keep the current
+        // touch visual until capture hands off to the backend Home request.
+        committedProgress = progress
+        homeCommitPending = true
+        leave(() => { overview = false; homeRequested(); homeCommitPending = false },
+              () => { homeCommitPending = false })
     }
-    function resume(id, label) {
-        if (blocked || capturing) return
-        if (id === activeAppId) { overview = false; return }
-        leave(() => { overview = false; appRequested(id, label) })
+    function snapshotContext(id) {
+        const value = appContext(apps.find(app => app.id === id) || {})
+        return value === null || value === undefined ? null : JSON.parse(JSON.stringify(value))
     }
-    function dismissCard(id) {
-        if (blocked || capturing) return
-        // Dismissing an inactive card must not navigate away from the current app.
-        if (id === activeAppId) leave(() => closeRequested(id))
-        else closeRequested(id)
+    function contextCurrent(id, context) {
+        return JSON.stringify(snapshotContext(id)) === JSON.stringify(context)
+    }
+    function resume(id, label, context) {
+        const selected = context === undefined ? snapshotContext(id) : context
+        if (blocked || capturing || !appAvailable(apps.find(app => app.id === id) || {}) || !contextCurrent(id, selected)) return
+        if (id === activeAppId && !externalAppActions) { overview = false; return }
+        leave(() => {
+            if (!contextCurrent(id, selected)) return
+            if (!externalAppActions) overview = false
+            appRequested(id, label, selected)
+        })
+    }
+    function finishDismissal(id, token) {
+        if (!pendingDismissals[id] || pendingDismissals[id].token !== token) return
+        const next = Object.assign({}, pendingDismissals)
+        delete next[id]
+        pendingDismissals = next
+    }
+    function dismissCard(id, context) {
+        const selected = context === undefined ? snapshotContext(id) : context
+        const previous = pendingDismissals[id]
+        if (blocked || capturing || (previous && contextCurrent(id, previous.context))
+            || !appAvailable(apps.find(app => app.id === id) || {}) || !contextCurrent(id, selected)) return
+        const token = ++dismissalSerial
+        if (externalAppActions) pendingDismissals = Object.assign({}, pendingDismissals, {[id]: {context: selected, token: token}})
+        // Retain the released visual while capture/backend acknowledgement is
+        // pending, rather than snapping a successfully swiped card back in.
+        const failed = () => finishDismissal(id, token)
+        const request = () => {
+            if (contextCurrent(id, selected)) closeRequested(id, selected, token)
+            else failed()
+        }
+        if (id === activeAppId) leave(request, failed)
+        else request()
     }
     // A new frontend can recapture its current app after handoff. Inactive
     // images intentionally never leave this process or get written to disk.
@@ -79,7 +127,7 @@ Item {
         MouseArea { anchors.fill: parent; enabled: !nav.blocked; onClicked: { if (nav.overview) nav.goHome() } }
     }
     Label {
-        anchors { top: parent.top; topMargin: Math.max(20, nav.height * .05); horizontalCenter: parent.horizontalCenter }
+        anchors { top: parent.top; topMargin: Math.max(nav.edgeAnchored ? 12 : 20, nav.availableHeight * .05); horizontalCenter: parent.horizontalCenter }
         visible: nav.overview
         text: nav.apps.length ? "Open apps" : "No open apps"
         color: "#eef5f2"; font.family: "DejaVu Sans"; font.pixelSize: 23
@@ -105,28 +153,38 @@ Item {
             objectName: "appCard-" + modelData.id
             required property var modelData
             required property int index
+            property var pressContext: null
             width: nav.cardWidth; height: nav.cardHeight
-            transform: Translate { y: swipe.active ? Math.min(0, swipe.offset) : 0 }
-            opacity: swipe.active ? Math.max(.2, 1 + Math.min(0, swipe.offset) / height) : 1
+            readonly property bool dismissPending: !!nav.pendingDismissals[modelData.id]
+                && nav.contextCurrent(modelData.id, nav.pendingDismissals[modelData.id].context)
+            transform: Translate {
+                y: swipe.active ? Math.min(0, swipe.offset) : (card.dismissPending ? -nav.height : 0)
+                Behavior on y { enabled: !swipe.active; NumberAnimation { duration: 180; easing.type: Easing.OutCubic } }
+            }
+            opacity: swipe.active ? Math.max(.2, 1 + Math.min(0, swipe.offset) / height) : (dismissPending ? 0 : 1)
+            Behavior on opacity { enabled: !swipe.active; NumberAnimation { duration: 180 } }
             DragHandler {
                 id: swipe
                 target: null
                 xAxis.enabled: false
-                enabled: nav.overview && !nav.blocked && !nav.capturing
+                enabled: nav.overview && !nav.blocked && !nav.capturing && !card.dismissPending && nav.appAvailable(card.modelData)
                 property real offset: 0
                 property bool cancelled: false
                 onActiveTranslationChanged: { if (active) offset = activeTranslation.y }
+                onGrabChanged: (transition, point) => {
+                    if (transition === PointerDevice.GrabPassive) card.pressContext = nav.snapshotContext(card.modelData.id)
+                }
                 onCanceled: cancelled = true
                 onActiveChanged: {
                     cards.draggingCard = active
                     if (active) { offset = 0; cancelled = false }
                     else if (enabled && !cancelled && offset < -Math.max(80, card.height * .20))
-                        nav.dismissCard(card.modelData.id)
+                        nav.dismissCard(card.modelData.id, card.pressContext)
                 }
             }
             Label {
                 y: 0; height: 30; width: parent.width
-                text: modelData.label + (modelData.kind === "preview" || (!modelData.kind && modelData.id !== "tablet-improve") ? " · Preview" : "")
+                text: modelData.label + (!nav.appAvailable(modelData) ? " · unavailable" : "") + (modelData.kind === "preview" || (!modelData.kind && modelData.id !== "tablet-improve") ? " · Preview" : "")
                 textFormat: Text.PlainText
                 font.family: "DejaVu Sans"; font.pixelSize: 18; color: "#eef5f2"
             }
@@ -150,7 +208,12 @@ Item {
                     wrapMode: Text.WordWrap
                     font.family: "DejaVu Sans"; font.pixelSize: 18; color: "#d7e7e2"
                 }
-                MouseArea { anchors.fill: parent; onClicked: nav.resume(modelData.id, modelData.label) }
+                MouseArea {
+                    anchors.fill: parent
+                    enabled: nav.appAvailable(card.modelData) && !card.dismissPending
+                    onPressed: card.pressContext = nav.snapshotContext(card.modelData.id)
+                    onClicked: nav.resume(modelData.id, modelData.label, card.pressContext)
+                }
             }
         }
     }

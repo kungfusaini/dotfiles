@@ -32,8 +32,9 @@ automatic default.
   are released, then the exact originating laptop workspace/focus is restored.
 - Home/app view, settings/switcher state and the selected tablet browser's
   address/PID/start-time/class/stableId are saved privately in
-  `$XDG_STATE_HOME/tablet-native/session.json`. Browser tabs/logins/page state
-  remain in the real application; they are not inspected, copied or serialized.
+  `$XDG_STATE_HOME/tablet-native/session.json`. Browser session/storage data
+  remain in the application; they are not read, copied or serialized. Switcher
+  window pixels are captured only in memory as described below.
 - Next entry resumes the exact still-valid tablet-local source and view. A
   disappeared, moved or recycled source is not replaced by a laptop browser.
   With no saved source, a single eligible native browser already in the tablet
@@ -64,8 +65,9 @@ components. Icon geometry, typography, glass materials, Home fade/scale, drawer
 animation and swipe/pause navigation remain in those components. Their legacy
 preview defaults remain unchanged. Native mode suppresses the mock app surface.
 
-A transparent overlay exposes the real native browser, not a screenshot or
-floating rectangle. Its fullscreen lease is scoped to the tablet-local
+The ordinary app view exposes the real interactive native browser, not a
+replacement screenshot. Scoped window textures are used only for gesture/card
+presentation. Its fullscreen lease is scoped to the tablet-local
 address/PID/start-time/stableId/tag. Internal/client `2/1` provides native app
 maximization, while real client media fullscreen can request `2/2`. There are
 no permanent reserved bands or repeated geometry enforcement. Legacy IPC acts
@@ -73,12 +75,26 @@ on the active window: transitions remain focus-checked, **not compositor-atomic
 conditional transactions**.
 
 Idle input regions are the top-right 144×24 corner and the original navigator's
-180×52 handle, four pixels above the bottom/IME. The input mask reads the
+180×56 native handle reaching the actual bottom/IME boundary (the indicator's
+position is unchanged). The input mask reads the
 handle's actual geometry rather than maintaining a second edge hitbox. Initial
 bottom contact expands the mask for the original navigator;
 quick swipe goes Home and swipe/pause opens its card. Gesture and input-region
-geometry both move above the native IME. A real browser card has an honest text
-summary, not a fake live preview. Card dismissal does not close desktop windows.
+geometry both move above the native IME; cards fit above that reserved input
+area instead of overlapping the handle. Cards use per-window live/retained
+previews from the exact registered tablet lifetime, never a monitor capture.
+Frames stay in memory and are invalidated only for disappearance/replacement;
+a live but ineligible window keeps its last card while capture/actions stop.
+
+Swiping a card up requests normal closure of that exact tablet window, not its
+process. The selected window is revealed for application confirmation; a refused
+or cancelled close keeps its card. Games and their library are separate windows:
+closing the displayed game leaves the library alive. The interaction freezes
+its lifetime at press and carries it through frame retention and backend
+validation; a game exiting mid-swipe cannot retarget the gesture to its library.
+Card resume is identity-bearing too and never launches a replacement for a stale
+card. Unrelated/laptop windows are never closed or adopted. See
+[the switcher contract](tablet-native-switcher.md) for scope and evidence.
 
 Volume/mute and brightness use real backends; missing controls are disabled.
 Unconnected battery/network/media readouts say unknown/not connected rather

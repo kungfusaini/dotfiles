@@ -7,7 +7,7 @@ TestCase {
     name: "TabletNavigation"
     when: windowShown
     visible: true
-    width: 1000; height: 760
+    width: 1000; height: 1160
     Component { id: gestureComponent; Tablet.BottomGesture {} }
     Component { id: spyComponent; SignalSpy {} }
     Component { id: historyComponent; Tablet.AppHistory { apps: [{id:"tablet-improve",label:"Pi"},{id:"music",label:"Music"}] } }
@@ -65,6 +65,171 @@ TestCase {
         sequence.release(0, handle, 90, -118).commit()
         tryCompare(home, "count", 1)
         compare(nav.overview, false)
+    }
+    function test_native_card_dismissal_cannot_hit_home_handle_data() {
+        return [
+            {tag: "landscape-ime", width: 900, height: 700, inset: 320},
+            {tag: "portrait-ime", width: 640, height: 1040, inset: 320},
+            {tag: "landscape", width: 900, height: 700, inset: 0}
+        ]
+    }
+    function test_native_card_dismissal_cannot_hit_home_handle(data) {
+        const deck = createTemporaryObject(deckComponent, suite, {width: data.width, height: data.height})
+        const nav = deck.navigator
+        nav.edgeAnchored = true; nav.keyboardInset = data.inset
+        const closed = spy(nav, "closeRequested"), home = spy(nav, "homeRequested")
+        nav.showSwitcher(); tryCompare(deck.history, "capturing", false)
+        const card = findChild(nav, "appCard-tablet-improve"), handle = findChild(nav, "homeHandle")
+        const bottom = card.mapToItem(nav, 0, card.height).y
+        verify(bottom < handle.mapToItem(nav, 0, 0).y - 4, "Card must not overlap Home handle/IME")
+        const center = card.mapToItem(nav, card.width / 2, card.height / 2)
+        const sequence = touchEvent(nav), distance = Math.min(center.y - 1, Math.max(120, card.height * .55))
+        sequence.press(0, nav, center.x, center.y).commit()
+        for (let i = 1; i <= 8; ++i) {
+            sequence.move(0, nav, center.x, center.y - distance * i / 8).commit(); wait(25)
+        }
+        sequence.release(0, nav, center.x, center.y - distance).commit()
+        tryCompare(closed, "count", 1)
+        compare(home.count, 0)
+    }
+    function test_retained_preview_is_invalidated_when_window_identity_changes() {
+        const deck = createTemporaryObject(deckComponent, suite), history = deck.history
+        history.setSource("tablet-improve", "first-window")
+        history.capture("tablet-improve", deck.surface)
+        tryCompare(history, "capturing", false)
+        verify(!!history.previews["tablet-improve"])
+        history.setSource("tablet-improve", "replacement-window")
+        verify(!history.previews["tablet-improve"])
+        history.capture("tablet-improve", deck.surface)
+        tryCompare(history, "capturing", false)
+        verify(!!history.previews["tablet-improve"])
+        history.close("tablet-improve")
+        verify(!history.previews["tablet-improve"])
+        verify(!history.sourceIdentities["tablet-improve"])
+    }
+    function test_card_replacement_mid_touch_cannot_close_replacement() {
+        const deck = createTemporaryObject(deckComponent, suite), nav = deck.navigator
+        let lifetime = "game"
+        nav.externalAppActions = true
+        nav.appContext = app => ({stableId: lifetime})
+        const closed = spy(nav, "closeRequested")
+        nav.showSwitcher(); tryCompare(deck.history, "capturing", false)
+        const card = findChild(nav, "appCard-tablet-improve"), center = card.mapToItem(nav, card.width / 2, card.height / 2)
+        const sequence = touchEvent(nav)
+        sequence.press(0, nav, center.x, center.y).commit()
+        sequence.move(0, nav, center.x, center.y - 40).commit(); wait(25)
+        lifetime = "library"
+        sequence.move(0, nav, center.x, center.y - 180).commit(); wait(25)
+        sequence.release(0, nav, center.x, center.y - 180).commit()
+        wait(50)
+        compare(closed.count, 0)
+        verify(nav.overview)
+    }
+    function test_card_replacement_during_pressed_click_cannot_resume_replacement() {
+        const deck = createTemporaryObject(deckComponent, suite), nav = deck.navigator
+        let lifetime = "old-window"
+        nav.externalAppActions = true
+        nav.appContext = app => ({stableId: lifetime})
+        const resumed = spy(nav, "appRequested")
+        nav.showSwitcher(); tryCompare(deck.history, "capturing", false)
+        const card = findChild(nav, "appCard-tablet-improve"), center = card.mapToItem(nav, card.width / 2, card.height / 2)
+        mousePress(nav, center.x, center.y)
+        lifetime = "replacement-window"
+        mouseRelease(nav, center.x, center.y)
+        wait(50)
+        compare(resumed.count, 0)
+        verify(nav.overview)
+    }
+    function test_card_replacement_during_async_capture_cannot_resume_replacement() {
+        const deck = createTemporaryObject(deckComponent, suite), nav = deck.navigator
+        let lifetime = "old-window"
+        nav.externalAppActions = true
+        nav.appContext = app => ({stableId: lifetime})
+        const resumed = spy(nav, "appRequested")
+        nav.showSwitcher(); tryCompare(deck.history, "capturing", false)
+        nav.resume("tablet-improve", "Pi")
+        lifetime = "replacement-window"
+        tryCompare(deck.history, "capturing", false)
+        compare(resumed.count, 0)
+        verify(nav.overview)
+    }
+    function test_native_dismissal_stays_offscreen_until_ack_and_recovers_on_failure() {
+        const deck = createTemporaryObject(deckComponent, suite), nav = deck.navigator
+        nav.externalAppActions = true
+        nav.appContext = app => ({stableId: app.id})
+        const closed = spy(nav, "closeRequested")
+        nav.showSwitcher(); tryCompare(deck.history, "capturing", false)
+        const card = findChild(nav, "appCard-tablet-improve"), center = card.mapToItem(nav, card.width / 2, card.height / 2)
+        const sequence = touchEvent(nav)
+        sequence.press(0, nav, center.x, center.y).commit()
+        for (let i = 1; i <= 8; ++i) {
+            sequence.move(0, nav, center.x, center.y - 260 * i / 8).commit(); wait(25)
+        }
+        sequence.release(0, nav, center.x, center.y - 260).commit()
+        tryCompare(closed, "count", 1)
+        verify(card.dismissPending); wait(240)
+        compare(card.opacity, 0)
+        verify(card.mapToItem(nav, 0, 0).y < -card.height, "Successful swipe must not bounce back while backend is pending")
+        const token = closed.signalArguments[0][2]
+        nav.dismissCard("tablet-improve"); compare(closed.count, 1)
+        nav.finishDismissal("tablet-improve", token - 1); verify(card.dismissPending)
+        nav.finishDismissal("tablet-improve", token); wait(240)
+        verify(!card.dismissPending); compare(card.opacity, 1)
+        nav.dismissCard("tablet-improve"); tryCompare(closed, "count", 2)
+        const oldToken = closed.signalArguments[1][2]
+        nav.overview = false; nav.overview = true
+        nav.dismissCard("tablet-improve"); tryCompare(closed, "count", 3)
+        nav.finishDismissal("tablet-improve", oldToken)
+        verify(card.dismissPending, "Old process completion must not clear a later gesture")
+        nav.finishDismissal("tablet-improve", closed.signalArguments[2][2])
+        verify(!card.dismissPending)
+    }
+    function test_changed_lifetime_during_dismiss_capture_restores_card_without_request() {
+        const deck = createTemporaryObject(deckComponent, suite), nav = deck.navigator
+        nav.externalAppActions = true
+        nav.appContext = app => ({stableId: "old-window"})
+        const closed = spy(nav, "closeRequested")
+        nav.showSwitcher(); tryCompare(deck.history, "capturing", false)
+        nav.dismissCard("tablet-improve")
+        nav.appContext = app => ({stableId: "replacement-window"})
+        tryCompare(deck.history, "capturing", false)
+        compare(closed.count, 0)
+        compare(Object.keys(nav.pendingDismissals).length, 0)
+        verify(nav.overview)
+    }
+    function test_external_active_card_resume_waits_for_host_acknowledgement() {
+        const deck = createTemporaryObject(deckComponent, suite), nav = deck.navigator
+        nav.externalAppActions = true
+        const request = spy(nav, "appRequested")
+        nav.showSwitcher(); tryCompare(deck.history, "capturing", false)
+        nav.resume("tablet-improve", "Pi")
+        tryCompare(request, "count", 1)
+        verify(nav.overview, "Keep the card scene until backend validates exact identity")
+    }
+    function test_ineligible_live_card_keeps_cached_frame_but_cannot_resume_or_dismiss() {
+        const deck = createTemporaryObject(deckComponent, suite), nav = deck.navigator, history = deck.history
+        history.setSource("tablet-improve", "same-live-window")
+        nav.showSwitcher(); tryCompare(history, "capturing", false)
+        verify(!!history.previews["tablet-improve"])
+        const retained = String(history.previews["tablet-improve"].url)
+        const closed = spy(nav, "closeRequested"), resumed = spy(nav, "appRequested")
+        nav.appAvailable = app => false
+        history.setSource("tablet-improve", "same-live-window")
+        nav.dismissCard("tablet-improve"); nav.resume("music", "Music")
+        compare(closed.count, 0); compare(resumed.count, 0)
+        verify(nav.overview)
+        compare(String(history.previews["tablet-improve"].url), retained)
+    }
+    function test_async_old_preview_cannot_populate_a_recycled_card() {
+        const deck = createTemporaryObject(deckComponent, suite), history = deck.history
+        history.setSource("tablet-improve", "first-window")
+        let completed = false, accepted = true
+        history.capture("tablet-improve", deck.surface, ok => { accepted = ok; completed = true })
+        history.setSource("tablet-improve", "replacement-window")
+        tryVerify(() => completed)
+        compare(accepted, false)
+        compare(history.capturing, false)
+        verify(!history.previews["tablet-improve"])
     }
     function test_pointer_flick_and_hold_use_the_same_handle() {
         const deck = createTemporaryObject(deckComponent,suite)

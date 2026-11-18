@@ -10,17 +10,29 @@ ShellRoot {
     property var state: ({running: false, home: true, drawer: false, keyboardInset: 0})
     property string localError: ""
     property bool restoredNavigation: false
+    property string lastActiveApp: ""
     readonly property var targetScreen: Quickshell.screens.find(s => s.name === "eDP-1") ?? null
-    readonly property var apps: state.browserAvailable ? [
+    readonly property var apps: [
         {id: "vivaldi", label: "Vivaldi", kind: "window", icon: Quickshell.iconPath("vivaldi", true)},
         {id: "games", label: "Pegasus", kind: "window", icon: Quickshell.iconPath("org.pegasus_frontend.Pegasus", true)}
-    ] : []
+    ]
+    readonly property var activePreview: previewCopies.itemAt(state.activeApp === "games" ? 1 : 0)
     property real drawerProgress: state.drawer ? 1 : 0
     Behavior on drawerProgress { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
     onStateChanged: {
         if (frames) { frames.frames = 0; frames.requestFrame() }
-        if (state.browserRunning) nativeHistory.open("vivaldi")
-        if (state.pegasusRunning || state.gameRunning) nativeHistory.open("games")
+        // Do not rebuild the ListView model on every status/IME update: that
+        // destroys an active card DragHandler before it receives touch release.
+        for (const app of apps) {
+            const alive = !!(state.cardLifetimes && state.cardLifetimes[app.id])
+            if (alive && !nativeHistory.opened.includes(app.id)) nativeHistory.open(app.id)
+            else if (!alive && nativeHistory.opened.includes(app.id)) nativeHistory.close(app.id)
+        }
+        if (state.activeApp && state.activeApp !== lastActiveApp) {
+            lastActiveApp = state.activeApp
+            if (nativeHistory.opened.includes(lastActiveApp) && nativeHistory.opened[0] !== lastActiveApp)
+                nativeHistory.open(lastActiveApp)
+        }
         if (state.running && !restoredNavigation) {
             restoredNavigation = true
             if (state.resumeOverview) Qt.callLater(() => home.openSwitcher())
@@ -39,18 +51,24 @@ ShellRoot {
                 }
                 return null
             }
-            if (!["app-vivaldi", "app-games", "closeSettings", "muteButton", "brightnessSlider", "volumeSlider"].includes(name)) return "null"
+            if (!["app-vivaldi", "app-games", "closeSettings", "muteButton", "brightnessSlider", "volumeSlider", "appCard-vivaldi", "appCard-games", "appPreview-vivaldi", "appPreview-games"].includes(name)) return "null"
             const item = find(window.contentItem)
             if (!item || !item.visible || !item.enabled) return "null"
             const point = item.mapToItem(window.contentItem, 0, 0)
             return JSON.stringify({x: point.x, y: point.y, width: item.width, height: item.height})
         }
         function status(): string {
+            const cardWindows = {}
+            for (const app of root.apps)
+                if (root.state.cardSources && root.state.cardSources[app.id]) cardWindows[app.id] = root.state.cardSources[app.id].stableId
             return JSON.stringify({home: !!root.state.home, drawer: !!root.state.drawer,
                 rendered: frames.rendered, width: window.width, height: window.height,
                 transitioning: (home.homeProgress > 0 && home.homeProgress < 1)
                     || (root.drawerProgress > 0 && root.drawerProgress < 1),
                 overview: home.switcherOpen, navigationContact: home.navigationContactActive,
+                previewImages: Object.keys(nativeHistory.previews), capturing: nativeHistory.capturing,
+                registeredCards: Object.keys(root.state.cardLifetimes || {}), eligibleCards: Object.keys(root.state.cardSources || {}), cardWindows: cardWindows,
+                captureReady: !!root.activePreview && root.activePreview.hasContent,
                 presentationProgress: home.homePresentationProgress,
                 navigationInput: {x: home.navigationInputRect.x, y: home.navigationInputRect.y,
                     width: home.navigationInputRect.width, height: home.navigationInputRect.height}})
@@ -59,14 +77,18 @@ ShellRoot {
     function accept(text) {
         try {
             const value = JSON.parse(text)
-            if (value.failed) localError = value.error
-            else { state = value; localError = "" }
-        } catch (_) { localError = "Invalid tablet controller response" }
+            if (value.failed) { localError = value.error; return false }
+            state = value; localError = ""
+            return true
+        } catch (_) { localError = "Invalid tablet controller response"; return false }
     }
-    function command(name, value) {
+    function command(name, value, failure) {
         const process = actionComponent.createObject(root)
+        process.requestName = name
+        process.failureCallback = failure || null
         process.command = [Quickshell.env("TABLET_PROOF_BIN"), name]
-        if (value !== undefined) process.command = process.command.concat(["--value", String(value)])
+        if (value !== undefined) process.command = process.command.concat((name === "dismiss-app" || name === "resume-app")
+            ? ["--target", JSON.stringify(value)] : ["--value", String(value)])
         process.running = true
     }
     Process {
@@ -90,9 +112,24 @@ ShellRoot {
     Component {
         id: actionComponent
         Process {
-            stdout: SplitParser { onRead: text => root.accept(text) }
+            id: actionProcess
+            property string requestName: ""
+            property var failureCallback: null
+            property bool acknowledged: false
+            stdout: SplitParser {
+                onRead: text => {
+                    if (root.accept(text)) {
+                        actionProcess.acknowledged = true
+                        if (actionProcess.requestName === "resume-app" || actionProcess.requestName === "dismiss-app")
+                            home.switcherOpen = false
+                    }
+                }
+            }
             stderr: SplitParser { onRead: text => root.localError = text }
-            onExited: destroy()
+            onExited: {
+                if (!acknowledged && failureCallback) failureCallback()
+                destroy()
+            }
         }
     }
     PanelWindow {
@@ -124,27 +161,59 @@ ShellRoot {
             armed: window.backingWindowVisible && root.state.running
 
         }
+        Repeater {
+            id: previewCopies
+            model: root.apps
+            NativeAppPreview {
+                required property var modelData
+                appId: modelData.id
+                record: root.state.cardSources ? root.state.cardSources[appId] || null : null
+                lifetime: root.state.cardLifetimes ? root.state.cardLifetimes[appId] || null : null
+                history: nativeHistory
+                x: -width * 2
+                width: window.width; height: window.height
+                overview: home.switcherOpen
+                captureEnabled: !!root.state.running && (overview || (!root.state.home && root.state.activeApp === appId))
+                liveCapture: !root.state.home && root.state.activeApp === appId
+            }
+        }
         TabletHome {
             id: home
             anchors.fill: parent
             modeLabel: "TABLET"
             nativePresentation: true
             nativeAppVisible: !root.state.home
+            nativeSourceItem: !root.state.home && root.activePreview && root.activePreview.hasContent ? root.activePreview : null
             nativeAppId: root.state.activeApp || "vivaldi"
             keyboardInset: window.inset
             apps: root.apps
             history: nativeHistory
             settingsExternallyManaged: true
             navigationBlocked: !!root.state.drawer || !!root.state.launching
+            appAvailable: app => !!(root.state.cardSources && root.state.cardSources[app.id])
+            appContext: app => root.state.cardSources ? root.state.cardSources[app.id] || null : null
             appSummary: app => app.id === "games"
                 ? (root.state.gameRunning ? "Game running · kept on unfold"
                     : root.state.pegasusRunning ? "Your tablet game library" : "Open Pegasus in your tablet workspace")
                 : (root.state.browserRunning ? "Your tablet browser · same windows and tabs" : "Open Vivaldi in your tablet workspace")
             onNativeHomeRequested: root.command("home")
             onSettingsRequested: root.command("settings")
-            onAppRequested: (id, label) => root.command(id === "games" ? "games" : "app")
+            onAppRequested: (id, label) => {
+                if (root.state.cardLifetimes && root.state.cardLifetimes[id] && !(root.state.cardSources && root.state.cardSources[id])) {
+                    root.localError = "That window is unavailable here; no replacement was opened."
+                    return
+                }
+                root.command(id === "games" ? "games" : "app")
+            }
             onExitRequested: root.command("close")
-            onWindowCloseRequested: id => root.localError = "Exit in the app or game; tablet navigation never closes your applications."
+            onWindowResumeRequested: (id, context) => {
+                if (!context) { root.localError = "That tablet window is unavailable; no replacement was opened."; return }
+                root.command("resume-app", {app: id, window: context})
+            }
+            onWindowCloseRequested: (id, context, token) => {
+                if (!context) { root.localError = "That tablet window is no longer available."; home.finishWindowDismissal(id, token); return }
+                root.command("dismiss-app", {app: id, window: context}, () => home.finishWindowDismissal(id, token))
+            }
         }
         ColumnLayout {
             visible: !!root.state.home && !root.state.drawer

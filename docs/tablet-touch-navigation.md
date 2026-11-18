@@ -18,8 +18,9 @@ folding. The normal desktop and existing app windows must remain intact.
   visual/input cover after a bounded timeout. Requesting Home while already Home
   must not block the next app tap.
 
-The real native browser is not a captured texture: this is a progressive Home
-reveal, not an iPadOS-style live shrinking browser card. No claim of iPadOS
+The interactive app remains a real native window. The switcher now uses scoped
+window textures for the gesture card and retained previews; see
+[the native switcher contract](tablet-native-switcher.md). No claim of iPadOS
 feature or physical performance equivalence follows from these tests.
 
 ## Layers of evidence
@@ -27,7 +28,9 @@ feature or physical performance equivalence follows from these tests.
 `tests/tablet-home-preview.nix` runs Qt component/layout/input tests, including
 slow continuous touch, hold, short/downward/cancelled gestures, edge contact in
 landscape/portrait/above IME, delayed backend presentation, failure timeout and
-Home-on-Home immediately followed by app selection.
+Home-on-Home immediately followed by app selection. Switcher regressions also
+cover asynchronous frame retention, IME/card separation, stale lifetime changes
+during press/drag/capture, and waiting for authoritative resume acknowledgement.
 
 `tests/tablet-touch.nix` runs the native workspace on a private Lua Hyprland
 inside a hidden Labwc session. Example from a committed checkout:
@@ -70,7 +73,9 @@ brightness, physical input or user-manager environment is changed.
 | --- | --- |
 | Home/app and fullscreen media | Real Vivaldi window; test page and native/client fullscreen assertions |
 | Swipe up / slow swipe / actual edge | Real `wl_touch`; Home visual must not reverse while awaiting backend |
-| Swipe-and-hold, switcher, resume | Real touch hold and touch selection of retained browser card |
+| Swipe-and-hold, switcher, resume | Real touch hold, actual preview pixels and exact identity-bearing card selection |
+| Swipe card to close | Real touch; browser beforeunload cancellation/retry, normal browser/game/library closure; other windows survive |
+| Lifetime replacement/ineligibility | Game exits mid-drag without closing its library; cached ineligible card stays, stale close/resume rejected, no replacement launched |
 | Short/downward cancellation | Real touch; must remain in app; component cancellation tests also retained |
 | Keyboard and Home above IME | Real Squeekboard, touch on `q`, text-input delivery, touch Home/keyboard dismissal |
 | Portrait navigation | Fake sensor drives real rotation; touch only after rotation cover is released |
