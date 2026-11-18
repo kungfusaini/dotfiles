@@ -49,6 +49,12 @@ nix build --impure --no-link --print-build-logs --expr \
 
 The smoke test verifies both CLI versions, help, PipeWire/audio/software-H.264
 plugins, synthetic encoding to a discard sink, and an idle daemon's private Unix
-socket status and shutdown. The daemon is test-owned, unconnected and sandboxed;
+socket status and shutdown. Before any external GStreamer tool can prime a
+plugin registry, it also runs a linked C pipeline under a copy of the installed
+sender wrapper (only its final executable is replaced), with an empty inherited
+environment and fresh registry. This catches missing core plugins such as
+`queue`: GStreamer's Nix default output is `bin`, whereas its core plugins live
+in its `lib` output. The original broken package fails this regression with
+`no element "queue"`, while the corrected package reaches end-of-stream. The daemon is test-owned, unconnected and sandboxed;
 it is not a deployed user service. These checks do **not** establish LG pairing,
 real capture, audio, firewall reachability or successful streaming.

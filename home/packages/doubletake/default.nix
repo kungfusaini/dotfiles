@@ -6,7 +6,8 @@ let
     gstreamer gst-plugins-base gst-plugins-good gst-plugins-bad
     gst-plugins-ugly gst-libav pipewire
   ];
-  pluginPath = lib.makeSearchPath "lib/gstreamer-1.0" plugins;
+  # GStreamer's default output is `bin`; core elements live in its `lib` output.
+  pluginPath = lib.makeSearchPathOutput "lib" "lib/gstreamer-1.0" plugins;
 in
 buildGoModule rec {
   pname = "doubletake";

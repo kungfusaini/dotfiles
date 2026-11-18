@@ -1,9 +1,7 @@
-{ pkgs }:
-let
-  doubletake = pkgs.callPackage ../home/packages/doubletake { };
-in
+{ pkgs, doubletake ? pkgs.callPackage ../home/packages/doubletake { } }:
 pkgs.runCommand "doubletake-smoke" {
-  nativeBuildInputs = [ pkgs.gst_all_1.gstreamer pkgs.python3 ];
+  nativeBuildInputs = [ pkgs.gst_all_1.gstreamer pkgs.python3 pkgs.stdenv.cc pkgs.pkg-config ];
+  buildInputs = [ pkgs.gst_all_1.gstreamer ];
   GST_PLUGIN_SYSTEM_PATH_1_0 = doubletake.pluginPath;
   GST_PLUGIN_PATH_1_0 = doubletake.pluginPath;
 } ''
@@ -18,7 +16,15 @@ pkgs.runCommand "doubletake-smoke" {
   grep -F -- '-no-audio' help.txt
   grep -F -- '-test' help.txt
 
-  for element in pipewiresrc pulsesrc x264enc h264parse rtph264pay; do
+  # Run before gst-inspect/gst-launch can populate a registry with extra paths.
+  # Reuse the installed sender wrapper verbatim, changing only its final binary.
+  cc ${./doubletake-plugin-probe.c} -o plugin-probe $(pkg-config --cflags --libs gstreamer-1.0)
+  substitute ${doubletake}/bin/doubletake probe-wrapper \
+    --replace-fail '${doubletake}/bin/.doubletake-wrapped' "$PWD/plugin-probe"
+  chmod +x probe-wrapper
+  env -i HOME="$HOME" GST_REGISTRY_1_0="$TMPDIR/linked-registry.bin" ./probe-wrapper
+
+  for element in queue pipewiresrc pulsesrc x264enc h264parse rtph264pay; do
     gst-inspect-1.0 "$element" > /dev/null
   done
   # Synthetic patterns only: no desktop/audio source and no network sinks.
