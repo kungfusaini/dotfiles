@@ -22,6 +22,7 @@ Item {
     readonly property bool contactActive: gesture.pressed || gesture.dragging
     // Single geometry source for the layer-shell input mask and visible handle.
     property real navigationWidth: width
+    property bool edgeAnchored: false
     readonly property rect navigationInputRect: Qt.rect(gesture.x, gesture.y, gesture.width, gesture.height)
     readonly property real cardWidth: Math.min(width * .76, 760)
     readonly property real cardHeight: height * .70
@@ -196,7 +197,8 @@ Item {
         id: gesture
         width: nav.navigationWidth
         z: 5
-        anchors { bottom: parent.bottom; bottomMargin: 4 + nav.keyboardInset; horizontalCenter: parent.horizontalCenter }
+        edgeAnchored: nav.edgeAnchored
+        anchors { bottom: parent.bottom; bottomMargin: (nav.edgeAnchored ? 0 : 4) + nav.keyboardInset; horizontalCenter: parent.horizontalCenter }
         blocked: nav.blocked
         onBegan: nav.gestureBegan()
         onHomeRequested: nav.goHome()

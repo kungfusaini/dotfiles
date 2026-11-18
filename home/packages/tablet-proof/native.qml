@@ -29,12 +29,29 @@ ShellRoot {
     AppHistory { id: nativeHistory; apps: root.apps }
     IpcHandler {
         target: "tabletNativeScene"
+        // Read-only geometry for test input; never invokes UI actions directly.
+        function targetRect(name: string): string {
+            function find(item) {
+                if (item.objectName === name && item.visible && item.enabled) return item
+                for (const child of item.children || []) {
+                    const result = find(child)
+                    if (result) return result
+                }
+                return null
+            }
+            if (!["app-vivaldi", "app-games", "closeSettings", "muteButton", "brightnessSlider", "volumeSlider"].includes(name)) return "null"
+            const item = find(window.contentItem)
+            if (!item || !item.visible || !item.enabled) return "null"
+            const point = item.mapToItem(window.contentItem, 0, 0)
+            return JSON.stringify({x: point.x, y: point.y, width: item.width, height: item.height})
+        }
         function status(): string {
             return JSON.stringify({home: !!root.state.home, drawer: !!root.state.drawer,
                 rendered: frames.rendered, width: window.width, height: window.height,
                 transitioning: (home.homeProgress > 0 && home.homeProgress < 1)
                     || (root.drawerProgress > 0 && root.drawerProgress < 1),
                 overview: home.switcherOpen, navigationContact: home.navigationContactActive,
+                presentationProgress: home.homePresentationProgress,
                 navigationInput: {x: home.navigationInputRect.x, y: home.navigationInputRect.y,
                     width: home.navigationInputRect.width, height: home.navigationInputRect.height}})
         }
@@ -89,7 +106,7 @@ ShellRoot {
         WlrLayershell.namespace: "tablet-rotation-fade"
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         readonly property bool expanded: !!root.state.home || root.drawerProgress > 0
-            || home.homeProgress > 0 || home.navigationContactActive || home.navigationVisible
+            || home.homePresentationProgress > 0 || home.navigationContactActive || home.navigationVisible
         readonly property real inset: Math.max(0, root.state.keyboardInset || 0)
         mask: Region {
             width: window.expanded ? window.width : 0

@@ -43,15 +43,28 @@ TestCase {
         g.begin(); g.move(130); g.finish(g.startedAt + 160)
         compare(home.count,1); compare(overview.count,0)
         g.begin(); g.move(130); g.finish(g.startedAt + 600)
-        compare(home.count,1); compare(overview.count,1)
+        compare(home.count,2); compare(overview.count,0)
         g.begin(); g.move(130); g.pause(g.startedAt + 600); g.finish(g.startedAt + 700)
-        compare(overview.count,2) // Hold and release must not act twice.
+        compare(overview.count,1) // Hold and release must not act twice.
         g.begin(); g.move(20); g.finish(g.startedAt + 160)
-        compare(home.count,1)
+        compare(home.count,2)
         g.begin(); g.move(130); g.cancel(); g.finish(g.startedAt + 600)
-        compare(overview.count,2)
+        compare(overview.count,1)
         g.begin(); g.move(130); g.blocked=true; g.finish(g.startedAt + 160)
-        compare(home.count,1)
+        compare(home.count,2)
+    }
+    function test_continuous_slow_touch_is_home_not_hold() {
+        const deck = createTemporaryObject(deckComponent, suite)
+        const nav = deck.navigator, handle = findChild(nav, "homeHandle")
+        const home = spy(nav, "homeRequested"), sequence = touchEvent(handle)
+        sequence.press(0, handle, 90, 26).commit()
+        for (let i = 1; i <= 12; ++i) {
+            sequence.move(0, handle, 90, 26 - i * 12).commit()
+            wait(40) // Continuous ~480 ms drag: no pause at the endpoint.
+        }
+        sequence.release(0, handle, 90, -118).commit()
+        tryCompare(home, "count", 1)
+        compare(nav.overview, false)
     }
     function test_pointer_flick_and_hold_use_the_same_handle() {
         const deck = createTemporaryObject(deckComponent,suite)

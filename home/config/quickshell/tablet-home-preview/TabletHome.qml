@@ -26,6 +26,22 @@ Control {
     property bool settingsOpen: false
     property real settingsProgress: settingsOpen ? 1 : 0
     property real homeProgress: homeVisible ? 1 : 0
+    // Keep the touch-owned visual through the asynchronous native Home reply.
+    // Without this, releasing resets navigator.progress before homeProgress
+    // starts, briefly exposing the app again between two Home fades.
+    property bool nativeHomePending: false
+    property real homePresentationProgress: nativePresentation
+        ? (nativeHomePending ? 1 : Math.max(homeProgress, navigator.progress)) : homeProgress
+    Behavior on homePresentationProgress {
+        enabled: root.nativePresentation && !navigator.dragging
+        NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+    }
+    onHomeProgressChanged: { if (homeProgress === 1) nativeHomePending = false }
+    Timer {
+        interval: 1200
+        running: root.nativeHomePending
+        onTriggered: root.nativeHomePending = false // Failed backend must not leave an input cover.
+    }
     property string displayedApp: ""
     property var history: localHistory
     property alias switcherOpen: navigator.overview
@@ -84,12 +100,12 @@ Control {
 
     TabletWallpaper {
         anchors.fill: parent
-        opacity: root.nativePresentation ? root.homeProgress : 1
+        opacity: root.nativePresentation ? root.homePresentationProgress : 1
         visible: opacity > 0
     }
 
     RowLayout {
-        opacity: (1 - root.settingsProgress) * (root.nativePresentation ? root.homeProgress : 1)
+        opacity: (1 - root.settingsProgress) * (root.nativePresentation ? root.homePresentationProgress : 1)
         anchors { left: parent.left; right: parent.right; top: parent.top; margins: 24 }
         Label { text: root.modeLabel; color: "#a9c9ca"; font.pixelSize: 12; font.letterSpacing: 2 }
         Item { Layout.fillWidth: true }
@@ -104,8 +120,8 @@ Control {
     ColumnLayout {
         objectName: "homeContent"
         // The non-interactive Home scene is also the app-switcher backdrop.
-        opacity: (navigator.navigating ? 1 : root.homeProgress) * (1 - 0.9 * root.settingsProgress)
-        scale: 0.97 + 0.03 * root.homeProgress - 0.02 * root.settingsProgress
+        opacity: (root.nativePresentation ? root.homePresentationProgress : (navigator.navigating ? 1 : root.homeProgress)) * (1 - 0.9 * root.settingsProgress)
+        scale: 0.97 + 0.03 * (root.nativePresentation ? root.homePresentationProgress : root.homeProgress) - 0.02 * root.settingsProgress
         visible: opacity > 0
         enabled: root.homeVisible && root.settingsProgress === 0
         anchors { top: parent.top; topMargin: 112; bottom: parent.bottom; bottomMargin: 72; left: parent.left; right: parent.right; margins: 24 }
@@ -229,10 +245,16 @@ Control {
         activeAppId: root.nativePresentation ? (root.nativeAppVisible ? root.nativeAppId : "") : (root.apps.find(app => app.label === root.activeApp) || {}).id || ""
         keyboardInset: root.keyboardInset
         navigationWidth: root.nativePresentation ? Math.min(180, navigator.width) : navigator.width
-        blocked: root.navigationBlocked
+        edgeAnchored: root.nativePresentation
+        blocked: root.navigationBlocked || root.nativeHomePending
         urgentInput: root.navigationUrgent
         summary: root.appSummary
-        onHomeRequested: { if (root.nativePresentation) root.nativeHomeRequested(); else root.showHome() }
+        onHomeRequested: {
+            if (root.nativePresentation) {
+                if (!root.homeVisible) root.nativeHomePending = true
+                root.nativeHomeRequested()
+            } else root.showHome()
+        }
         onAppRequested: (id, label) => root.appRequested(id, label)
         onCloseRequested: id => {
             const app = root.apps.find(app => app.id === id)

@@ -8,7 +8,7 @@ TestCase {
     when: windowShown
     visible: true
     width: 1100
-    height: 960
+    height: 1160
     Component {
         id: surfaceComponent
         Tablet.TabletHome {
@@ -47,7 +47,7 @@ TestCase {
         const homeSpy = createTemporaryObject(signalSpyComponent, testCase, {target: surface, signalName: "nativeHomeRequested"})
         surface.keyboardInset = 240
         const handle = findChild(surface, "homeHandle")
-        compare(handle.mapToItem(surface, 0, handle.height).y, surface.height - 244)
+        compare(handle.mapToItem(surface, 0, handle.height).y, surface.height - 240)
         const sequence = touchEvent(handle)
         sequence.press(0, handle, 70, 24).commit()
         tryCompare(surface, "navigationContactActive", true)
@@ -65,6 +65,77 @@ TestCase {
         surface.openSwitcher()
         compare(surface.switcherOpen, true)
         compare(surface.history.cards()[0].id, "browser")
+    }
+    function test_native_home_handoff_does_not_flash_app_while_backend_is_delayed() {
+        const surface = makeSurface()
+        surface.nativePresentation = true
+        surface.nativeAppVisible = true
+        tryCompare(surface, "homePresentationProgress", 0)
+        const handle = findChild(surface, "homeHandle"), sequence = touchEvent(handle)
+        sequence.press(0, handle, 90, 26).commit()
+        sequence.move(0, handle, 90, 4).commit(); wait(20)
+        sequence.move(0, handle, 90, -110).commit(); wait(20)
+        verify(surface.homePresentationProgress > .2)
+        const before = surface.homePresentationProgress
+        sequence.release(0, handle, 90, -110).commit()
+        verify(surface.nativeHomePending)
+        verify(surface.homePresentationProgress >= before - .01, "Release must not expose the app again")
+        wait(250) // Backend deliberately hasn't acknowledged Home yet.
+        compare(surface.homePresentationProgress, 1)
+        verify(surface.nativeAppVisible)
+        surface.nativeAppVisible = false
+        tryCompare(surface, "homeProgress", 1)
+        compare(surface.nativeHomePending, false)
+        compare(surface.homePresentationProgress, 1)
+    }
+    function test_native_home_on_home_does_not_block_next_app_tap() {
+        const surface = makeSurface()
+        surface.nativePresentation = true
+        surface.nativeAppVisible = false
+        tryCompare(surface, "homeProgress", 1)
+        const launch = createTemporaryObject(signalSpyComponent, testCase, {target: surface, signalName: "appRequested"})
+        surface.requestHome()
+        compare(surface.nativeHomePending, false)
+        surface.openApp("browser", "Browser")
+        tryCompare(launch, "count", 1)
+    }
+    function test_native_failed_home_request_releases_visual_and_input_cover() {
+        const surface = makeSurface()
+        surface.nativePresentation = true
+        surface.nativeAppVisible = true
+        tryCompare(surface, "homePresentationProgress", 0)
+        surface.requestHome()
+        verify(surface.nativeHomePending)
+        tryCompare(surface, "nativeHomePending", false, 1800)
+        tryCompare(surface, "homePresentationProgress", 0)
+        verify(!surface.navigationVisible)
+    }
+    function test_native_touch_starts_at_actual_bottom_edge_data() {
+        return [
+            {tag: "landscape", width: 1100, height: 760, inset: 0},
+            {tag: "portrait", width: 760, height: 1100, inset: 0},
+            {tag: "above-keyboard", width: 1100, height: 760, inset: 240}
+        ]
+    }
+    function test_native_touch_starts_at_actual_bottom_edge(data) {
+        const surface = makeSurface(data.width, data.height)
+        surface.nativePresentation = true
+        surface.nativeAppVisible = true
+        surface.keyboardInset = data.inset
+        tryCompare(surface, "homeProgress", 0)
+        const home = createTemporaryObject(signalSpyComponent, testCase, {target: surface, signalName: "nativeHomeRequested"})
+        const handle = findChild(surface, "homeHandle")
+        const bottom = surface.height - data.inset
+        compare(surface.navigationInputRect.y + surface.navigationInputRect.height, bottom)
+        const sequence = touchEvent(surface), x = surface.width / 2
+        sequence.press(0, surface, x, bottom - 1).commit()
+        tryCompare(surface, "navigationContactActive", true)
+        for (let i = 1; i <= 8; ++i) {
+            sequence.move(0, surface, x, bottom - 1 - i * 16).commit()
+            wait(25)
+        }
+        sequence.release(0, surface, x, bottom - 129).commit()
+        tryCompare(home, "count", 1)
     }
     function test_native_settings_delegates_without_changing_simulated_values() {
         const surface = makeSurface()

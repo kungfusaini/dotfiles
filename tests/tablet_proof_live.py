@@ -67,10 +67,34 @@ def inner():
     def start(command,name):
         p=subprocess.Popen(command,stdout=(root/(name+'.log')).open('w'),stderr=subprocess.STDOUT,start_new_session=True)
         processes.append(p);return p
-    def ctl(*args):return subprocess.check_output([os.environ['TABLET_TEST_HYPRCTL'],*args],text=True,timeout=5).strip()
+    def ctl(*args):
+        if os.environ.get('TABLET_TEST_LUA') == '1':
+            from hyprland_control import call, dispatch_args, rule_args
+            if args[0] == 'dispatch':
+                args = dispatch_args(args[1], args[2] if len(args) > 2 else '')
+            elif args[:2] == ('keyword', 'monitor'):
+                output, spec = args[2].split(',', 1)
+                monitor = {'output': output}
+                if spec == 'disable': monitor['disabled'] = True
+                else:
+                    mode, position, scale = spec.split(',')
+                    monitor.update(mode=mode, position=position, scale=float(scale))
+                args = ['eval', call('monitor', monitor) + ';hl.exec_scheduled_prop_refresh_immediately()']
+            elif args[:2] == ('keyword', 'windowrule'):
+                assert args[2] == 'match:title ^Tablet fixture game$, float on'
+                args = rule_args('tablet-fixture-game', {'match': {'title': '^Tablet fixture game$'}, 'float': True})
+        result = subprocess.run([os.environ['TABLET_TEST_HYPRCTL'],*args],capture_output=True,text=True,timeout=5)
+        if result.returncode:
+            raise RuntimeError(f'Private compositor request failed: {args!r}: {result.stdout} {result.stderr}')
+        return result.stdout.strip()
     def clients():return json.loads(ctl('clients','-j'))
     def meta(client):return {k:client.get(k) for k in ('address','pid','workspace','monitor','floating','at','size','fullscreen','fullscreenClient','tags')}
+    def mark(name, **details):
+        if os.environ.get('TABLET_TEST_LUA') == '1':
+            with (root/'interaction-timeline.jsonl').open('a') as output:
+                output.write(json.dumps(dict(time=time.monotonic(), name=name, **details))+'\n')
     def proof(command,*args):
+        if command not in ('status',): mark('backend:'+command)
         result=subprocess.run([os.environ['TABLET_PROOF_BIN'],command,*args],capture_output=True,text=True,timeout=30)
         if result.returncode:raise RuntimeError(result.stderr)
         return json.loads(result.stdout) if result.stdout.strip() else {}
@@ -157,6 +181,34 @@ def inner():
         move(x,y);pointer_command('down')
         for i in range(1,9):move(x,round(y+(end_y-y)*i/8));time.sleep(.035)
         pointer_command('up')
+    def touch_point(x, y, action='tap'):
+        geometry=scene()
+        pointer_command(f"move {x} {y} {geometry['width']} {geometry['height']}")
+        pointer_command('down');time.sleep(.06);pointer_command('up')
+        mark('touch:'+action, x=x, y=y)
+    def touch_target(name):
+        rect=json.loads(subprocess.check_output(['quickshell','ipc','--path',os.environ['TABLET_TEST_PROOF_QML'],
+            'call','tabletNativeScene','targetRect',name],text=True,timeout=5))
+        assert rect, ('missing visible touch target', name)
+        touch_point(rect['x']+rect['width']/2, rect['y']+rect['height']/2, name)
+    def edge_home(name, inset=0):
+        geometry=scene();w,h=geometry['width'],geometry['height'];x=w/2;y=h-inset-1
+        mark(name+':begin')
+        pointer_command(f'move {x} {y} {w} {h}');pointer_command('down')
+        for i in range(1,13):
+            pointer_command(f'move {x} {y-i*12} {w} {h}');time.sleep(.035)
+        pointer_command('up');released=time.monotonic()
+        previous=scene()['presentationProgress']
+        assert previous > .1, 'Home visual disappeared on touch release'
+        def settled_without_flash():
+            nonlocal previous
+            state=scene();progress=state['presentationProgress']
+            assert progress >= previous-.02, 'Home faded back to app while awaiting backend'
+            previous=progress
+            return state['home'] and not state['transitioning'] and state['rendered']
+        until(settled_without_flash, name+' settles')
+        mark(name+':settled', releaseToSettledMs=round((time.monotonic()-released)*1000))
+        assert not scene()['overview'], 'continuous edge swipe must not become a hold'
     def keys(*args):
         assert str(ipc).startswith(str(runtime)+'/hypr/')
         subprocess.run(['wtype',*args],check=True,timeout=10)
@@ -213,6 +265,9 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             path.write_text('#!/bin/sh\nprintf "%s\\n" "$*" >> "'+str(root/name)+'.calls"\n'+
                             ('case "$1" in get-volume) echo "Volume: 0.40";; esac\n' if name=='wpctl' else
                              'case "$2" in max) echo 100;; get) echo 60;; esac\n'))
+            if os.environ.get('TABLET_TEST_CONTROLS'):
+                import shlex
+                path.write_text('#!/bin/sh\nexec '+shlex.join([sys.executable, os.environ['TABLET_TEST_CONTROLS'], name])+' "$@"\n')
             path.chmod(0o700)
         os.environ['TABLET_TEST_FAKE_BIN']=str(fake)
         (root/'labwc').mkdir();start(['labwc','-C',str(root/'labwc')],'labwc')
@@ -226,6 +281,17 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             directory = Path(os.environ['XDG_CONFIG_HOME'])/'hypr'
             directory.mkdir(parents=True)
             (directory/'hyprland.conf').symlink_to(config)
+        if os.environ.get('TABLET_TEST_LUA') == '1':
+            config = root/'hyprland.lua'
+            config.write_text('''hl.monitor({output="",mode="960x640@60",position="auto",scale=1})
+hl.monitor({output="eDP-1",mode="960x640@60",position="0x0",scale=1})
+hl.config({misc={disable_hyprland_logo=true,disable_splash_rendering=true},xwayland={enabled=false}})
+hl.layer_rule({match={namespace="^tablet-native-proof$"},no_anim=true})
+hl.layer_rule({match={namespace="^tablet-native$"},no_anim=true})
+hl.layer_rule({match={namespace="^tablet-rotation-fade$"},no_anim=true})
+desktop_policy={no_animation={["tablet-rotation-fade"]=true}}
+''')
+            (directory/'hyprland.lua').symlink_to(config)
         start([os.environ['TABLET_TEST_HYPRLAND'],'-c',str(config)],'hyprland')
         ipc=until(lambda:next((runtime/'hypr').glob('*/.socket.sock'),None),'nested IPC')
         os.environ['HYPRLAND_INSTANCE_SIGNATURE']=ipc.parent.name
@@ -233,7 +299,14 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
         ctl('output','create','headless','eDP-1');ctl('keyword','monitor','eDP-1,960x640@60,0x0,1')
         for monitor in json.loads(ctl('monitors','-j')):
             if monitor['name']!='eDP-1':ctl('keyword','monitor',monitor['name']+',disable')
+        until(lambda: any(m['name']=='eDP-1' and m['width']==960 and m['height']==640
+                          for m in json.loads(ctl('monitors','-j'))), 'private output is 960x640')
         ctl('dismissnotify','-1');ctl('dispatch','focusmonitor','eDP-1');ctl('dispatch','workspace','name:proof-fixture')
+        if os.environ.get('TABLET_TEST_LUA') == '1':
+            env_probe = root/'exec-wayland.txt'
+            ctl('dispatch', 'exec', 'printf "%s" "$WAYLAND_DISPLAY" > ' + str(env_probe))
+            until(env_probe.exists, 'private native exec probe')
+            assert env_probe.read_text() == os.environ['WAYLAND_DISPLAY'], ('native exec display mismatch', env_probe.read_text(), os.environ['WAYLAND_DISPLAY'])
         pointer=subprocess.Popen([os.environ['TABLET_TEST_POINTER']],stdin=subprocess.PIPE,stdout=subprocess.PIPE,text=True,start_new_session=True)
         processes.append(pointer)
         assert select.select([pointer.stdout],[],[],5)[0] and pointer.stdout.readline().strip()=='READY'
@@ -358,15 +431,25 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             until(lambda:scene()['overview'],'original app switcher gesture over media')
             assert target()['fullscreenClient']==2
             snapshot('original-design-switcher')
-            click(480,320)
+            if os.environ.get('TABLET_TEST_LUA') == '1': touch_point(480,320,'switcher-resume')
+            else: click(480,320)
             until(lambda:not scene()['overview'],'resume existing browser from switcher')
         x,y=handle_center('visible-handle-home') if native else (480,634)
+        if os.environ.get('TABLET_TEST_LUA') == '1':
+            for label, end in [('short-swipe-cancel',y-24),('downward-swipe-cancel',min(639,y+24))]:
+                mark(label+':begin');swipe(x,y,end);time.sleep(.25)
+                assert not scene()['home'] and not scene()['overview'], label+' unexpectedly navigated'
+                mark(label+':settled')
         swipe(x,y,y-130)
         until(lambda:status()['home'],'global Home gesture over video')
         snapshot('home-over-media')
         assert target()['fullscreenClient']==2
         proof('app');assert target()['fullscreenClient']==2
         until(lambda:not scene()['home'] and not scene().get('transitioning') and scene()['rendered'],'browser resume rendered/input mask committed')
+        if os.environ.get('TABLET_TEST_LUA') == '1':
+            edge_home('landscape-bezel-swipe')
+            touch_target('app-vivaldi')
+            until(lambda:not scene()['home'] and not scene()['transitioning'],'touch tile resumes media app')
         keys('-k','Escape')
         until(lambda:'/media-false' in requests,'leave media fullscreen')
         until(lambda:target()['fullscreenClient']==1,'client returns to native maximized state')
@@ -405,7 +488,12 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
                 until(lambda:status()['keyboardInset']>0,'refocus text after IME passthrough')
             inset=status()['keyboardInset']
             x,y=handle_center('single-indicator-above-ime',inset)
-            swipe(x,y,y-110)
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                geometry=scene()
+                touch_point(geometry['width']/20, geometry['height']-inset+inset/8, 'osk-q')
+                until(lambda:any(r.startswith('/typed-touch-proofq') for r in requests),'physical-protocol touch types OSK q')
+                edge_home('ime-edge-swipe', inset)
+            else: swipe(x,y,y-110)
             until(lambda:status()['home'],'original Home gesture above open IME')
             until(lambda:status()['keyboardInset']==0,'Home hides IME without losing navigation')
             proof('app')
@@ -500,10 +588,22 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             # Exercise the actual shared rotation controller on a private fake
             # sensor, with no system bus or physical input devices available.
             proof('start','--address',address)
+            def presentation_pids():
+                return {layer['pid'] for group in json.loads(ctl('layers','-j')).values()
+                        for level in group['levels'].values() for layer in level
+                        if layer['namespace']=='tablet-rotation-fade'}
+            owned_presentation=presentation_pids()
             orientation_file.write_text('left-up')
             until(lambda:next(m for m in json.loads(ctl('monitors','-j')) if m['name']=='eDP-1')['transform']==1,
                   'native session rotates in original app workspace')
             snapshot('original-design-portrait')
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                until(lambda:presentation_pids() <= owned_presentation, 'rotation cover released before touch')
+                until(lambda:scene()['height']>scene()['width'] and not scene()['transitioning'], 'portrait UI geometry')
+                inset=status()['keyboardInset']
+                edge_home('portrait-ime-edge-swipe' if inset else 'portrait-bezel-swipe', inset)
+                touch_target('app-vivaldi')
+                until(lambda:not scene()['home'] and not scene()['transitioning'], 'portrait touch app resume')
             proof('close')
             until(lambda:next(m for m in json.loads(ctl('monitors','-j')) if m['name']=='eDP-1')['transform']==0,
                   'native exit restores orientation')
@@ -549,7 +649,21 @@ document.onfullscreenchange=()=>fetch('/media-'+!!document.fullscreenElement);re
             proof('start')
             assert status()['home'] and not status()['browserRunning']
             assert status()['browserAvailable']
-            proof('settings');proof('dismiss');proof('app')
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                swipe(930,8,150)
+                until(lambda:scene()['drawer'] and not scene()['transitioning'], 'touch opens settings from Home')
+                for target_name, value_name in [('volumeSlider','volume'),('brightnessSlider','brightness')]:
+                    old_value=status()[value_name]
+                    touch_target(target_name)
+                    until(lambda:status()[value_name]!=old_value, 'touch changes '+value_name)
+                old_mute=status()['muted'];touch_target('muteButton')
+                until(lambda:status()['muted']!=old_mute, 'touch toggles mute')
+                touch_target('muteButton')
+                until(lambda:status()['muted']==old_mute, 'touch restores mute')
+                touch_target('closeSettings')
+                until(lambda:not scene()['drawer'] and not scene()['transitioning'], 'touch closes settings')
+                touch_target('app-vivaldi')
+            else: proof('settings');proof('dismiss');proof('app')
             until(lambda:status()['browserRunning'] and not status()['home'],'new tablet-only browser launch from Home')
             new_source = status()['source']['address']
             assert new_source not in before_home
@@ -600,7 +714,12 @@ FocusScope {
 }
 ''')
             (pegasus_config/'settings.txt').write_text('general.fullscreen: true\nproviders.steam.enabled: false\ngeneral.theme: themes/tablet-fixture/\n')
-            proof('start'); proof('games')
+            proof('start')
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                if not status()['home']: edge_home('browser-to-game-launcher')
+                until(lambda:scene()['home'] and not scene()['transitioning'], 'Home ready for Pegasus touch launch')
+                touch_target('app-games')
+            else: proof('games')
             until(lambda:status()['pegasusRunning'] and not status()['home'], 'real tablet-local Pegasus launch')
             time.sleep(1)
             snapshot('pegasus-library')
@@ -621,7 +740,13 @@ FocusScope {
             game = next(c for c in clients() if c.get('title')=='Tablet fixture game')
             assert game['workspace']['name']=='tablet-trial' and game['floating']
             until(lambda:next(c for c in clients() if c['address']==game['address'])['size']==[960,640], 'floating game gets true screen-filling presentation')
-            assert snapshot('visible-floating-game').getpixel((40,40))==(21,185,77)
+            until(lambda: snapshot('visible-floating-game').getpixel((40,40))==(21,185,77),
+                  'game buffer fully rendered after compositor geometry settled')
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                edge_home('game-to-home')
+                touch_target('app-games')
+                until(lambda:not scene()['home'] and not scene()['transitioning'], 'touch resumes retained game')
+                assert json.loads(ctl('activewindow','-j'))['address']==game['address']
             proof('close')
             restored=next(c for c in clients() if c['address']==game['address'])
             assert restored['floating'] and restored['fullscreen']==0 and restored['fullscreenClient']==0, 'unfold did not release game presentation'
@@ -647,9 +772,18 @@ FocusScope {
             retry=next(c for c in clients() if c.get('title')=='Tablet fixture game')
             ctl('dispatch','closewindow','address:'+retry['address'])
             until(lambda:status()['pegasusRunning'] and not status()['gameRunning'], 'retry returns to retained Pegasus')
-            proof('app')
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                edge_home('library-to-home')
+                touch_target('app-vivaldi')
+                until(lambda:status()['activeApp']=='vivaldi' and not status()['home'], 'touch switches library to browser')
+            else: proof('app')
             assert status()['activeApp']=='vivaldi' and status()['browserRunning']
-            proof('games')
+            if os.environ.get('TABLET_TEST_LUA') == '1':
+                until(lambda:not scene()['transitioning'], 'browser view settles before switching back')
+                edge_home('browser-to-home')
+                touch_target('app-games')
+                until(lambda:status()['pegasusRunning'] and not status()['home'], 'touch switches browser to library')
+            else: proof('games')
             assert status()['pegasusRunning'] and not status()['home']
             proof('close')
             assert json.loads(ctl('activewindow','-j'))['address']==laptop_window['address']

@@ -4,7 +4,8 @@ import QtQuick.Controls
 Button {
     id: gesture
     objectName: "homeHandle"
-    width: 180; height: 52
+    property bool edgeAnchored: false
+    width: 180; height: edgeAnchored ? 56 : 52
     focusPolicy: Qt.NoFocus
     property bool blocked: false
     property real pull: 0
@@ -19,7 +20,7 @@ Button {
     signal blockedRequested()
     Accessible.name: "Swipe up for Home; swipe up and pause for open apps"
     background: Item {
-        Rectangle { anchors.centerIn: parent; width: 100; height: 5; radius: 3; color: "#d7e7e2" }
+        Rectangle { anchors.centerIn: parent; anchors.verticalCenterOffset: gesture.edgeAnchored ? -2 : 0; width: 100; height: 5; radius: 3; color: "#d7e7e2" }
     }
     onBlockedChanged: { if (blocked) cancel() }
     onPressed: { if (!drag.active) { claimed = false; cancelled = false } }
@@ -44,8 +45,9 @@ Button {
     function finish(now) {
         if (!cancelled && !claimed && pull >= 60) {
             claimed = true
-            if (now - startedAt < 300) homeRequested()
-            else switcherRequested()
+            // Duration is not a hold: a deliberate, continuous touch swipe
+            // can take longer than 300 ms. Only pause() selects the switcher.
+            homeRequested()
         }
         pull = 0
     }
