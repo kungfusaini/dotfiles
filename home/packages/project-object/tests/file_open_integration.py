@@ -152,7 +152,11 @@ def run(args):
                 wait_for(lambda: focus()[1] == chat["address"])
             old = {c["address"] for c in clients()}
             before = focus()
-            result = subprocess.run([args.kitty, "@", "--to", "unix:" + str(remote), "action", "open_url", path.as_uri()], env=env, capture_output=True, text=True)
+            # Cover actual Pi href forms, not only hand-built file:// URIs.
+            target = path.as_uri() if index % 2 == 0 else path.as_uri().removeprefix("file://")
+            if index in (5, 11):
+                target = str(path)  # raw absolute image href, including Unicode/spaces
+            result = subprocess.run([args.kitty, "@", "--to", "unix:" + str(remote), "action", "open_url", target], env=env, capture_output=True, text=True)
             assert result.returncode == 0, result.stderr
             new = wait_for(lambda: [c for c in clients() if c["address"] not in old], timeout=30)
             assert len(new) == 1, new
@@ -189,7 +193,8 @@ def run(args):
             wait_for(lambda: any(e.startswith("openwindow>>" + address + ",") for e in events))
             assert any(e.startswith("openwindow>>" + address + ",Clicked chat,") for e in events), events
             assert "activewindowv2>>" + address not in events, "transient focus theft"
-            print(f"case {index}: configured Kitty file action, correct workspace, focus unchanged; {path.name}", flush=True)
+            form = "file URI" if target.startswith("file:") else "absolute href"
+            print(f"case {index}: {form}, configured Kitty file action, correct workspace, focus unchanged; {path.name}", flush=True)
         assert not ctl("configerrors").strip(), ctl("configerrors")
         print("PASS; logs: " + str(root), flush=True)
     finally:

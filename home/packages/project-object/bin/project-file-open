@@ -27,6 +27,11 @@ TIMEOUT = 15
 def local_file(value):
     if any(ord(c) < 32 or ord(c) == 127 for c in value):
         raise ValueError("File links must not contain control characters")
+    # Pi emits absolute Markdown hrefs unchanged. Kitty routes these through
+    # its file action but preserves the missing scheme in ${URL}. Treat only
+    # single-slash absolute hrefs as local, never protocol-relative authorities.
+    if value.startswith("/") and not value.startswith("//"):
+        value = "file://" + value
     parsed = urlsplit(value)
     if parsed.scheme != "file" or parsed.netloc not in ("", "localhost") or parsed.query:
         raise ValueError("Only local file links without a query are supported")
@@ -189,7 +194,7 @@ def main():
         elif len(sys.argv) == 2:
             open_file(sys.argv[1])
         else:
-            raise ValueError("usage: project-file-open file:///absolute/path")
+            raise ValueError("usage: project-file-open file:///absolute/path or /absolute/path")
     except Exception as error:
         message = "Could not open file: " + str(error)
         print("project-file-open: " + message, file=sys.stderr)

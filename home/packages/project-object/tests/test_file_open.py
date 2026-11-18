@@ -22,19 +22,34 @@ class FileOpenTests(unittest.TestCase):
             self.assertEqual(opener.local_file(path.as_uri() + "#section"), (path, "section"))
             self.assertEqual(opener.local_file(path.as_uri().replace("file:///", "file://localhost/"))[0], path)
             self.assertEqual(opener.local_file(Path(root).as_uri())[0], Path(root))
+            absolute_href = path.as_uri().removeprefix("file://")
+            self.assertEqual(opener.local_file(absolute_href + "#section"), (path, "section"))
+            self.assertEqual(opener.local_file(str(Path(root)))[0], Path(root))
+            simple = Path(root) / "image é.png"
+            simple.touch()
+            self.assertEqual(opener.local_file(str(simple)), (simple, ""))
+
+    def test_absolute_href_decoded_once(self):
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "%20.png"
+            path.touch()
+            self.assertEqual(opener.local_file(path.as_uri().removeprefix("file://")), (path, ""))
 
     def test_reject_unsafe_urls(self):
         for value in ("https://example.com", "file://server/etc/passwd", "file:relative",
                       "file:///tmp/%00", "file:///tmp/%0a", "file:///tmp/line\n",
-                      "file:///tmp/%xx", "file:///tmp/test?x=1", "/etc/passwd"):
+                      "file:///tmp/%xx", "file:///tmp/test?x=1", "relative/image.png",
+                      "//server/etc/passwd", "//localhost/etc/passwd", "///etc/passwd",
+                      "/tmp/%00", "/tmp/%0a", "/tmp/line\n", "/tmp/%xx", "/tmp/test?x=1"):
             with self.subTest(value=value), self.assertRaises((ValueError, OSError)):
                 opener.local_file(value)
 
     def test_missing_and_special_files(self):
-        with self.assertRaises(FileNotFoundError):
-            opener.local_file("file:///nonexistent-file-open-test")
-        with self.assertRaises(ValueError):
-            opener.local_file("file:///dev/null")
+        for prefix in ("file://", ""):
+            with self.subTest(prefix=prefix), self.assertRaises(FileNotFoundError):
+                opener.local_file(prefix + "/nonexistent-file-open-test")
+            with self.subTest(prefix=prefix), self.assertRaises(ValueError):
+                opener.local_file(prefix + "/dev/null")
 
     def test_reject_redirected_runtime_directory(self):
         with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {"XDG_RUNTIME_DIR": root}):

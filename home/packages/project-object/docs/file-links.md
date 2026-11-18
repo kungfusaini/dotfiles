@@ -1,13 +1,17 @@
 # Clickable local files
 
-Kitty's managed `open-actions.conf` routes explicit `file://` hyperlinks to
-`project-file-open`. Pi already emits OSC-8 hyperlinks for Markdown links;
-no Pi renderer patch or additional click gesture is required. This does not
+Kitty's managed `open-actions.conf` routes `file://` and scheme-less absolute-path
+hyperlinks to `project-file-open`. Pi emits OSC-8 hyperlinks for Markdown links,
+including targets such as `/home/user/image.png`; Kitty treats the absent scheme
+as `file` for routing but passes the original target unchanged. The opener
+normalizes single-slash absolute hrefs to local file URIs before validation.
+No Pi renderer patch or additional click gesture is required. This does not
 turn arbitrary plain-text paths into hyperlinks. HTTP(S) keeps its existing
 `project-browser` route.
 
 The opener accepts existing local ordinary files and directories, decodes URL
-paths once, and asks GIO for the desktop MIME default. Remote file authorities,
+paths once, and asks GIO for the desktop MIME default. Relative paths,
+protocol-relative targets (`//host/path`), remote file authorities,
 queries, malformed escapes, control characters, missing files and special device
 files are rejected. A clicked desktop file is a document, not an instruction to
 execute its contents. Arguments are never evaluated by a shell. Launch/placement
@@ -69,7 +73,9 @@ python tests/file_open_integration.py \
 
 The acceptance test uses private headless compositors, DBus, HOME, MIME defaults
 and a disposable browser profile. It exercises Kitty's real `open_url` action and
-configured background launcher, rather than global mouse input. HTML is opened
+configured background launcher, rather than global mouse input. Cases cover
+explicit file URIs, encoded absolute hrefs and raw absolute image hrefs with
+Unicode/spaces. HTML is opened
 in real Vivaldi (including singleton handoff); relative-image loading sets
 a checked title. Image MIME dispatch opens real Swayimg and independently
 packaged Loupe windows, checks image titles, verifies separate Loupe process IDs
