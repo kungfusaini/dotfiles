@@ -93,6 +93,7 @@ in
     nicotine-plus
     nodejs
     poppler-utils
+    stremio-linux-shell
   ];
 
   xdg.configFile."ardour9/templates/Musical Sketch/Musical Sketch.template".source =
