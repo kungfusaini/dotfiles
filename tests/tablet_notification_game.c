@@ -4,7 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static unsigned keys, clicks, motions;
+static unsigned keys, clicks, motions, touches;
 static const char *state;
 static SDL_Window *window;
 static void report(void) {
@@ -12,8 +12,8 @@ static void report(void) {
     if (snprintf(temporary, sizeof temporary, "%s.tmp", state) >= (int)sizeof temporary) exit(2);
     FILE *f = fopen(temporary, "w");
     if (!f) exit(2);
-    fprintf(f, "{\"keys\":%u,\"clicks\":%u,\"motions\":%u,\"focused\":%s,\"relative\":%s,\"driver\":\"%s\"}\n",
-            keys, clicks, motions, (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) ? "true" : "false",
+    fprintf(f, "{\"keys\":%u,\"clicks\":%u,\"motions\":%u,\"touches\":%u,\"focused\":%s,\"relative\":%s,\"driver\":\"%s\"}\n",
+            keys, clicks, motions, touches, (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS) ? "true" : "false",
             SDL_GetRelativeMouseMode() ? "true" : "false", SDL_GetCurrentVideoDriver());
     fclose(f);
     if (rename(temporary, state)) exit(2);
@@ -53,6 +53,7 @@ int main(void) {
             case SDL_KEYDOWN:
                 ++keys;
                 break;
+            case SDL_FINGERDOWN: ++touches; break;
             case SDL_MOUSEBUTTONDOWN: ++clicks; break;
             case SDL_MOUSEMOTION: ++motions; break;
             }

@@ -184,9 +184,10 @@ def inner():
         move(x,y);pointer_command('down')
         for i in range(1,9):move(x,round(y+(end_y-y)*i/8));time.sleep(.035)
         pointer_command('up')
-    def touch_point(x, y, action='tap'):
+    def touch_point(x, y, action='tap', park_pointer=True):
         geometry=scene()
-        pointer_command(f"move {x} {y} {geometry['width']} {geometry['height']}")
+        position = 'move' if park_pointer else 'touch-position'
+        pointer_command(f"{position} {x} {y} {geometry['width']} {geometry['height']}")
         pointer_command('down');time.sleep(.06);pointer_command('up')
         mark('touch:'+action, x=x, y=y)
     def target_rect(name):
@@ -900,13 +901,32 @@ FocusScope {
                     assert json.loads(ctl('activewindow','-j')).get('stableId')==game['stableId']
                     mark('passive-notification:input-confirmed', **received())
                 input_control.write_text('0'); until(lambda:not received()['relative'], 'game pointer lock released')
+                # Re-entry with an existing game is an independent input gate;
+                # run it before the deliberate foreign-focus negative control.
+                proof('close')
+                assert json.loads(ctl('activewindow','-j'))['address']==laptop_window['address']
+                proof('start')
+                until(lambda:not scene()['home'] and not scene()['transitioning']
+                    and scene()['presentationProgress'] < .001, 'retained game initial re-entry settled')
+                key_received('initial tablet close and reopen')
+                before_touch = received()
+                touch_point(480,320,'retained-game-initial-reentry',park_pointer=False)
+                until(lambda:received()['touches'] > before_touch['touches']
+                    or received()['clicks'] > before_touch['clicks'],
+                    'first touch delivered on initial tablet re-entry', timeout=5)
+                mark('retained-game-initial-reentry:input-confirmed', **received())
                 # Intentional foreign focus must NOT be reclaimed by any fix.
                 foreign_ui=root/'notification-foreign.qml'
                 foreign_ui.write_text('import Quickshell; import QtQuick; ShellRoot { FloatingWindow { visible:true; width:240; height:160; title:"Notification foreign focus control"; color:"#555555" } }')
                 foreign=start(['quickshell','--path',str(foreign_ui)],'notification-foreign')
                 foreign_window=until(lambda:next((c for c in clients() if c['pid']==foreign.pid),None),'foreign focus control')
                 ctl('dispatch','focuswindow','address:'+foreign_window['address'])
-                time.sleep(3)
+                foreign_samples = []
+                for _ in range(12):
+                    foreign_samples.append({'active':json.loads(ctl('activewindow','-j')),
+                        'input':received(), 'workspace':json.loads(ctl('activeworkspace','-j'))})
+                    time.sleep(.25)
+                (root/'foreign-focus-samples.json').write_text(json.dumps(foreign_samples,indent=2))
                 assert json.loads(ctl('activewindow','-j')).get('stableId')==foreign_window['stableId'], 'foreign focus reclaimed'
                 before=received()['keys']; keys('q'); time.sleep(.2)
                 assert received()['keys']==before, 'game received foreign keyboard input'
@@ -939,6 +959,20 @@ FocusScope {
             proof('start')
             assert status()['activeApp']=='games' and status()['gameRunning']
             assert json.loads(ctl('activewindow','-j'))['address']==game['address']
+            if os.environ.get('TABLET_TEST_NOTIFICATION_GAME'):
+                until(lambda:not scene()['home'] and not scene()['transitioning']
+                    and scene()['presentationProgress'] < .001, 'retained game re-entry presentation settled')
+                key_received('after tablet close and reopen')
+                # First touchscreen contact, without a mouse move/refocus that
+                # could conceal stale overlay seat ownership during re-entry.
+                before_touch = received()
+                touch_point(480,320,'retained-game-reentry',park_pointer=False)
+                until(lambda:received()['touches'] > before_touch['touches']
+                    or received()['clicks'] > before_touch['clicks'],
+                    'first touch delivered after tablet close and reopen', timeout=5)
+                click_received('after tablet close and reopen')
+                snapshot('retained-game-reentry-input')
+                mark('retained-game-reentry:input-confirmed', **received())
             if os.environ.get('TABLET_TEST_LUA') == '1':
                 old_game=dict(game)
                 touch_hold_switcher('game-replacement-preview')

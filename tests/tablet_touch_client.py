@@ -43,7 +43,12 @@ try:
         if not fields:
             continue
         action = fields[0]
-        if action == 'move':
+        if action == 'touch-position':
+            # Set the next contact without parking/moving the pointer. Re-entry
+            # regressions must not repair seat focus before the first touch.
+            assert not pressed
+            x, y = float(fields[1]) / float(fields[3]), float(fields[2]) / float(fields[4])
+        elif action == 'move':
             x, y = float(fields[1]) / float(fields[3]), float(fields[2]) / float(fields[4])
             if pressed:
                 command('dispatch', 'tablet-test-touch', f'move {x} {y}')

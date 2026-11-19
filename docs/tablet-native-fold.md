@@ -169,6 +169,13 @@ control followed by explicit Home/tile recovery. These synthetic notifications
 have not reproduced the reported physical interruption; do not infer its cause
 from passing focus metadata or these isolated cases alone.
 
+The same SDL gate also retains the game across tablet close → desktop → reopen,
+checks actual keyboard delivery, and sends the first touch without a preparatory
+mouse move/refocus. Wayland reports the native touch; X11 may instead report its
+synthesized mouse button. This runs independently before the foreign-focus
+control and again after it. Passing the disposable SDL case does not establish
+Slay the Spire's input behavior or diagnose the reported unresponsive re-entry.
+
 ## Posture, rotation and recovery
 
 `watch-fold` shares the old watcher's singleton lock and refuses coexistence.
