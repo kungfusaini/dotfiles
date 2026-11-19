@@ -41,7 +41,7 @@ stdenvNoCC.mkDerivation {
     runHook preInstall
     mkdir -p "$out/bin" "$out/lib" "$out/share/project-object/pi/skills"
     cp bin/project-picker bin/project-picker-gui bin/project-picker-tui bin/project-snapshot bin/project-terminal bin/project-workspace-exec bin/project-api bin/project-browser bin/project-browser-host bin/project-file-open "$out/bin/"
-    cp lib/project_object.py lib/api_access.py lib/oauth2.py lib/freeagent_oauth.py lib/agent_browser.py lib/browser_protocol.py lib/browser_restore.py "$out/lib/"
+    cp lib/project_object.py lib/api_access.py lib/oauth2.py lib/freeagent_oauth.py lib/agent_browser.py lib/browser_protocol.py lib/browser_restore.py lib/browser_confirmation.py "$out/lib/"
     cp integrations/pi/project-object.ts "$out/share/project-object/pi/"
     cp -R integrations/pi/skills/init "$out/share/project-object/pi/skills/"
     chmod 0555 "$out/bin/project-picker" "$out/bin/project-picker-gui" "$out/bin/project-picker-tui" "$out/bin/project-snapshot" "$out/bin/project-terminal" "$out/bin/project-workspace-exec" "$out/bin/project-api" "$out/bin/project-browser" "$out/bin/project-browser-host" "$out/bin/project-file-open" "$out/share/project-object/pi/skills/init/scripts/mark.py"
@@ -70,7 +70,7 @@ stdenvNoCC.mkDerivation {
     wrapProgram "$out/bin/project-workspace-exec" \
       --prefix PYTHONPATH : ${control.pythonPath} \
       --prefix PATH : ${lib.makeBinPath [ hyprland ]}
-    wrapProgram "$out/bin/project-browser" \
+    wrapGApp "$out/bin/project-browser" \
       --prefix PYTHONPATH : ${control.pythonPath} \
       --prefix PATH : ${lib.makeBinPath [ hyprland libnotify vivaldi ]}
     wrapProgram "$out/bin/project-file-open" \

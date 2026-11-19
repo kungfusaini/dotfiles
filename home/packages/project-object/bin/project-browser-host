@@ -46,6 +46,11 @@ def browser_identity():
     raise ValueError('Native browser ancestry could not be verified')
 
 
+def validate_restore_identity(request, identity, instance):
+    if request.get('op') == 'restore' and request.get('expectedIdentity') != {**identity, 'instance': instance}:
+        raise ValueError('Browser changed before replay; recovery requires a new confirmation')
+
+
 def main():
     if sys.argv[1:2] != ['chrome-extension://' + EXTENSION_ID + '/']:
         return 1
@@ -97,6 +102,7 @@ def main():
                         send(stream, {'ok': False, 'error': 'Browser bridge busy; retry after the current operation'})
                         return
                     try:
+                        validate_restore_identity(request, identity, instance)
                         token = uuid.uuid4().hex
                         event, response = threading.Event(), {}
                         pending[token] = (event, response)

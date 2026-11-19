@@ -1,5 +1,6 @@
 import copy
 import io
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,7 @@ import uuid
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
 from browser_protocol import MAX_MESSAGE, receive, send
 import browser_restore
-from browser_restore import Restoration, fingerprint, private_file
+from browser_restore import RecoveryCancelled, Restoration, fingerprint, private_file
 from project_object import write_json_atomic
 
 
@@ -169,6 +170,142 @@ class RestorationTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'Startup recovery completion'):
             self.manager.restore(self.project)
         self.manager.bridge.request.assert_called_once_with('inventory')
+
+    def prepare_restart(self):
+        content = b'native saved session'
+        self.record['sha256'] = hashlib.sha256(content).hexdigest()
+        self.save()
+        backup = self.manager.home(self.project) / self.record['backup']
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        backup.write_bytes(content)
+        self.manager.native_file = mock.Mock(return_value=backup)
+        identity = {**self.identity, 'instance': str(uuid.uuid4())}
+        self.manager.ready = mock.Mock(return_value=identity)
+        self.manager.bridge.identity.return_value = identity
+        self.manager.address = mock.Mock(return_value='0x123')
+        self.live = []
+        def request(op, **kwargs):
+            if op == 'inventory':
+                return copy.deepcopy(self.live)
+            if op == 'restore':
+                self.assertEqual(kwargs['projectId'], self.project['id'])
+                self.assertEqual(kwargs['windowKey'], self.window['windowKey'])
+                self.live.append(copy.deepcopy(self.window))
+                return copy.deepcopy(self.window)
+            self.fail(op)
+        self.manager.bridge.request.side_effect = request
+
+    def replay_calls(self):
+        return [c for c in self.manager.bridge.request.call_args_list if c.args[0] == 'restore']
+
+    def test_cancel_restart_recovery_has_no_replay_placement_or_journal_change(self):
+        self.prepare_restart()
+        path = self.manager.home(self.project) / 'checkpoint.json'
+        before = path.read_bytes()
+        confirm = mock.Mock(return_value=False)
+        with self.assertRaises(RecoveryCancelled):
+            self.manager.restore(self.project, confirm_recovery=confirm)
+        confirm.assert_called_once_with(self.project, 1)
+        self.assertFalse(self.replay_calls())
+        self.api.dispatch.assert_not_called()
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_confirmed_restart_restores_once_and_preserves_backup(self):
+        self.prepare_restart()
+        confirm = mock.Mock(return_value=True)
+        self.assertEqual(self.manager.restore(self.project, confirm_recovery=confirm), ['0x123'])
+        self.assertEqual(self.manager.restore(self.project, confirm_recovery=confirm), ['0x123'])
+        confirm.assert_called_once_with(self.project, 1)
+        self.assertEqual(len(self.replay_calls()), 1)
+        self.assertTrue((self.manager.home(self.project) / self.record['backup']).is_file())
+
+    def test_late_recovery_during_confirmation_is_adopted_with_live_edits(self):
+        self.prepare_restart()
+        edited = copy.deepcopy(self.window)
+        edited['tabs'][0]['url'] = 'https://example.com/live-edit'
+        def confirm(*_args):
+            self.live.append(edited)
+            return True
+        self.assertEqual(self.manager.restore(self.project, confirm_recovery=confirm), ['0x123'])
+        self.assertFalse(self.replay_calls())
+        self.assertEqual(self.live[0], edited)
+
+    def test_confirmation_does_not_authorize_a_changed_adapter(self):
+        self.prepare_restart()
+        def confirm(*_args):
+            self.manager.bridge.identity.return_value = {**self.identity, 'instance': 'changed'}
+            return True
+        with self.assertRaisesRegex(RuntimeError, 'Browser changed'):
+            self.manager.restore(self.project, confirm_recovery=confirm)
+        self.assertFalse(self.replay_calls())
+        self.api.dispatch.assert_not_called()
+
+    def test_restart_between_inventory_and_replay_is_rejected_at_boundary(self):
+        from test_browser_host import host
+        self.prepare_restart()
+        original = self.manager.bridge.request.side_effect
+        expected = self.manager.bridge.identity.return_value
+        def request(op, **kwargs):
+            if op == 'restore':
+                receiving = {key: expected[key] for key in ('pid', 'startTime', 'profile')}
+                try:
+                    host.validate_restore_identity({'op': op, **kwargs}, receiving, 'replacement-adapter')
+                except ValueError as error:
+                    raise RuntimeError(str(error)) from error
+                self.fail('Replacement host must reject stale consent')
+            return original(op, **kwargs)
+        self.manager.bridge.request.side_effect = request
+        with self.assertRaisesRegex(RuntimeError, 'Browser changed before replay'):
+            self.manager.restore(self.project, confirm_recovery=lambda *_: True)
+        self.assertEqual(self.live, [])
+        self.api.dispatch.assert_not_called()
+
+    def test_ambiguous_or_mixed_late_recovery_is_not_replayed(self):
+        for mixed in (False, True):
+            with self.subTest(mixed=mixed):
+                self.prepare_restart()
+                def confirm(*_args):
+                    if mixed:
+                        window = copy.deepcopy(self.window)
+                        window['provenance'].append(str(uuid.uuid4()))
+                        self.live.append(window)
+                    else:
+                        self.live.extend([self.window, self.window])
+                    return True
+                with self.assertRaisesRegex(RuntimeError, 'Mixed recovered|Ambiguous recovered'):
+                    self.manager.restore(self.project, confirm_recovery=confirm)
+                self.assertFalse(self.replay_calls())
+                self.api.dispatch.assert_not_called()
+                self.manager.bridge.request.reset_mock()
+
+    def test_consent_does_not_bypass_backup_integrity(self):
+        self.prepare_restart()
+        (self.manager.home(self.project) / self.record['backup']).write_bytes(b'corrupt')
+        with self.assertRaisesRegex(RuntimeError, 'integrity verification'):
+            self.manager.restore(self.project, confirm_recovery=lambda *_: True)
+        self.assertFalse(self.replay_calls())
+
+    def test_late_duplicate_after_replay_is_reported_not_closed(self):
+        self.prepare_restart()
+        original = self.manager.bridge.request.side_effect
+        def request(op, **kwargs):
+            result = original(op, **kwargs)
+            if op == 'restore':
+                self.live.append(copy.deepcopy(self.window))
+            return result
+        self.manager.bridge.request.side_effect = request
+        with self.assertRaisesRegex(RuntimeError, 'Ambiguous recovered'):
+            self.manager.restore(self.project, confirm_recovery=lambda *_: True)
+        self.assertEqual(len(self.live), 2)
+        self.api.dispatch.assert_not_called()
+
+    def test_confirmation_is_not_reused_on_a_later_open(self):
+        self.prepare_restart()
+        self.manager.restore(self.project, confirm_recovery=lambda *_: True)
+        self.live.clear()
+        with self.assertRaisesRegex(RuntimeError, 'Startup recovery completion'):
+            self.manager.restore(self.project)
+        self.assertEqual(len(self.replay_calls()), 1)
 
     def test_retry_partial_close_retains_complete_manifest(self):
         self.checkpoint['phase'] = 'closing'

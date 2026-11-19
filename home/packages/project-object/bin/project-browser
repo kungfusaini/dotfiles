@@ -29,7 +29,8 @@ from project_object import (  # noqa: E402
 )
 
 from agent_browser import APP_PREFIX, open_agent_urls  # noqa: E402
-from browser_restore import Restoration  # noqa: E402
+from browser_restore import RecoveryCancelled, Restoration  # noqa: E402
+from browser_confirmation import confirm_recovery  # noqa: E402
 
 
 def restoration():
@@ -316,7 +317,9 @@ def ensure_project_browser(
     ):
         state["returns"][project["id"]] = origin_workspace
         save_state(state)
-    restored = restoration().restore(project)
+    restored = restoration().restore(
+        project, confirm_recovery=lambda selected, missing: confirm_recovery(
+            SimpleNamespace(**globals()), selected, missing, workspace=origin_workspace))
     dispatch("workspace", f"name:{workspace}")
     primary = restored[0] if restored else state["primary"].get(project["id"])
     address = discover_address(workspace, primary)
@@ -506,6 +509,8 @@ def main() -> int:
             focus_browser()
         else:
             open_urls(consume_click_mode(args.mode), args.urls)
+        return 0
+    except RecoveryCancelled:
         return 0
     except (OSError, RegistryError, RuntimeError, ValueError) as error:
         message = str(error)

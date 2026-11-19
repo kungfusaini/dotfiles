@@ -18,6 +18,10 @@ from browser_protocol import VERSION, receive, send
 from project_object import ensure_private_directory, write_json_atomic
 
 
+class RecoveryCancelled(Exception):
+    """A user declined recovery; this is not a notification-worthy error."""
+
+
 class Bridge:
     def __init__(self, runtime: Path):
         self.path = runtime / "browser-bridge.sock"
@@ -283,14 +287,7 @@ class Restoration:
                     raise
                 time.sleep(.1)
 
-    def restore(self, project):
-        checkpoint = self.checkpoint(project)
-        if not checkpoint:
-            return []
-        identity = self.ready()
-        if identity["profile"] != checkpoint["identity"]["profile"]:
-            raise RuntimeError("Checkpoint belongs to a different browser profile")
-        inventory = self.bridge.request("inventory")
+    def recovered(self, project, checkpoint, inventory):
         expected = {record["key"] for record in checkpoint["windows"]}
         if any((project["id"] in window.get("provenance", []) and window.get("projectId") != project["id"]) or
                (window.get("projectId") == project["id"] and any(owner != project["id"] for owner in window.get("provenance", [])))
@@ -300,17 +297,40 @@ class Restoration:
         keys = [window.get("windowKey") for window in recovered]
         if len(keys) != len(set(keys)) or any(key not in expected for key in keys):
             raise RuntimeError("Ambiguous recovered project windows; inspect them before restoring")
-        restored = {window["windowKey"]: window for window in recovered}
-        for record in checkpoint["windows"]:
-            if record["key"] in restored:
-                if checkpoint.get("phase") == "closing" and fingerprint(restored[record["key"]]) != fingerprint(record["window"]):
+        result = {window["windowKey"]: window for window in recovered}
+        if checkpoint.get("phase") == "closing":
+            for record in checkpoint["windows"]:
+                if record["key"] in result and fingerprint(result[record["key"]]) != fingerprint(record["window"]):
                     raise RuntimeError("Interrupted browser closure; saved tabs remain in the private checkpoint. Inspect the partial window before restoring")
-                continue  # Preserve live recovered edits, do not replay stale state.
-            if identity["instance"] != checkpoint["identity"]["instance"]:
-                # No proven normal-startup SessionRestore completion signal is
-                # exposed by the supported adapter yet. A quiet inventory is
-                # not proof: late recovery could otherwise duplicate this key.
+        return result
+
+    def restore(self, project, *, confirm_recovery=None):
+        checkpoint = self.checkpoint(project)
+        if not checkpoint:
+            return []
+        identity = self.ready()
+        if identity["profile"] != checkpoint["identity"]["profile"]:
+            raise RuntimeError("Checkpoint belongs to a different browser profile")
+        inventory = self.bridge.request("inventory")
+        restored = self.recovered(project, checkpoint, inventory)
+        restarted = identity["instance"] != checkpoint["identity"]["instance"]
+        missing = len(checkpoint["windows"]) - len(restored)
+        confirmed = False
+        if restarted and missing:
+            # Consent is scoped to this call and this adapter identity, never a
+            # persisted claim that native startup restoration has completed.
+            if confirm_recovery is None:
                 raise RuntimeError("Startup recovery completion cannot yet be verified; missing saved windows were not replayed")
+            if not confirm_recovery(project, missing):
+                raise RecoveryCancelled()
+            confirmed = True
+        for record in checkpoint["windows"]:
+            if confirmed:
+                if self.bridge.identity() != identity:
+                    raise RuntimeError("Browser changed during recovery confirmation; retry opening the project browser")
+                restored = self.recovered(project, checkpoint, self.bridge.request("inventory"))
+            if record["key"] in restored:
+                continue  # Preserve live recovered edits, do not replay stale state.
             backup = self.home(project) / record["backup"]
             expected_path = f"checkpoints/{checkpoint['generation']}/{checkpoint['windows'].index(record)}.bin"
             if record["backup"] != expected_path:
@@ -320,12 +340,20 @@ class Restoration:
             native = self.native_file(identity, record["name"])
             if hashlib.sha256(private_file(native)).hexdigest() != record["sha256"]:
                 raise RuntimeError("Native saved session changed; private checkpoint retained, nothing replayed")
-            window = self.bridge.request("restore", name=record["name"])
+            window = self.bridge.request("restore", name=record["name"],
+                                         projectId=project["id"], windowKey=record["key"],
+                                         expectedIdentity={key: identity[key] for key in ("pid", "startTime", "profile", "instance")})
             if window.get("projectId") != project["id"] or window.get("windowKey") != record["key"]:
                 raise RuntimeError("Restored browser ownership mismatch; inspect windows before retrying")
             if fingerprint(window) != fingerprint(record["window"]):
                 raise RuntimeError("Restored browser content mismatch; checkpoint retained")
             restored[record["key"]] = window
+        if confirmed:
+            if self.bridge.identity() != identity:
+                raise RuntimeError("Browser changed during recovery; checkpoint retained")
+            restored = self.recovered(project, checkpoint, self.bridge.request("inventory"))
+            if len(restored) != len(checkpoint["windows"]):
+                raise RuntimeError("Recovered browser window disappeared; checkpoint retained")
         workspace = self.api.validate_browser_role(self.api.load_registry(), project)
         addresses = []
         for window in restored.values():

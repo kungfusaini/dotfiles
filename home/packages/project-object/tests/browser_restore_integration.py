@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'lib'))
 from browser_protocol import EXTENSION_ID
-from browser_restore import Restoration, fingerprint
+from browser_restore import RecoveryCancelled, Restoration, fingerprint
 from workspace_exec_integration import wait_for
 
 
@@ -176,6 +176,11 @@ def run(args):
         restored = manager.restore(project)
         assert len(restored) == 1 and manager.restore(project) == restored
         assert len(manager.bridge.request('inventory')) == 2
+        if args.gui_package:
+            confirmation = start([sys.executable, str(Path(__file__).with_name('browser_confirmation_integration.py')),
+                                  '--package', args.gui_package, '--hyprctl', args.hyprctl], 'confirmation')
+            assert confirmation.wait(timeout=45) == 0, (root / 'confirmation.log').read_text()
+            print((root / 'confirmation.log').read_text(), flush=True)
         (ui / 'fixture.js').write_text('')
         # No grace delay: deliberately expose stale live-session checkpointing.
         kill_browser()
@@ -198,6 +203,59 @@ def run(args):
             unchanged = next(w for w in final if w.get('projectId') != project['id'])
             assert fingerprint(unchanged) == fingerprint(beta), unchanged
             print('PASS recovered window adopted after restart without duplicate replay', flush=True)
+        # Ensure a missing key regardless of what normal startup happened to
+        # recover. Only synthetic fixture windows in this disposable profile.
+        def remove_project_window():
+            owned = [w for w in manager.bridge.request('inventory') if w.get('projectId') == project['id']]
+            if owned:
+                manager.bridge.request('close', windows=owned)
+            wait_for(lambda: not any(w.get('projectId') == project['id'] for w in manager.bridge.request('inventory')))
+        remove_project_window()
+        before_checkpoint = (manager.home(project) / 'checkpoint.json').read_bytes()
+        try:
+            manager.restore(project, confirm_recovery=lambda *_: False)
+        except RecoveryCancelled:
+            pass
+        else:
+            raise AssertionError('Missing-window recovery must support cancellation')
+        assert (manager.home(project) / 'checkpoint.json').read_bytes() == before_checkpoint
+        assert not any(w.get('projectId') == project['id'] for w in manager.bridge.request('inventory'))
+        receiving_identity = manager.bridge.identity()
+        expected_identity = {key: receiving_identity[key] for key in ('pid', 'startTime', 'profile', 'instance')}
+        record = checkpoint['windows'][0]
+        try:
+            manager.bridge.request('restore', name=record['name'], projectId=project['id'],
+                                   windowKey=record['key'], expectedIdentity={**expected_identity, 'instance': 'stale'})
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError('Receiving host must reject a stale adapter identity')
+        assert not any(w.get('projectId') == project['id'] for w in manager.bridge.request('inventory'))
+        print('PASS receiving host rejects stale recovery consent before native replay', flush=True)
+        confirmations = []
+        def consent(selected, missing):
+            assert selected == project and missing == 1
+            confirmations.append(True)
+            return True
+        restored = manager.restore(project, confirm_recovery=consent)
+        assert len(restored) == 1 and manager.restore(project, confirm_recovery=consent) == restored
+        assert len(confirmations) == 1
+        final = manager.bridge.request('inventory')
+        assert len(final) == 2
+        assert fingerprint(next(w for w in final if w.get('projectId') != project['id'])) == fingerprint(beta)
+        assert fingerprint(next(w for w in final if w.get('projectId') == project['id'])) == fingerprint(alpha)
+        assert api.live_address(restored[0], role)
+        print('PASS confirmed cross-restart native restore, cancel, pins/stacks, preserved Beta, placement and idempotence', flush=True)
+        remove_project_window()
+        def delayed_recovery(_project, _missing):
+            record = checkpoint['windows'][0]
+            manager.bridge.request('restore', name=record['name'], projectId=project['id'],
+                                   windowKey=record['key'], expectedIdentity=expected_identity)
+            return True
+        assert len(manager.restore(project, confirm_recovery=delayed_recovery)) == 1
+        assert len(manager.bridge.request('inventory')) == 2
+        assert (manager.home(project) / 'checkpoint.json').read_bytes() == before_checkpoint
+        print('PASS recovery arriving during confirmation is adopted without a second replay', flush=True)
         print('PASS native bridge, private checkpoint, guarded close, stacks/pins, exact placement and idempotent open', flush=True)
     finally:
         server.shutdown()
@@ -223,6 +281,7 @@ def run(args):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--vivaldi-package', required=True)
+    parser.add_argument('--gui-package', help='Built project-object package for real GTK confirmation tests')
     parser.add_argument('--project-object', default=str(Path(__file__).resolve().parents[1]))
     parser.add_argument('--labwc', default='labwc')
     parser.add_argument('--hyprland', default='Hyprland')

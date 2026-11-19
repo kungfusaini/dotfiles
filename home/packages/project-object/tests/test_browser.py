@@ -131,6 +131,39 @@ class BrowserTests(unittest.TestCase):
             self.assertEqual(self.browser.main(), 0)
         opener.assert_called_once_with("adjacent", ["https://example.com"])
 
+    def test_cancelled_recovery_exits_without_error_notification(self):
+        for args in (["focus"], ["open", "--mode", "project", "https://example.com"]):
+            with self.subTest(args=args), \
+                    mock.patch.dict(os.environ, {"XDG_CURRENT_DESKTOP": "Hyprland"}), \
+                    mock.patch("sys.argv", ["project-browser", *args]), \
+                    mock.patch.object(self.browser, "focus_browser", side_effect=self.browser.RecoveryCancelled), \
+                    mock.patch.object(self.browser, "open_urls", side_effect=self.browser.RecoveryCancelled), \
+                    mock.patch.object(self.browser, "notify_error") as notify:
+                self.assertEqual(self.browser.main(), 0)
+                notify.assert_not_called()
+
+    def test_interactive_browser_open_passes_scoped_confirmation(self):
+        state = self.browser.empty_state()
+        manager = mock.Mock()
+        def restore(project, *, confirm_recovery):
+            if not confirm_recovery(project, 1):
+                raise self.browser.RecoveryCancelled()
+        manager.restore.side_effect = restore
+        with mock.patch.object(self.browser, "validate_browser_role", return_value="Alpha · Browser"), \
+                mock.patch.object(self.browser, "workspace_belongs_to_project", return_value=True), \
+                mock.patch.object(self.browser, "save_state"), \
+                mock.patch.object(self.browser, "restoration", return_value=manager), \
+                mock.patch.object(self.browser, "confirm_recovery", return_value=False) as confirm, \
+                mock.patch.object(self.browser, "dispatch") as dispatch, \
+                mock.patch.object(self.browser, "launch_new_browser") as launch:
+            with self.assertRaises(self.browser.RecoveryCancelled):
+                self.browser.ensure_project_browser(self.registry, self.project, [], state,
+                                                    origin_workspace="Alpha · Focused")
+        self.assertEqual(confirm.call_args.args[1:], (self.project, 1))
+        self.assertEqual(confirm.call_args.kwargs, {"workspace": "Alpha · Focused"})
+        dispatch.assert_not_called()
+        launch.assert_not_called()
+
     def test_workspace_resolution_includes_stream_and_browser_role(self):
         stream_id = str(uuid.uuid4())
         home = self.data / "projects" / self.project_id

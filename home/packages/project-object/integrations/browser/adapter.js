@@ -162,9 +162,16 @@
         return true;
       }
       case 'restore': {
+        if (request.expectedIdentity?.instance !== instance)
+          throw Error('Browser changed before replay; recovery requires a new confirmation');
+        if (!uuid(request.projectId) || !uuid(request.windowKey)) throw Error('Invalid recovery identity');
         const saved = await session(request.name);
         const before = await inventory();
         if (!before.length) throw Error('Browser is not ready for restoration');
+        if (before.some(window => window.windowKey === request.windowKey ||
+            (window.provenance.includes(request.projectId) && window.projectId !== request.projectId) ||
+            (window.projectId === request.projectId && window.provenance.some(owner => owner !== request.projectId))))
+          throw Error('Browser recovery changed before replay; saved state retained. Retry opening the project browser');
         await vivaldi.sessionsPrivate.open(saved.id, before[0].id,
           {newWindow: true, oneWindow: false, withWorkspace: true, workspaceAsTabs: false, tabIds: []});
         const previous = new Set(before.map(window => window.id));

@@ -7,6 +7,8 @@ const crypto = require('node:crypto');
 const alpha = '11111111-1111-4111-8111-111111111111';
 const beta = '22222222-2222-4222-8222-222222222222';
 const key = '33333333-3333-4333-8333-333333333333';
+const sessionName = `po-${alpha}-${key}-0`;
+const adapterInstance = crypto.randomUUID();
 const owned = project => JSON.stringify({projectObjectProjectId: project, projectObjectWindowKey: key});
 function fixture(window) {
   let callback;
@@ -27,11 +29,15 @@ function fixture(window) {
       remove: async id => {mutations.push({remove: id}); window.tabs = window.tabs.filter(t => t.id !== id);},
     },
   };
-  const vivaldi = {tabsPrivate: {hasBeforeUnloadOrUnload: async () => false}};
+  const vivaldi = {tabsPrivate: {hasBeforeUnloadOrUnload: async () => false},
+    sessionsPrivate: {
+      getAll: async () => ({items: [{id: 1, name: sessionName}]}),
+      open: async () => {mutations.push({open: true}); throw Error('unexpected native replay');},
+    }};
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '../integrations/browser/adapter.js'), 'utf8'),
-    {chrome, vivaldi, crypto, setTimeout, clearTimeout, setInterval, clearInterval});
+    {chrome, vivaldi, crypto: {...crypto, randomUUID: () => adapterInstance}, setTimeout, clearTimeout, setInterval, clearInterval});
   return {mutations, async request(request) {
-    await callback({id: 'a'.repeat(32), request});
+    await callback({id: 'a'.repeat(32), request: {expectedIdentity: {instance: adapterInstance}, ...request}});
     return replies.at(-1).response;
   }};
 }
@@ -55,5 +61,20 @@ function fixture(window) {
   assert.equal(close.ok, false);
   assert.match(close.error, /injected close failure/);
   assert.deepEqual(window.tabs.map(t => t.id), [3], 'failure injection exercises genuinely partial removal');
-  console.log('PASS conflicting provenance is immutable; partial pin-removal failure is reported');
+  for (const windowTag of [owned(alpha), '']) {
+    const late = fixture({id: 1, type: 'normal', incognito: false, vivExtData: windowTag,
+      tabs: [{id: 2, url: 'https://alpha.invalid', pinned: false, vivExtData: owned(alpha)}]});
+    const response = await late.request({op: 'restore', name: sessionName, projectId: alpha, windowKey: key});
+    assert.equal(response.ok, false);
+    assert.match(response.error, /recovery changed before replay/);
+    assert.equal(late.mutations.length, 0, 'late recovered key must not be replayed');
+  }
+  const changed = await test.request({op: 'restore', name: sessionName, projectId: alpha, windowKey: key,
+    expectedIdentity: {instance: crypto.randomUUID()}});
+  assert.equal(changed.ok, false);
+  assert.match(changed.error, /Browser changed before replay/);
+  const invalid = await test.request({op: 'restore', name: sessionName});
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.error, /Invalid recovery identity/);
+  console.log('PASS conflicting provenance, partial pin-removal failure, and late-key replay rejection');
 })().catch(error => {console.error(error); process.exitCode = 1;});
