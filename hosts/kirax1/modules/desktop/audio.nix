@@ -32,7 +32,8 @@
           ];
           actions.update-props = {
             "bluez5.auto-connect" = [ "a2dp_sink" ];
-            "bluez5.a2dp.ldac.quality" = "hq";
+            # Adapt bitrate to radio conditions instead of forcing maximum LDAC.
+            "bluez5.a2dp.ldac.quality" = "auto";
           };
         }
       ];

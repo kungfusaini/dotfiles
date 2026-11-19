@@ -92,7 +92,8 @@ sleep() { exit 0; }
         self.assertIn("sonyPlaybackPolicy", module)
         self.assertIn("mic-source-disconnect-guard", module)
         self.assertIn('"bluetooth.autoswitch-to-headset-profile" = true;', audio)
-        self.assertIn('"bluez5.a2dp.ldac.quality" = "hq";', audio)
+        self.assertIn('"bluez5.a2dp.ldac.quality" = "auto";', audio)
+        self.assertNotIn('"bluez5.a2dp.ldac.quality" = "hq";', audio)
         self.assertIn('"bluez5.enable-msbc" = true;', audio)
         self.assertEqual(module.count('name = "sony-headset-prime"'), 1)
 
