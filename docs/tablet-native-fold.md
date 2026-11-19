@@ -176,6 +176,12 @@ synthesized mouse button. This runs independently before the foreign-focus
 control and again after it. Passing the disposable SDL case does not establish
 Slay the Spire's input behavior or diagnose the reported unresponsive re-entry.
 
+Private compositor probes require network and PID namespaces, a private `/tmp`
+(including X socket and lock-file paths), and fresh session paths. The host root
+is read-only; only this run's artifact directory is writable. The only host
+device passed through is the GPU render node, not input or audio devices. A
+namespace failure is fatal, never a reason to run against the host display.
+
 ## Posture, rotation and recovery
 
 `watch-fold` shares the old watcher's singleton lock and refuses coexistence.
