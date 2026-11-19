@@ -176,6 +176,21 @@ synthesized mouse button. This runs independently before the foreign-focus
 control and again after it. Passing the disposable SDL case does not establish
 Slay the Spire's input behavior or diagnose the reported unresponsive re-entry.
 
+The input gate also verifies six successive finger contacts, including release
+acknowledgements and a cleared pressed state, before notifications and after
+both re-entries. Optional `legacyInput = true` (with `notificationProbe = true`
+and `gameBackend = "x11"`) uses a small libGDX/LWJGL2 witness instead of SDL.
+Supply the installed game's jar at runtime via `TABLET_TEST_LEGACY_JAR`; it is
+never copied into Nix or Git. The witness loads its input libraries, not the
+game's main class, saves, preferences or Steam integration. Compilation disables
+annotation processing. This scoped variant ends after the repeated-input,
+notification, foreign-focus and re-entry gates; it does not claim the later SDL
+close/relaunch/switcher lifecycle checks. Virtual touches bypass physical
+libinput/firmware palm rejection and cannot prove pen-versus-finger behavior.
+When pen works but fingers do not, distinguish app delivery from
+[libinput's pen-proximity touch arbitration](https://wayland.freedesktop.org/libinput/doc/latest/tablet-support.html#tablet-touch-arbitration)
+before changing focus or palm-rejection policy.
+
 Private compositor probes require network and PID namespaces, a private `/tmp`
 (including X socket and lock-file paths), and fresh session paths. The host root
 is read-only; only this run's artifact directory is writable. The only host

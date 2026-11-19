@@ -887,7 +887,18 @@ FocusScope {
                         'scene':scene(),'active':json.loads(ctl('activewindow','-j')),
                         'cursor':json.loads(ctl('cursorpos','-j')),'layers':json.loads(ctl('layers','-j'))},indent=2))
                     until(lambda:received()['clicks'] > before, name+' pointer delivered', timeout=5)
+                def repeated_touch_received(name):
+                    for i, (x, y) in enumerate(((320,240),(640,400),(320,240),(640,400),(480,320),(480,320))):
+                        before = received()
+                        touch_point(x,y,name+'-'+str(i),park_pointer=False)
+                        until(lambda:received()['touches'] > before['touches']
+                            or received()['clicks'] > before['clicks'], name+' touch down '+str(i),timeout=5)
+                        until(lambda:(received()['releases'] > before['releases']
+                            or received().get('touchReleases',0) > before.get('touchReleases',0))
+                            and not received()['pressed'], name+' touch released '+str(i),timeout=5)
+                    mark(name+':press-release-confirmed', **received())
                 until(lambda:status()['keyboardInset']==0, 'game fixture has no active text input/IME')
+                repeated_touch_received('game-repeated-touch')
                 key_received('before notification'); click_received('before notification')
                 def notification_visible():
                     return any(l.get('namespace')=='notifications' for level in json.loads(ctl('layers','-j'))['eDP-1']['levels'].values() for l in level)
@@ -916,11 +927,7 @@ FocusScope {
                 until(lambda:not scene()['home'] and not scene()['transitioning']
                     and scene()['presentationProgress'] < .001, 'retained game initial re-entry settled')
                 key_received('initial tablet close and reopen')
-                before_touch = received()
-                touch_point(480,320,'retained-game-initial-reentry',park_pointer=False)
-                until(lambda:received()['touches'] > before_touch['touches']
-                    or received()['clicks'] > before_touch['clicks'],
-                    'first touch delivered on initial tablet re-entry', timeout=5)
+                repeated_touch_received('retained-game-initial-reentry')
                 mark('retained-game-initial-reentry:input-confirmed', **received())
                 # Intentional foreign focus must NOT be reclaimed by any fix.
                 foreign_ui=root/'notification-foreign.qml'
@@ -972,14 +979,17 @@ FocusScope {
                 key_received('after tablet close and reopen')
                 # First touchscreen contact, without a mouse move/refocus that
                 # could conceal stale overlay seat ownership during re-entry.
-                before_touch = received()
-                touch_point(480,320,'retained-game-reentry',park_pointer=False)
-                until(lambda:received()['touches'] > before_touch['touches']
-                    or received()['clicks'] > before_touch['clicks'],
-                    'first touch delivered after tablet close and reopen', timeout=5)
+                repeated_touch_received('retained-game-reentry')
                 click_received('after tablet close and reopen')
                 snapshot('retained-game-reentry-input')
                 mark('retained-game-reentry:input-confirmed', **received())
+                if os.environ.get('TABLET_TEST_LEGACY_INPUT') == '1':
+                    # This witness covers the legacy input backend, not the
+                    # SDL fixture's later close/relaunch/switcher lifecycle.
+                    print('PASS: legacy libGDX/LWJGL2 repeated touch down/up, no stuck press, '
+                          'keyboard/button input, Mako normal/relative input, foreign-focus '
+                          'preservation and two retained-game re-entries', flush=True)
+                    return 0
             if os.environ.get('TABLET_TEST_LUA') == '1':
                 old_game=dict(game)
                 touch_hold_switcher('game-replacement-preview')
