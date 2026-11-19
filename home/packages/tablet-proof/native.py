@@ -24,6 +24,10 @@ games_spec = importlib.util.spec_from_file_location('tablet_gaming', os.environ.
     'TABLET_GAMING_SOURCE', str(Path(__file__).with_name('gaming.py'))))
 gaming = importlib.util.module_from_spec(games_spec)
 games_spec.loader.exec_module(gaming)
+stremio_spec = importlib.util.spec_from_file_location('tablet_stremio', os.environ.get(
+    'TABLET_STREMIO_SOURCE', str(Path(__file__).with_name('stremio.py'))))
+stremio_module = importlib.util.module_from_spec(stremio_spec)
+stremio_spec.loader.exec_module(stremio_module)
 
 
 def state_file():
@@ -124,6 +128,8 @@ class Native(p.Proof):
         self.saved = {}
         self.resume_overview = False
         self.games = gaming.Games(lambda *args: p.hypr(*args), lambda *args: p.dispatch(*args))
+        self.stremio = stremio_module.Stremio(lambda *args: p.hypr(*args), lambda *args: p.dispatch(*args))
+        self.stremio_waiting = False
         self.active_app = 'vivaldi'
         self.games_target = None
         self.games_requested = False
@@ -318,7 +324,8 @@ class Native(p.Proof):
         p.dispatch('workspace', 'name:' + WORKSPACE)
         self.guard()
         resume_games = self.saved.get('activeApp') == 'games'
-        if source and not resume_games:
+        resume_stremio = self.saved.get('activeApp') == 'stremio'
+        if source and not resume_games and not resume_stremio:
             self.attach(source)
         elif source:
             self.source = identity(source)
@@ -329,11 +336,17 @@ class Native(p.Proof):
             if target:
                 p.dispatch('focuswindow', 'address:' + target['address'])
                 self.games_target = identity(target)
+        if resume_stremio:
+            self.active_app = 'stremio'
+            target = self.stremio.window()
+            if target and not self.saved.get('home', True):
+                self.owned_window_action(self.card_sources()['stremio'], 'focus')
         self.keyboard.start()
         self.values = self.controls.read()
-        self.home = bool(self.saved.get('home', True)) if (self.source or self.games_target) else True
+        available = bool(self.source or self.games_target or self.stremio.window())
+        self.home = bool(self.saved.get('home', True)) if available else True
         self.drawer = bool(self.saved.get('drawer', False))
-        self.resume_overview = bool(self.saved.get('overview', False)) and bool(self.source)
+        self.resume_overview = bool(self.saved.get('overview', False)) and available
         self.rotation_enabled = True
         self.record['media_suspended'] = False
         self.journal()
@@ -349,7 +362,7 @@ class Native(p.Proof):
 
     def fullscreen_peer_allowed(self, client):
         return any(target and identity(client) == identity(target)
-                   for target in (self.games.game(), self.games.launcher()))
+                   for target in (self.games.game(), self.games.launcher(), self.stremio.window()))
 
     def attach(self, client):
         if not eligible(client):
@@ -433,14 +446,23 @@ class Native(p.Proof):
                 target = None
         else:
             self.game_card = self.game_card_role = None
+        stremio = self.stremio.registered()
+        stremio_identity = None
+        if stremio:
+            try:
+                stremio_identity = identity(stremio)
+            except (FileNotFoundError, ProcessLookupError):
+                stremio = None
         lifetimes, sources = {}, {}
-        for app, client, registered in (('vivaldi', browser, self.source), ('games', target, self.game_card)):
+        for app, client, registered in (('vivaldi', browser, self.source), ('games', target, self.game_card),
+                                        ('stremio', stremio, stremio_identity)):
             if not client or not registered:
                 continue
             descriptor = dict(registered, instance=os.environ['HYPRLAND_INSTANCE_SIGNATURE'], workspace=WORKSPACE,
                               floating=bool(client.get('floating')))
             lifetimes[app] = descriptor
-            allowed = eligible(client) if app == 'vivaldi' else gaming.local(client, allow_floating=True)
+            allowed = (eligible(client) if app == 'vivaldi' else bool(self.stremio.window())
+                       if app == 'stremio' else gaming.local(client, allow_floating=True))
             if app == 'vivaldi' and not self.record.get('home_only'):
                 descriptor = dict(descriptor, tag=self.record['tag'])
                 allowed = allowed and self.record['tag'] in [tag.rstrip('*') for tag in client.get('tags', [])]
@@ -488,14 +510,16 @@ class Native(p.Proof):
         if not isinstance(value, dict) or set(value) != {'app', 'window'}:
             raise RuntimeError('Explicit switcher card identity required')
         app, target = value['app'], value['window']
-        if app not in ('vivaldi', 'games') or self.card_sources().get(app) != target or not target:
+        if app not in ('vivaldi', 'games', 'stremio') or self.card_sources().get(app) != target or not target:
             raise RuntimeError('Exact tablet window is unavailable or changed; no replacement opened or closed')
         return app, target
 
     def resume_app(self, value):
         app, target = self.switcher_target(value)
         self.error = ''
-        if app == 'games' and self.active_app == 'games':
+        if app == 'stremio':
+            self.select_stremio(expected=target)
+        elif app == 'games' and self.active_app == 'games':
             self.owned_window_action(target, 'focus')
             self.games_requested = True
             self.home = self.drawer = self.resume_overview = False
@@ -513,12 +537,12 @@ class Native(p.Proof):
     def dismiss_app(self, value):
         app, target = self.switcher_target(value)
         self.error = ''
-        if app == 'games' and not self.record.get('home_only'):
+        if app != 'vivaldi' and not self.record.get('home_only'):
             self.pause_media()
             self.release_window()
             self.record = self.home_record()
             self.journal()
-        elif app == 'vivaldi':
+        if app != 'games':
             self.release_game_presentation()
         # Reveal the selected original before a normal close request, so a
         # beforeunload/modal confirmation is usable, never hidden by Home/cards.
@@ -606,11 +630,60 @@ class Native(p.Proof):
             self.pending = None
             self.error = 'Tablet browser launch could not be verified; no existing window was adopted'
 
+    def select_stremio(self, expected=None):
+        if expected is not None and self.card_sources().get('stremio') != expected:
+            raise RuntimeError('Exact tablet Stremio is unavailable; no replacement opened')
+        self.cover('Opening Stremio…')
+        try:
+            self.release_game_presentation()
+            if not self.record.get('home_only'):
+                self.pause_media()
+                self.release_window()
+                self.record = self.home_record()
+                self.journal()
+            if expected is not None:
+                self.owned_window_action(expected, 'focus')
+            else:
+                self.stremio.launch()
+                target = self.card_sources().get('stremio')
+                if target:
+                    self.owned_window_action(target, 'focus')
+            status = self.stremio.status()
+            self.stremio_waiting = status['stremioLaunching']
+            self.active_app = 'stremio'
+            self.games_requested = False
+            self.games_target = None
+            self.home = not bool(self.stremio.window())
+            self.drawer = False
+            self.remember()
+        finally:
+            self.ipc(self.stage, 'tabletStage', 'reveal')
+
+    def poll_stremio(self):
+        status = self.stremio.status()
+        if self.active_app != 'stremio':
+            return status
+        target = self.stremio.window()
+        if target:
+            # Preserve foreign/modal focus. Only an already-focused exact root
+            # can acquire its reversible presentation, never a background app.
+            if p.hypr('activewindow').get('address') == target['address'] and not self.drawer:
+                if not self.present_game(target):
+                    return status
+                if self.stremio_waiting:
+                    self.home = False
+                    self.stremio_waiting = False
+                    self.remember()
+        elif not status['stremioLaunching']:
+            self.home = True
+        return status
+
     def select_games(self, expected=None):
         if expected is not None and self.card_sources().get('games') != expected:
             raise RuntimeError('Exact tablet game/library is unavailable; no replacement opened')
         self.cover('Opening Pegasus…')
         try:
+            self.release_game_presentation()
             if not self.record.get('home_only'):
                 self.pause_media()
                 self.release_window()
@@ -799,6 +872,7 @@ class Native(p.Proof):
         browser = self.refresh_browser()
         _, panel = self.workspace_guard()
         games = self.poll_games() if not self.stopping else self.games.status()
+        stremio = self.poll_stremio() if not self.stopping else self.stremio.status()
         if not self.stopping:
             self.poll_launch()
         leased = browser if not self.record.get('home_only') else None
@@ -825,8 +899,8 @@ class Native(p.Proof):
         return dict(state, native=True, automatic=self.automatic, workspace=WORKSPACE,
                     mediaPaired=self.media_paired,
                     browserAvailable=True, browserRunning=bool(self.source),
-                    activeApp=self.active_app, **games,
-                    launching=bool(self.pending) or games['gamesLaunching'] or games['gameLaunching'],
+                    activeApp=self.active_app, **games, **stremio, stremioHidden=self.stremio.hidden(),
+                    launching=bool(self.pending) or games['gamesLaunching'] or games['gameLaunching'] or stremio['stremioLaunching'],
                     resumeOverview=self.resume_overview, cardSources=sources, cardLifetimes=lifetimes,
                     closePending=self.close_requested['app'] if self.close_requested else '')
 
@@ -842,10 +916,11 @@ class Native(p.Proof):
             return self.resume_app(value)
         self.refresh_browser()
         self.workspace_guard()
-        if command in ('app', 'games'):
-            app = 'vivaldi' if command == 'app' else 'games'
+        if command in ('app', 'games', 'stremio'):
+            app = 'vivaldi' if command == 'app' else command
             lifetimes, sources = self.card_state()
-            if app in lifetimes and app not in sources:
+            hidden_stremio = app == 'stremio' and self.stremio.hidden()
+            if app in lifetimes and app not in sources and not hidden_stremio:
                 raise RuntimeError('Registered tablet window is unavailable; no replacement opened')
         if command == 'adopt-fold':
             self.automatic = True
@@ -853,6 +928,11 @@ class Native(p.Proof):
             return self.state()
         if command == 'home':
             self.games_requested = False
+            self.stremio_waiting = False
+        if command == 'stremio':
+            self.error = ''
+            self.select_stremio()
+            return self.state()
         if command == 'games':
             self.error = ''
             self.select_games()
@@ -1176,7 +1256,7 @@ def watch():
 def main():
     p.Proof = Native
     p.recover = recover
-    p.EXTRA_COMMANDS = ['adopt-fold', 'games']
+    p.EXTRA_COMMANDS = ['adopt-fold', 'games', 'stremio']
     command = sys.argv[1] if len(sys.argv) > 1 else ''
     if command in ('dismiss-app', 'resume-app'):
         import argparse

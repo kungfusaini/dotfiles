@@ -14,9 +14,10 @@ ShellRoot {
     readonly property var targetScreen: Quickshell.screens.find(s => s.name === "eDP-1") ?? null
     readonly property var apps: [
         {id: "vivaldi", label: "Vivaldi", kind: "window", icon: Quickshell.iconPath("vivaldi", true)},
-        {id: "games", label: "Pegasus", kind: "window", icon: Quickshell.iconPath("org.pegasus_frontend.Pegasus", true)}
+        {id: "games", label: "Pegasus", kind: "window", icon: Quickshell.iconPath("org.pegasus_frontend.Pegasus", true)},
+        {id: "stremio", label: "Stremio", kind: "window", icon: Quickshell.iconPath("com.stremio.Stremio", true)}
     ]
-    readonly property var activePreview: previewCopies.itemAt(state.activeApp === "games" ? 1 : 0)
+    readonly property var activePreview: previewCopies.itemAt(Math.max(0, apps.findIndex(app => app.id === state.activeApp)))
     property real drawerProgress: state.drawer ? 1 : 0
     Behavior on drawerProgress { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
     onStateChanged: {
@@ -51,7 +52,7 @@ ShellRoot {
                 }
                 return null
             }
-            if (!["app-vivaldi", "app-games", "closeSettings", "muteButton", "brightnessSlider", "volumeSlider", "appCard-vivaldi", "appCard-games", "appPreview-vivaldi", "appPreview-games"].includes(name)) return "null"
+            if (!["app-vivaldi", "app-games", "closeSettings", "muteButton", "brightnessSlider", "volumeSlider", "appCard-vivaldi", "appCard-games", "appPreview-vivaldi", "appPreview-games", "app-stremio", "appCard-stremio", "appPreview-stremio"].includes(name)) return "null"
             const item = find(window.contentItem)
             if (!item || !item.visible || !item.enabled) return "null"
             const point = item.mapToItem(window.contentItem, 0, 0)
@@ -195,15 +196,17 @@ ShellRoot {
             appSummary: app => app.id === "games"
                 ? (root.state.gameRunning ? "Game running · kept on unfold"
                     : root.state.pegasusRunning ? "Your tablet game library" : "Open Pegasus in your tablet workspace")
+                : app.id === "stremio" ? "Your tablet player · normal close may hide to tray"
                 : (root.state.browserRunning ? "Your tablet browser · same windows and tabs" : "Open Vivaldi in your tablet workspace")
             onNativeHomeRequested: root.command("home")
             onSettingsRequested: root.command("settings")
             onAppRequested: (id, label) => {
-                if (root.state.cardLifetimes && root.state.cardLifetimes[id] && !(root.state.cardSources && root.state.cardSources[id])) {
+                if (root.state.cardLifetimes && root.state.cardLifetimes[id] && !(root.state.cardSources && root.state.cardSources[id])
+                    && !(id === "stremio" && root.state.stremioHidden)) {
                     root.localError = "That window is unavailable here; no replacement was opened."
                     return
                 }
-                root.command(id === "games" ? "games" : "app")
+                root.command(id === "games" || id === "stremio" ? id : "app")
             }
             onExitRequested: root.command("close")
             onWindowResumeRequested: (id, context) => {
@@ -222,13 +225,13 @@ ShellRoot {
             Label {
                 Layout.fillWidth: true
                 visible: !root.state.browserRunning
-                text: root.state.launching ? "Opening your tablet app…" : "Open Vivaldi or Pegasus here. Your laptop apps stay on the desktop."
+                text: root.state.launching ? "Opening your tablet app…" : "Open Vivaldi, Pegasus or Stremio here. Your laptop apps stay on the desktop."
                 color: "#b3cdcb"; wrapMode: Text.Wrap; horizontalAlignment: Text.AlignHCenter
             }
             Label {
                 Layout.fillWidth: true
                 visible: text.length > 0
-                text: root.localError || root.state.error || root.state.gamesError || ""
+                text: root.localError || root.state.error || root.state.gamesError || root.state.stremioError || ""
                 color: "#b3cdcb"; wrapMode: Text.Wrap
             }
         }

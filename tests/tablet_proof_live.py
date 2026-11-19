@@ -29,7 +29,7 @@ def until(check, reason, timeout=25):
     raise AssertionError(reason+(': '+str(last) if last else ''))
 
 
-def outer(script=None):
+def outer(script=None, isolated_network=False, isolated_processes=False):
     root=Path(tempfile.mkdtemp(prefix='twa.proof.'))
     (root/'r').mkdir(mode=0o700);(root/'home').mkdir()
     env={k:v for k,v in os.environ.items() if not k.startswith(('PI_','PROJECT_OBJECT_','HL_'))}
@@ -47,7 +47,9 @@ def outer(script=None):
     # The host may deliberately be in external-display/headless posture. Mask
     # only this file in a mount namespace; never change host display state or
     # weaken the production awake-internal-panel guard for the private proof.
-    return subprocess.call(['bwrap','--bind','/','/','--dev-bind','/dev','/dev','--tmpfs','/tmp/.X11-unix','--tmpfs','/run/headless-mode',
+    return subprocess.call(['bwrap', *(['--unshare-net'] if isolated_network else []),
+                            *(['--unshare-pid', '--die-with-parent'] if isolated_processes else []), '--bind','/','/',
+                            *(['--proc', '/proc'] if isolated_processes else []),'--dev-bind','/dev','/dev','--tmpfs','/tmp/.X11-unix','--tmpfs','/run/headless-mode',
                             '--ro-bind',str(headless),'/run/headless-mode/state',
                             'dbus-run-session','--',sys.executable,script or __file__],env=env)
 

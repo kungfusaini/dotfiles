@@ -24,6 +24,10 @@ Pegasus and curated game launches now have a separate tablet-local lifecycle;
 see [Pegasus and tablet games](tablet-pegasus.md). Games are preserved, not
 paused or closed, on unfold. Browser-only details below describe the Vivaldi
 adapter rather than limiting the whole native shell to browsers.
+[Stremio](tablet-stremio.md) has a separate single-instance ownership adapter;
+normal card close honors its hide-to-tray behavior and the tile reopens only its
+verified tablet-owned instance. Its playback is not controlled by the browser
+companion.
 
 The companion-dependent proof now removes visible desktop-exit buttons and
 pauses only the registered tablet browser's supported media on exit; see

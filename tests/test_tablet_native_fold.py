@@ -564,6 +564,76 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.workspace['name'], 'laptop')
         self.assertFalse((p.runtime() / 'recovery.json').exists())
 
+    def test_stremio_tile_leaves_laptop_windows_and_unfold_keeps_app(self):
+        self.enter()
+        with ExitStack() as stack:
+            for patcher in self.runtime(): stack.enter_context(patcher)
+            stack.enter_context(patch.object(self.native, 'ipc'))
+            stack.enter_context(patch.object(self.native.stremio, 'launch'))
+            stack.enter_context(patch.object(self.native, 'stop_orientation'))
+            self.native.select_stremio()
+            self.assertEqual(self.native.active_app, 'stremio')
+            self.assertEqual(self.laptop['workspace']['name'], 'laptop')
+            self.native.cleanup()
+        self.media.pause.assert_not_called()
+        self.assertEqual(self.workspace['name'], 'laptop')
+        self.assertFalse(any(event[0] in ('closewindow', 'movetoworkspace') for event in self.events))
+
+    def test_stremio_poll_never_reclaims_foreign_focus(self):
+        self.enter(); self.native.active_app = 'stremio'
+        target = dict(self.client('0xac', 'def', n.WORKSPACE), **{'class': 'com.stremio.Stremio'})
+        with patch.object(p, 'hypr', side_effect=self.queries), \
+                patch.object(self.native.stremio, 'status', return_value={'stremioLaunching': False}), \
+                patch.object(self.native.stremio, 'window', return_value=target), \
+                patch.object(self.native, 'present_game') as present:
+            self.native.poll_stremio()
+        present.assert_not_called()
+        self.assertFalse(any(event[0] == 'focuswindow' for event in self.events))
+
+    def test_home_cancels_pending_stremio_reveal(self):
+        self.enter(); self.native.active_app = 'stremio'; self.native.stremio_waiting = True
+        with patch.object(p, 'hypr', side_effect=self.queries): self.native.action('home')
+        self.assertFalse(self.native.stremio_waiting)
+        self.assertTrue(self.native.home)
+
+    def test_stremio_card_has_separate_lifetime_and_eligibility(self):
+        self.enter()
+        target = dict(self.client('0xac', 'def', n.WORKSPACE), **{'class': 'com.stremio.Stremio'})
+        self.clients.append(target)
+        with ExitStack() as stack:
+            for patcher in self.runtime(): stack.enter_context(patcher)
+            stack.enter_context(patch.object(self.native.stremio, 'registered', return_value=target))
+            window = stack.enter_context(patch.object(self.native.stremio, 'window', return_value=target))
+            selected = self.native.card_sources()['stremio']
+            target['workspace'] = {'name': 'laptop'}; window.return_value = None
+            lifetimes, sources = self.native.card_state()
+            self.assertIn('stremio', lifetimes); self.assertNotIn('stremio', sources)
+            stack.enter_context(patch.object(n, 'uses_lua', return_value=True))
+            with self.assertRaisesRegex(RuntimeError, 'unavailable or changed'):
+                self.native.resume_app({'app': 'stremio', 'window': selected})
+            with self.assertRaisesRegex(RuntimeError, 'unavailable'):
+                self.native.action('stremio')
+        self.assertFalse(any(event[0] == 'focuswindow' for event in self.events))
+
+    def test_stremio_close_releases_presentation_then_requests_only_exact_window(self):
+        self.enter()
+        target = dict(self.client('0xac', 'def', n.WORKSPACE), **{'class': 'com.stremio.Stremio'})
+        self.clients.append(target); events = []
+        with ExitStack() as stack:
+            for patcher in self.runtime(): stack.enter_context(patcher)
+            stack.enter_context(patch.object(n, 'uses_lua', return_value=True))
+            stack.enter_context(patch.object(self.native.stremio, 'registered', return_value=target))
+            stack.enter_context(patch.object(self.native.stremio, 'window', return_value=target))
+            stack.enter_context(patch.object(self.native, 'release_game_presentation', side_effect=lambda: events.append('release')))
+            stack.enter_context(patch.object(self.native, 'owned_window_action', side_effect=lambda record, action: events.append((record['stableId'], action))))
+            selected = self.native.card_sources()['stremio']
+            with self.assertRaisesRegex(RuntimeError, 'unavailable or changed'):
+                self.native.dismiss_app({'app': 'stremio', 'window': dict(selected, stableId='old')})
+            self.assertEqual(events, [])
+            self.native.dismiss_app({'app': 'stremio', 'window': selected})
+        self.assertEqual(events, ['release', ('def', 'focus'), ('def', 'close')])
+        self.assertEqual(self.laptop['workspace']['name'], 'laptop')
+
     def tick(self, edges, posture, state, headless='off'):
         original = Path.read_text
         def read(path, *args, **kwargs):

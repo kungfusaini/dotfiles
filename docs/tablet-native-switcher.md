@@ -1,6 +1,6 @@
 # Native switcher previews and window dismissal
 
-This extends the Vivaldi/Pegasus native tablet workspace, not the set of supported
+This extends the Vivaldi/Pegasus/[Stremio](tablet-stremio.md) native tablet workspace, not the set of supported
 apps or the permanent fold policy. Automatic native folding remains a separate
 physical-acceptance gate.
 
@@ -58,6 +58,10 @@ The card is removed only after disappearance is verified; refusal/cancellation
 keeps it. Quickshell/Wayland
 [normal close is a request](https://quickshell.org/docs/v0.3.0/types/Quickshell.Wayland/Toplevel/),
 not a guarantee that every third-party app honors it.
+
+Stremio uses the same per-window capture, frozen interaction and guarded normal
+close. Its client normally hides to tray; only the explicit Home launcher can
+reactivate the exact owned singleton, not a stale card or desktop instance.
 
 The games card represents the running game, otherwise its library. Normal close
 of the game preserves the library. A subsequent library-card dismissal requests

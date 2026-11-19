@@ -1,7 +1,9 @@
-{ pkgs, hyprland, native ? false, gamingOnly ? false }:
-assert !gamingOnly || native;
+{ pkgs, hyprland, native ? false, gamingOnly ? false, stremioOnly ? false }:
+assert !(gamingOnly || stremioOnly) || native;
+assert !(gamingOnly && stremioOnly);
 let
   control = pkgs.callPackage ../home/packages/hyprland-control { inherit hyprland; };
+  stremio = pkgs.callPackage ../home/packages/stremio.nix { };
   sensor = pkgs.writeShellScriptBin "monitor-sensor" ''
     while true; do
       printf 'Has accelerometer\n    Accelerometer orientation: %s\n    Accelerometer tilt: upright\n' "$(< "$TABLET_TEST_ORIENTATION")"
@@ -33,7 +35,7 @@ let
   };
   proof = if native then pkgs.callPackage ../home/packages/tablet-proof/native.nix { inherit hyprland orientation media; }
     else pkgs.callPackage ../home/packages/tablet-proof { inherit hyprland; };
-  python = pkgs.python3.withPackages (p:[p.pillow]);
+  python = pkgs.python3.withPackages (p:[p.pillow p.pygobject3]);
   pointer = pkgs.stdenv.mkDerivation {
     name = "tablet-private-pointer";
     dontUnpack = true;
@@ -57,6 +59,9 @@ let
     export TABLET_PROOF_SOURCE=${../home/packages/tablet-proof/controller.py}
     export TABLET_MEDIA_CLIENT_SOURCE=${../home/packages/tablet-proof/media/client.py}
     export TABLET_GAMING_SOURCE=${../home/packages/tablet-proof/gaming.py}
+    export TABLET_STREMIO_SOURCE=${../home/packages/tablet-proof/stremio.py}
+    export TABLET_STREMIO_BIN="''${TABLET_STREMIO_BIN:-${stremio}/bin/stremio}"
+    export GI_TYPELIB_PATH=${pkgs.lib.getLib pkgs.glib}/lib/girepository-1.0
     ${pkgs.lib.optionalString native "export TABLET_PEGASUS_BIN=${proof.pegasus}/bin/pegasus-fe"}
     export TABLET_WINDOW_APPS_SOURCE=${../home/scripts/desktop/tablet_apps.py}
     export TABLET_APPS_REGISTRY=${registry}
@@ -65,13 +70,16 @@ let
     exec ${python}/bin/python ${if native then ../home/packages/tablet-proof/native.py else ../home/packages/tablet-proof/controller.py} "$@"
   '';
 in pkgs.writeShellApplication {
-  name = if gamingOnly then "tablet-pegasus-test" else if native then "tablet-native-fold-test" else "tablet-proof-native-test";
+  name = if stremioOnly then "tablet-stremio-test" else if gamingOnly then "tablet-pegasus-test" else if native then "tablet-native-fold-test" else "tablet-proof-native-test";
   runtimeInputs = [python hyprland pkgs.quickshell pkgs.labwc pkgs.bubblewrap pkgs.dbus pkgs.glib pkgs.dconf pkgs.wtype pkgs.grim pkgs.squeekboard pkgs.vivaldi pkgs.pegasus-frontend];
   text = ''
     export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
     export TABLET_TEST_NATIVE_FOLD=${if native then "1" else "0"}
     export TABLET_TEST_PROOF_DRIVER=${./tablet_proof_live.py}
     export TABLET_TEST_NATIVE_SOURCE=${../home/packages/tablet-proof/native.py}
+    export TABLET_STREMIO_SOURCE=${../home/packages/tablet-proof/stremio.py}
+    export TABLET_TEST_STREMIO=${stremio}/bin/stremio
+    export GI_TYPELIB_PATH=${pkgs.lib.getLib pkgs.glib}/lib/girepository-1.0
     export TABLET_GAMING_SOURCE=${../home/packages/tablet-proof/gaming.py}
     export TABLET_TEST_LAPTOP_QML=${laptop}
     export TABLET_TEST_MEDIA_EXTENSION=${media.extension}
@@ -89,11 +97,11 @@ in pkgs.writeShellApplication {
     export TABLET_TEST_PROOF_QML=${proof.ui}/shell.qml
     export XKB_CONFIG_ROOT=${pkgs.xkeyboard_config}/share/X11/xkb
     export GIO_EXTRA_MODULES=${pkgs.lib.getLib pkgs.dconf}/lib/gio/modules
-    export XDG_DATA_DIRS=${pkgs.squeekboard}/share/gsettings-schemas/${pkgs.squeekboard.name}:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.squeekboard}/share
+    export XDG_DATA_DIRS=${pkgs.squeekboard}/share/gsettings-schemas/${pkgs.squeekboard.name}:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.squeekboard}/share:${pkgs.shared-mime-info}/share
     export FONTCONFIG_FILE=${pkgs.makeFontsConf {fontDirectories=[pkgs.dejavu_fonts];}}
     export GTK_THEME=Adwaita:dark
     export G_RESOURCE_OVERLAYS=/sm/puri/squeekboard=${../home/config/squeekboard-preview}/resource
     export SQUEEKBOARD_KEYBOARDSDIR=${../home/config/squeekboard-preview}/keyboards
-    exec ${python}/bin/python ${if gamingOnly then ./tablet_gaming_live.py else ./tablet_proof_live.py}
+    exec ${python}/bin/python ${if stremioOnly then ./tablet_stremio_live.py else if gamingOnly then ./tablet_gaming_live.py else ./tablet_proof_live.py}
   '';
 }

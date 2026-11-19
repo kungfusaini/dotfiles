@@ -6,8 +6,11 @@ let
   extension = homeConfig.xdg.dataFile."tablet-media-companion".source;
   manifest = homeConfig.xdg.configFile."vivaldi/NativeMessagingHosts/org.machine.tablet_media.json".source;
   watcher = builtins.head (builtins.filter (p: p.name == "tablet-fold-watch") homeConfig.home.packages);
+  native = builtins.head (builtins.filter (p: p.name == "tablet-native") homeConfig.home.packages);
+  stremio = pkgs.callPackage ../home/packages/stremio.nix { };
 in
 assert homeConfig.programs.tablet-native.automatic;
+assert builtins.any (p: toString p == toString stremio) homeConfig.home.packages;
 assert toString pkgs.vivaldi == toString expectedBrowser;
 assert lib.hasInfix "/bin/tablet-native start" homeConfig.xdg.desktopEntries.tablet-workspace.exec;
 assert builtins.any (p: p.name == "tablet-native") homeConfig.home.packages;
@@ -37,5 +40,6 @@ PY
     echo 'Legacy folding is still wired after native acceptance' >&2
     exit 1
   fi
+  ${pkgs.gnugrep}/bin/grep -Fq -- 'export TABLET_STREMIO_BIN=${stremio}/bin/stremio' ${native}/bin/tablet-native
   touch "$out"
 ''

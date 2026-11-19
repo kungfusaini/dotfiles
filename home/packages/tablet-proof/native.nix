@@ -3,6 +3,8 @@
 let
   control = pkgs.callPackage ../hyprland-control { inherit hyprland; };
   pegasus = pkgs.callPackage ../tablet-pegasus { };
+  stremio = pkgs.callPackage ../stremio.nix { };
+  python = pkgs.python3.withPackages (p: [ p.pygobject3 ]);
   registry = pkgs.writeText "tablet-native-apps.json" (builtins.toJSON
     (builtins.filter (app: app.id == "browser")
       (builtins.fromJSON (builtins.readFile ../../config/quickshell/tablet-home-preview/apps.json))));
@@ -14,13 +16,16 @@ let
   '';
   package = pkgs.writeShellApplication {
     name = "tablet-native";
-    runtimeInputs = with pkgs; [ python3 quickshell coreutils glib dconf squeekboard wireplumber brightnessctl libnotify vivaldi pegasus hyprland ];
+    runtimeInputs = with pkgs; [ python quickshell coreutils glib dconf squeekboard wireplumber brightnessctl libnotify vivaldi pegasus stremio hyprland ];
     text = ''
       export PYTHONPATH=${control.pythonPath}:"''${PYTHONPATH:-}"
       export TABLET_PROOF_QML=${ui}/shell.qml
       export TABLET_PROOF_SOURCE=${./controller.py}
       export TABLET_MEDIA_CLIENT_SOURCE=${./media/client.py}
       export TABLET_GAMING_SOURCE=${./gaming.py}
+      export TABLET_STREMIO_SOURCE=${./stremio.py}
+      export TABLET_STREMIO_BIN=${stremio}/bin/stremio
+      export GI_TYPELIB_PATH=${lib.getLib pkgs.glib}/lib/girepository-1.0
       export TABLET_PEGASUS_BIN=${pegasus}/bin/pegasus-fe
       export TABLET_WINDOW_APPS_SOURCE=${../../scripts/desktop/tablet_apps.py}
       export TABLET_APPS_REGISTRY=${registry}
@@ -37,4 +42,4 @@ let
       exec python3 ${./native.py} "$@"
     '';
   };
-in { inherit package ui media pegasus; }
+in { inherit package ui media pegasus stremio; }
