@@ -9,6 +9,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 MIDI_SOURCE = "Midi-Bridge:VMPK Output:out (capture)"
+FIXED_PIANO = "./Routes/Route[@name='Sketch Piano']/Processor[@unique-id='https://community.ardour.org/node/7596']"
 
 
 def atomic_write(path, data, exclusive=False):
@@ -101,7 +102,58 @@ def configure_ardour(config):
     marker.touch()
 
 
-def create_session(music, template):
+def fluid_state(soundfont):
+    # Lilv resolves atom:Path properties from file URIs when restoring state.
+    return f'''@prefix lv2: <http://lv2plug.in/ns/lv2core#> .
+@prefix pset: <http://lv2plug.in/ns/ext/presets#> .
+@prefix state: <http://lv2plug.in/ns/ext/state#> .
+<> a pset:Preset ;
+   lv2:appliesTo <urn:ardour:a-fluidsynth> ;
+   state:state [ <urn:ardour:a-fluidsynth:sf2file> <{soundfont.as_uri()}> ] .
+'''.encode("UTF-8")
+
+
+def replace_fixed_piano(tree, directory, soundfont):
+    """Only migrate our known fixed piano; leave custom instruments alone."""
+    processor = tree.find(FIXED_PIANO)
+    if processor is None:
+        return False
+    plugin_dir = directory / "plugins" / processor.get("id")
+    version = 1
+    while (plugin_dir / f"state{version}").exists():
+        version += 1
+    state = plugin_dir / f"state{version}"
+    atomic_write(state / "state.ttl", fluid_state(soundfont))
+    processor.set("name", "ACE Fluid Synth")
+    processor.set("unique-id", "urn:ardour:a-fluidsynth")
+    old = processor.find("lv2")
+    if old is not None:
+        processor.remove(old)
+    ET.SubElement(processor, "lv2", {
+        "state-dir": state.name, "last-preset-uri": "", "last-preset-label": "",
+        "parameter-changed-since-last-preset": "0",
+    })
+    return True
+
+
+def upgrade_session(music, soundfont):
+    directory = music / "Laptop Instrument"
+    path = directory / "Laptop Instrument.ardour"
+    if not path.is_file():
+        return
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError:
+        print("Laptop Instrument session is not valid XML; leaving it untouched.")
+        return
+    if tree.find(FIXED_PIANO) is None:
+        return
+    atomic_write(path.with_suffix(".ardour.pre-general-midi"), path.read_bytes(), exclusive=True)
+    replace_fixed_piano(tree, directory, soundfont)
+    write_xml(path, tree)
+
+
+def create_session(music, template, soundfont):
     directory = music / "Laptop Instrument"
     if directory.exists():
         return
@@ -120,12 +172,13 @@ def create_session(music, template):
     music.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".laptop-instrument-", dir=music) as tmp:
         staged = Path(tmp) / "Laptop Instrument"
+        replace_fixed_piano(tree, staged, soundfont)
         write_xml(staged / "Laptop Instrument.ardour", tree)
         if not directory.exists():
             staged.rename(directory)
 
 
-def setup(config, music, template, vmpk_running=False, ardour_running=False):
+def setup(config, music, template, *, soundfont, vmpk_running=False, ardour_running=False):
     if vmpk_running:
         print("VMPK is running; skipping initial keyboard preferences.")
     else:
@@ -134,11 +187,12 @@ def setup(config, music, template, vmpk_running=False, ardour_running=False):
         print("Ardour is running; skipping its JACK preference migration.")
     else:
         configure_ardour(config)
-    create_session(music, template)
+        upgrade_session(music, soundfont)
+    create_session(music, template, soundfont)
 
 
 if __name__ == "__main__":
     config, music, template = map(Path, sys.argv[1:4])
-    setup(config, music, template,
+    setup(config, music, template, soundfont=Path(sys.argv[6]),
           vmpk_running=sys.argv[4] == "running",
           ardour_running=sys.argv[5] == "running")

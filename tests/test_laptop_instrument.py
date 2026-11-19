@@ -12,6 +12,7 @@ spec = importlib.util.spec_from_file_location(
 setup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(setup)
 TEMPLATE = ROOT / "home/config/ardour/musical-sketch.template"
+FONT = Path("/test/soundfonts/General MIDI.sf2")
 guide_spec = importlib.util.spec_from_file_location(
     "laptop_keyboard_guide", ROOT / "home/scripts/laptop-keyboard-guide.py")
 guide = importlib.util.module_from_spec(guide_spec)
@@ -67,7 +68,7 @@ class LaptopInstrumentTests(unittest.TestCase):
             ardour.parent.mkdir(parents=True)
             original = b'<Ardour><Config><Option name="unrelated" value="keep"/></Config><Extra><AudioMIDISetup><EngineStates><State backend="PulseAudio" active="1"/></EngineStates></AudioMIDISetup></Extra></Ardour>'
             ardour.write_bytes(original)
-            setup.setup(config, music, TEMPLATE)
+            setup.setup(config, music, TEMPLATE, soundfont=FONT)
             states = ET.parse(ardour).findall(".//EngineStates/State")
             self.assertEqual([s.get("backend") for s in states if s.get("active") == "1"],
                              ["JACK/Pipewire"])
@@ -77,7 +78,11 @@ class LaptopInstrumentTests(unittest.TestCase):
             route = ET.parse(session).find("./Routes/Route[@default-type='midi']")
             self.assertEqual(route.find("Controllable[@name='monitor']").get("value"), "1")
             self.assertIn(setup.MIDI_SOURCE, [c.get("other") for c in route.findall("./IO[@direction='Input']/Port/Connection")])
-            self.assertIsNotNone(route.find("Processor[@type='lv2']"))
+            fluid = route.find("Processor[@unique-id='urn:ardour:a-fluidsynth']")
+            self.assertIsNotNone(fluid)
+            state = session.parent / "plugins" / fluid.get("id") / fluid.find("lv2").get("state-dir") / "state.ttl"
+            self.assertIn(FONT.as_uri(), state.read_text())
+            self.assertNotIn(" ", FONT.as_uri())
             prefs = configparser.ConfigParser()
             prefs.read(config / "vmpk.sourceforge.net/VMPK.conf")
             self.assertEqual(prefs["Keyboard"]["MapFile"], str(config / "vmpk/home-row.xml"))
@@ -90,14 +95,14 @@ class LaptopInstrumentTests(unittest.TestCase):
     def test_repeated_activation_never_replaces_preferences_or_music(self):
         with tempfile.TemporaryDirectory() as tmp:
             config, music = Path(tmp) / "config", Path(tmp) / "music"
-            setup.setup(config, music, TEMPLATE)
+            setup.setup(config, music, TEMPLATE, soundfont=FONT)
             prefs = config / "vmpk.sourceforge.net/VMPK.conf"
             prefs.write_text("my custom map and shortcuts")
             ardour = config / "ardour9/config"
             ardour.write_text("my later audio preferences")
             session = music / "Laptop Instrument/Laptop Instrument.ardour"
             session.write_text("my music")
-            setup.setup(config, music, TEMPLATE)
+            setup.setup(config, music, TEMPLATE, soundfont=FONT)
             self.assertEqual(prefs.read_text(), "my custom map and shortcuts")
             self.assertEqual(ardour.read_text(), "my later audio preferences")
             self.assertEqual(session.read_text(), "my music")
@@ -142,9 +147,9 @@ class LaptopInstrumentTests(unittest.TestCase):
             music = Path(tmp)
             with mock.patch.object(setup, "atomic_write", side_effect=OSError("disk full")):
                 with self.assertRaises(OSError):
-                    setup.create_session(music, TEMPLATE)
+                    setup.create_session(music, TEMPLATE, FONT)
             self.assertEqual(list(music.iterdir()), [])
-            setup.create_session(music, TEMPLATE)
+            setup.create_session(music, TEMPLATE, FONT)
             self.assertTrue((music / "Laptop Instrument/Laptop Instrument.ardour").exists())
 
     def test_atomic_create_never_overwrites_existing_file(self):
@@ -155,10 +160,69 @@ class LaptopInstrumentTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), b"original")
             self.assertEqual(list(Path(tmp).iterdir()), [path])
 
+    def test_existing_fixed_piano_upgrade_preserves_music_and_headphone_links(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            music = Path(tmp)
+            path = music / "Laptop Instrument/Laptop Instrument.ardour"
+            path.parent.mkdir()
+            tree = ET.parse(TEMPLATE)
+            ET.SubElement(tree.find("Sources"), "Source", {"name": "my-performance.mid", "id": "999"})
+            output = tree.find("./Routes/Route[@name='Master']/IO[@direction='Output']/Port/Connection")
+            output.set("other", "my-headphones:playback_FL")
+            setup.write_xml(path, tree)
+            original = path.read_bytes()
+            setup.upgrade_session(music, FONT)
+            new = ET.parse(path)
+            self.assertIsNone(new.find(setup.FIXED_PIANO))
+            self.assertIsNotNone(new.find(".//Processor[@unique-id='urn:ardour:a-fluidsynth']"))
+            self.assertEqual(new.find("Sources/Source").get("name"), "my-performance.mid")
+            self.assertEqual(new.find("./Routes/Route[@name='Master']/IO[@direction='Output']/Port/Connection").get("other"), "my-headphones:playback_FL")
+            self.assertEqual(path.with_suffix(".ardour.pre-general-midi").read_bytes(), original)
+            first = path.read_bytes()
+            setup.upgrade_session(music, FONT)
+            self.assertEqual(path.read_bytes(), first)
+
+    def test_custom_instrument_is_not_replaced(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            music = Path(tmp)
+            path = music / "Laptop Instrument/Laptop Instrument.ardour"
+            tree = ET.parse(TEMPLATE)
+            tree.find(setup.FIXED_PIANO).set("unique-id", "urn:my-custom-synth")
+            setup.write_xml(path, tree)
+            original = path.read_bytes()
+            setup.upgrade_session(music, FONT)
+            self.assertEqual(path.read_bytes(), original)
+            self.assertFalse((path.parent / "plugins").exists())
+            self.assertFalse(path.with_suffix(".ardour.pre-general-midi").exists())
+
+    def test_running_session_is_not_upgraded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "music/Laptop Instrument/Laptop Instrument.ardour"
+            setup.write_xml(path, ET.parse(TEMPLATE))
+            original = path.read_bytes()
+            setup.setup(root / "config", root / "music", TEMPLATE, soundfont=FONT, ardour_running=True)
+            self.assertEqual(path.read_bytes(), original)
+            self.assertFalse((path.parent / "plugins").exists())
+
+    def test_failed_upgrade_keeps_snapshot_and_can_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            music = Path(tmp)
+            path = music / "Laptop Instrument/Laptop Instrument.ardour"
+            setup.write_xml(path, ET.parse(TEMPLATE))
+            original = path.read_bytes()
+            with mock.patch.object(setup, "write_xml", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    setup.upgrade_session(music, FONT)
+            self.assertEqual(path.read_bytes(), original)
+            setup.upgrade_session(music, FONT)
+            self.assertIsNone(ET.parse(path).find(setup.FIXED_PIANO))
+            self.assertEqual(path.with_suffix(".ardour.pre-general-midi").read_bytes(), original)
+
     def test_running_applications_are_not_reconfigured(self):
         with tempfile.TemporaryDirectory() as tmp:
             config, music = Path(tmp) / "config", Path(tmp) / "music"
-            setup.setup(config, music, TEMPLATE, vmpk_running=True, ardour_running=True)
+            setup.setup(config, music, TEMPLATE, soundfont=FONT, vmpk_running=True, ardour_running=True)
             self.assertFalse((config / "ardour9/config").exists())
             self.assertFalse((config / "vmpk.sourceforge.net/VMPK.conf").exists())
             self.assertTrue((music / "Laptop Instrument/Laptop Instrument.ardour").exists())

@@ -44,6 +44,8 @@ in
   };
 
   xdg.configFile."vmpk/home-row.xml".source = ../config/vmpk/home-row.xml;
+  xdg.dataFile."soundfonts/FluidR3_GM.sf2".source =
+    "${pkgs.soundfont-fluid}/share/soundfonts/FluidR3_GM2-2.sf2";
 
   # Both applications own their writable preferences. Seed once, and skip
   # running applications rather than racing their eventual preference writes.
@@ -53,6 +55,7 @@ in
       "${config.home.homeDirectory}/Music/ardour" \
       ${../config/ardour/musical-sketch.template} \
       "$(${pkgs.procps}/bin/pgrep -u "$UID" -x 'vmpk|\.vmpk-wrapped' >/dev/null && echo running || echo stopped)" \
-      "$(${pkgs.procps}/bin/pgrep -u "$UID" -x ArdourGUI >/dev/null && echo running || echo stopped)"
+      "$(${pkgs.procps}/bin/pgrep -u "$UID" -x ArdourGUI >/dev/null && echo running || echo stopped)" \
+      "${config.xdg.dataHome}/soundfonts/FluidR3_GM.sf2"
   '';
 }

@@ -1,7 +1,7 @@
 # Laptop keyboard instrument: VMPK → Ardour
 
-VMPK is the playable controller; Ardour's ACE Reasonable Synth supplies the
-General MIDI sounds. No physical MIDI device, recording, or running transport
+VMPK is the playable controller; Ardour's **ACE Fluid Synth** with the
+**FluidR3 GM2** SoundFont supplies the General MIDI sounds. No physical MIDI device, recording, or running transport
 is needed. Start **VMPK** first, then open
 `~/Music/ardour/Laptop Instrument/Laptop Instrument.ardour` in **Ardour**.
 Keep VMPK focused while playing. Its Program selector and sustain control can
@@ -79,9 +79,21 @@ backed up at `~/.config/ardour9/config.pre-laptop-instrument`, and later manual
 audio changes are respected. Running applications are skipped during activation;
 close them before a deployment if their initial setup is still pending.
 
-The new session uses input monitoring, the existing piano synth, and a saved
+The new session uses input monitoring, ACE Fluid Synth, and a saved
 connection from `Midi-Bridge:VMPK Output:out (capture)` to `Sketch Piano`.
-Existing music sessions and the Musical Sketch template are not modified.
+The original Musical Sketch template remains unchanged. Only the known
+fixed piano in `Laptop Instrument` is migrated, while Ardour is closed.
+Its snapshot is backed up as `Laptop Instrument.ardour.pre-general-midi`;
+recordings, track settings and saved output links are retained. A user-replaced
+instrument is not touched. The SoundFont is deployed declaratively at
+`~/.local/share/soundfonts/FluidR3_GM.sf2`; the LV2 state references that stable
+path, with no runtime dependency on the repository checkout.
+
+The initial implementation incorrectly used ACE Reasonable Synth, which
+**explicitly ignores MIDI Control and Program Messages**. Seeing a VMPK patch
+label change, or capturing a program-change message, did not verify that the
+instrument actually changed sound. ACE Fluid Synth with an SF2 bank fixes
+that receiving-end limitation.
 If VMPK was opened after the session and the connection has not returned,
 Ardour's MIDI Connections window can connect that source to Sketch Piano.
 
@@ -111,7 +123,26 @@ notes were labelled, holding A highlighted C4, and the status showed MIDI60.
 The guide's43 labelled typing keys are checked against the XML map in tests,
 and its build-rendered PNG is visually inspected for readability.
 
+### Actual patch-audio regression
+
+`tests/fluid_patch_audio.py` must run via `private-x11-run`. It starts a private
+JACK dummy server (no physical devices) and hosts ACE Fluid Synth either in
+jalv or in an actual generated Ardour session. Pass the test tools' `bin`
+directory (jalv/jackd), SF2 file, Ardour's LV2 directory, JACK client library,
+and optionally the unwrapped Ardour binary as positional arguments. Adding
+xdotool/xwd/ImageMagick to the runner's PATH enables private failure diagnostics.
+No live desktop X server, socket, focus, MIDI device, or audio output is used.
+
+For MIDI note60/velocity90, GM programs0 (piano),24 (nylon guitar) and80
+(square lead) each produce nonzero recorded float PCM. The regression requires
+all three waveforms to differ, rather than merely checking event transmission.
+The generated Ardour session passed: RMS approximately0.038,0.048 and0.147;
+normalized pairwise differences all exceeded1.1 (required minimum0.3).
+The snapshot upgrade also has preservation/idempotence/failure-retry unit tests.
+This establishes distinct software output, not headphone audibility.
+
 Primary references:
+- [Ardour bundled instruments: ACE Fluid Synth requires an SF2](https://manual.ardour.org/plugins-instruments/)
 - [VMPK documentation and editable mappings](https://vmpk.sourceforge.io/index.shtml)
 - [VMPK action shortcuts](https://sourceforge.net/p/vmpk/support-requests/37/)
 - [Ardour virtual keyboard](https://manual.ardour.org/midi/midi-recording/the-virtual-midi-keyboard/)
