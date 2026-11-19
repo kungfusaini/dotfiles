@@ -212,8 +212,11 @@ class Stremio:
         self.write(value)  # Survives controller interruption before first map.
         command = [sys.executable, str(Path(__file__).resolve()), '--spawn', value['token']]
         try:
+            # Hyprland execs with its own environment, not this controller's.
+            # Carry the immutable executable explicitly across that boundary.
             self.dispatch('exec', {'command': 'env GDK_BACKEND=wayland TABLET_STREMIO_TOKEN='
-                          + value['token'] + ' ' + shlex.join(command),
+                          + value['token'] + ' TABLET_STREMIO_BIN=' + shlex.quote(os.environ['TABLET_STREMIO_BIN'])
+                          + ' ' + shlex.join(command),
                           'rules': {'workspace': 'name:' + WORKSPACE + ' silent'}})
         except Exception:
             value['deadline'] = 0

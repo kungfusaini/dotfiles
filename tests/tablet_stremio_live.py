@@ -36,7 +36,9 @@ def inner():
     binary = root / 'stremio-fixture'
     binary.write_text('#!/bin/sh\nexec ' + shlex.join([os.environ['TABLET_TEST_STREMIO'], '--url', page.as_uri()]) + ' "$@" > ' + shlex.quote(str(root / 'stremio.log')) + ' 2>&1\n')
     binary.chmod(0o755)
-    os.environ['TABLET_STREMIO_BIN'] = str(binary)
+    # The real compositor does not inherit the native wrapper's executable.
+    # Keep that boundary clean: only the controller gets this fixture override.
+    os.environ.pop('TABLET_STREMIO_BIN', None)
 
     def start(command, name):
         with (root / (name + '.log')).open('w') as log:
@@ -158,6 +160,11 @@ desktop_policy={no_animation={["tablet-rotation-fade"]=true}}
         ipc = until(lambda: next((runtime / 'hypr').glob('*/.socket.sock'), None), 'private inner socket')
         os.environ['HYPRLAND_INSTANCE_SIGNATURE'] = ipc.parent.name
         os.environ['WAYLAND_DISPLAY'] = until(lambda: next((p.name for p in runtime.glob('wayland-*') if p.is_socket() and p != outer), None), 'private inner display')
+        probe = root / 'compositor-stremio-bin.txt'
+        ctl('dispatch', 'exec', 'printf "%s" "${TABLET_STREMIO_BIN:-}" > ' + shlex.quote(str(probe)))
+        until(probe.exists, 'clean compositor environment probe')
+        assert probe.read_text() == '', 'Fixture must not mask launcher environment handoff'
+        os.environ['TABLET_STREMIO_BIN'] = str(binary)
         ctl('output', 'create', 'headless', 'eDP-1')
         ctl('keyword', 'monitor', 'eDP-1,960x640@60,0x0,1')
         for monitor in json.loads(ctl('monitors', '-j')):

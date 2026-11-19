@@ -38,7 +38,10 @@ start later. Failed launches can be retried once the deadline has passed and
 neither the exact owner nor any token-bearing process survives. Ambiguous windows
 remain unclaimed until the app is quit; no guessed window is closed. Receipts
 live under `$XDG_RUNTIME_DIR/tablet-stremio`, never in Git or the persistent account
-profile.
+profile. The spawn command explicitly carries the packaged Stremio executable:
+Hyprland does not inherit environment exports made by the native controller.
+The private test keeps the compositor's executable override empty to exercise
+this real boundary rather than accidentally supplying it through the fixture.
 
 Tablet presentation reuses the existing reversible fullscreen lease. The normal
 Home/switcher/bottom handle and control drawer remain available. Polling never

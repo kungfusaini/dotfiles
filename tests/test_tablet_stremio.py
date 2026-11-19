@@ -20,7 +20,8 @@ class StremioTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.env = patch.dict(os.environ, XDG_RUNTIME_DIR=self.tmp.name, HYPRLAND_INSTANCE_SIGNATURE='private')
+        self.env = patch.dict(os.environ, XDG_RUNTIME_DIR=self.tmp.name, HYPRLAND_INSTANCE_SIGNATURE='private',
+                              TABLET_STREMIO_BIN='/nix/store/private-client/bin/stremio')
         self.env.start(); self.addCleanup(self.env.stop)
         self.clients = []
         self.events = []
@@ -62,6 +63,7 @@ class StremioTests(unittest.TestCase):
         self.launch()
         self.assertEqual(self.events[0][1]['rules'], {'workspace': 'name:tablet-trial silent'})
         self.assertIn('env GDK_BACKEND=wayland TABLET_STREMIO_TOKEN=', self.events[0][1]['command'])
+        self.assertIn('TABLET_STREMIO_BIN=/nix/store/private-client/bin/stremio', self.events[0][1]['command'])
         self.assertEqual(self.app.path().stat().st_mode & 0o777, 0o600)
 
     def test_desktop_singleton_refused_before_exec(self):
