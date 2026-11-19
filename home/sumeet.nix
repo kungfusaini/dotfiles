@@ -26,6 +26,7 @@ in
     ./modules/command-center-roundup.nix
     ./modules/agent-techniques-weekly.nix
     ./modules/life-atlas-audio.nix
+    ./modules/laptop-instrument.nix
     ./modules/display.nix
     ./modules/hypr.nix
     ./modules/kitty.nix
@@ -86,7 +87,6 @@ in
 
   # User-session tools used by Home Manager managed scripts/keybindings.
   home.packages = with pkgs; [
-    ardour
     brightnessctl
     cli-microsoft365
     loupeIndependent

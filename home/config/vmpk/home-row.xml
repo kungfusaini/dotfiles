@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE keyboardmap>
+<keyboardmap version="1.0">
+  <!-- Home row: white keys, starting at middle C with BaseOctave=4. -->
+  <mapping key="A" note="12"/>
+  <mapping key="S" note="14"/>
+  <mapping key="D" note="16"/>
+  <mapping key="F" note="17"/>
+  <mapping key="G" note="19"/>
+  <mapping key="H" note="21"/>
+  <mapping key="J" note="23"/>
+  <mapping key="K" note="24"/>
+  <mapping key="L" note="26"/>
+  <mapping key=";" note="28"/>
+  <mapping key="'" note="29"/>
+  <!-- Black keys above the home row and its continuation. -->
+  <mapping key="W" note="13"/>
+  <mapping key="E" note="15"/>
+  <mapping key="T" note="18"/>
+  <mapping key="Y" note="20"/>
+  <mapping key="U" note="22"/>
+  <mapping key="O" note="25"/>
+  <mapping key="P" note="27"/>
+  <mapping key="[" note="30"/>
+  <mapping key="]" note="32"/>
+  <mapping key="\" note="34"/>
+  <!-- Lower white keys for bass/chords. Some overlap the home row. -->
+  <mapping key="Z" note="0"/>
+  <mapping key="X" note="2"/>
+  <mapping key="C" note="4"/>
+  <mapping key="V" note="5"/>
+  <mapping key="B" note="7"/>
+  <mapping key="N" note="9"/>
+  <mapping key="M" note="11"/>
+  <mapping key="," note="12"/>
+  <mapping key="." note="14"/>
+  <mapping key="/" note="16"/>
+  <!-- Higher white keys, continuing upward across the number row. -->
+  <mapping key="1" note="24"/>
+  <mapping key="2" note="26"/>
+  <mapping key="3" note="28"/>
+  <mapping key="4" note="29"/>
+  <mapping key="5" note="31"/>
+  <mapping key="6" note="33"/>
+  <mapping key="7" note="35"/>
+  <mapping key="8" note="36"/>
+  <mapping key="9" note="38"/>
+  <mapping key="0" note="40"/>
+  <mapping key="-" note="41"/>
+  <mapping key="=" note="43"/>
+</keyboardmap>

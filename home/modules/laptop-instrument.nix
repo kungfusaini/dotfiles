@@ -1,0 +1,32 @@
+{ config, lib, pkgs, ... }:
+
+let
+  # Ardour's stock build links JACK2. Use PipeWire's compatible client library,
+  # without starting jackd or changing the desktop-wide audio environment.
+  ardourPipewire = pkgs.symlinkJoin {
+    name = "ardour-pipewire";
+    paths = [ pkgs.ardour ];
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    postBuild = ''
+      wrapProgram "$out/bin/ardour9" \
+        --prefix LD_LIBRARY_PATH : ${pkgs.pipewire.jack}/lib \
+        --set-default PIPEWIRE_PROPS '{ jack.default-as-system = true }'
+    '';
+  };
+in
+{
+  home.packages = [ ardourPipewire pkgs.vmpk ];
+
+  xdg.configFile."vmpk/home-row.xml".source = ../config/vmpk/home-row.xml;
+
+  # Both applications own their writable preferences. Seed once, and skip
+  # running applications rather than racing their eventual preference writes.
+  home.activation.laptopInstrument = lib.hm.dag.entryAfter [ "ardourScale" ] ''
+    run ${pkgs.python3}/bin/python3 ${../scripts/laptop-instrument-setup.py} \
+      "${config.xdg.configHome}" \
+      "${config.home.homeDirectory}/Music/ardour" \
+      ${../config/ardour/musical-sketch.template} \
+      "$(${pkgs.procps}/bin/pgrep -u "$UID" -x 'vmpk|\.vmpk-wrapped' >/dev/null && echo running || echo stopped)" \
+      "$(${pkgs.procps}/bin/pgrep -u "$UID" -x ArdourGUI >/dev/null && echo running || echo stopped)"
+  '';
+}
