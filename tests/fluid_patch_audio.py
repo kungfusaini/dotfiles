@@ -138,16 +138,22 @@ try:
     time.sleep(1)
     summary = []
     signals = []
-    for program, name in [(0, 'piano'), (24, 'nylon-guitar'), (80, 'square-lead')]:
+    cases = [(0, 'piano', 0), (24, 'nylon-guitar', 0), (80, 'square-lead', 0)]
+    if ARDOUR:
+        # Keep program changes on channel1, but send the next note on channel2.
+        # Forced capture must map it to the same square patch, not channel2's
+        # default piano. This checks real live-input remapping, not just XML.
+        cases.append((80, 'channel-two-square', 1))
+    for program, name, channel in cases:
         commands.put(bytes([0xB0, 120, 0]))
         time.sleep(.1)
         commands.put('begin')
         commands.put(bytes([0xC0, program]))
-        commands.put(bytes([0x90, 60, 90]))
+        commands.put(bytes([0x90 | channel, 60, 90]))
         time.sleep(.8)
         commands.put('end')
         time.sleep(.05)
-        commands.put(bytes([0x80, 60, 0]))
+        commands.put(bytes([0x80 | channel, 60, 0]))
         data = b''.join(chunks)
         (WORK/(name+'.f32')).write_bytes(data)
         samples = array.array('f')
@@ -166,6 +172,8 @@ try:
         scale = max(math.sqrt(sum(a[i]**2 for i in range(n))/n), math.sqrt(sum(b[i]**2 for i in range(n))/n))
         differences.append(diff/scale)
     assert all(d > .3 for d in differences), 'Programs did not produce distinct audio'
+    if ARDOUR:
+        assert abs(summary[3]['rms'] / summary[2]['rms'] - 1) < .15, 'Channel2 live notes did not use the forced channel1 patch'
     result = {'host':'Ardour session' if ARDOUR else 'jalv', 'audio':summary, 'pairwise_normalized_difference':differences, 'passed':True}
     (WORK/'results.json').write_text(json.dumps(result, indent=2))
     print(json.dumps(result, indent=2), flush=True)

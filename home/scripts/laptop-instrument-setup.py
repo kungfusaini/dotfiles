@@ -10,6 +10,10 @@ import xml.etree.ElementTree as ET
 
 MIDI_SOURCE = "Midi-Bridge:VMPK Output:out (capture)"
 FIXED_PIANO = "./Routes/Route[@name='Sketch Piano']/Processor[@unique-id='https://community.ardour.org/node/7596']"
+SINGLE_CHANNEL = {
+    "capture-channel-mode": "ForceChannel", "capture-channel-mask": "0x1",
+    "playback-channel-mode": "ForceChannel", "playback-channel-mask": "0x1",
+}
 
 
 def atomic_write(path, data, exclusive=False):
@@ -153,6 +157,26 @@ def upgrade_session(music, soundfont):
     write_xml(path, tree)
 
 
+def configure_single_channel(music):
+    directory = music / "Laptop Instrument"
+    marker = directory / ".single-channel-v1"
+    path = directory / "Laptop Instrument.ardour"
+    if marker.exists() or not path.is_file():
+        return
+    try:
+        tree = ET.parse(path)
+    except ET.ParseError:
+        return
+    route = tree.find("./Routes/Route[@name='Sketch Piano']")
+    if route is None:
+        return
+    if any(route.get(key) != value for key, value in SINGLE_CHANNEL.items()):
+        atomic_write(path.with_suffix(".ardour.pre-single-channel"), path.read_bytes(), exclusive=True)
+        route.attrib.update(SINGLE_CHANNEL)
+        write_xml(path, tree)
+    marker.touch()
+
+
 def create_session(music, template, soundfont):
     directory = music / "Laptop Instrument"
     if directory.exists():
@@ -162,6 +186,7 @@ def create_session(music, template, soundfont):
     root.set("name", "Laptop Instrument")
     root.set("sample-rate", "48000")
     route = root.find("./Routes/Route[@default-type='midi']")
+    route.attrib.update(SINGLE_CHANNEL)
     port = route.find("./IO[@direction='Input']/Port")
     ET.SubElement(port, "Connection", {"other": MIDI_SOURCE})
     monitor = route.find("Controllable[@name='monitor']")
@@ -189,6 +214,8 @@ def setup(config, music, template, *, soundfont, vmpk_running=False, ardour_runn
         configure_ardour(config)
         upgrade_session(music, soundfont)
     create_session(music, template, soundfont)
+    if not ardour_running:
+        configure_single_channel(music)
 
 
 if __name__ == "__main__":

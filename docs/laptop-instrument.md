@@ -4,8 +4,8 @@ VMPK is the playable controller; Ardour's **ACE Fluid Synth** with the
 **FluidR3 GM2** SoundFont supplies the General MIDI sounds. No physical MIDI device, recording, or running transport
 is needed. Start **VMPK** first, then open
 `~/Music/ardour/Laptop Instrument/Laptop Instrument.ardour` in **Ardour**.
-Keep VMPK focused while playing. Its Program selector and sustain control can
-also be touched directly; touching another application's window changes focus.
+Keep VMPK focused while playing. Treat it as **note input only**; choose
+patches and sustain in Ardour. Touching another application's window changes focus.
 This initial setup does not implement global key interception or a separate
 touchscreen dashboard.
 
@@ -53,7 +53,8 @@ C3–G6 range: the outer white-key rows extend the main piano layout. Use octave
 shifts to reach other accidentals with the same home-row fingering.
 
 - **Left / Right:** octave down / up.
-- **Page Up / Page Down:** next / previous sound (MIDI program change).
+- Choose sounds in **Ardour → track-header context menu → Patch Selector…**,
+  on channel1. Avoid VMPK's patch controls in this workflow.
 - **Home / End:** decrease / increase note velocity.
 - **Esc:** all notes off (panic).
 - **Edit → Keyboard Map:** inspect or customize the note mapping.
@@ -65,6 +66,25 @@ symlink. VMPK remembers that choice. Its preferences are ordinary writable app
 state, seeded only if absent, never reset on subsequent deployments. The
 controller can feed other instruments too, but arbitrary plugin presets need
 not support General MIDI program changes.
+
+## One channel, Ardour-owned controls
+
+Both capture and playback force **channel1** (`ForceChannel`, mask`0x1`).
+This differs from "All Channels", which preserves the separate channels.
+Existing source notes retain their original channels in the MIDI file but
+are remapped during playback; new capture is mapped to1. No note positions,
+pitches, lengths, velocities or recorded files are rewritten by this change.
+A one-time closed-session migration saves `.ardour.pre-single-channel` before
+changing only these four routing fields. Later deliberate channel changes
+are respected.
+
+Use Ardour's **Patch Selector…** on channel1 for the sound. Use the track
+**A → Controllers → Sustain (CC64)** lane on channel1 for pedal automation:
+0 off,127 on. Existing notes' lengths are not pedal automation. The inspected
+recording had no CC64 messages to remove; a fresh instrument instance starts
+with pedal sustain off. This is not an input-event filter: using VMPK's own
+controller/program widgets can still send those MIDI messages, so leave
+those widgets alone in the note-input-only workflow.
 
 ## Audio and routing
 

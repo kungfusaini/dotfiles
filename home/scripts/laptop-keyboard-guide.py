@@ -84,7 +84,7 @@ def render(keymap, base_octave=4):
             text(x + 45.5, y + 69, note_name(midi) if midi is not None else "—",
                  19, "#e3ebf5" if midi is not None else "#586475", "middle")
 
-    text(60, 952, "← / →  Octave   ·   Page Up / Down  Sound   ·   Home / End  Softer / louder   ·   Esc  Stop notes", 22, "#f0f5fc")
+    text(60, 952, "← / →  Octave   ·   Home / End  Softer / louder   ·   Esc  Stop notes   ·   Choose sounds and sustain in Ardour", 22, "#f0f5fc")
     text(60, 990, "Keep VMPK focused to play and see notes light up. This guide is static; octave shifts or edited mappings change the notes.", 19)
     return ET.ElementTree(root)
 

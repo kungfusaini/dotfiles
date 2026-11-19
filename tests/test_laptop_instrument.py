@@ -77,6 +77,8 @@ class LaptopInstrumentTests(unittest.TestCase):
             session = music / "Laptop Instrument/Laptop Instrument.ardour"
             route = ET.parse(session).find("./Routes/Route[@default-type='midi']")
             self.assertEqual(route.find("Controllable[@name='monitor']").get("value"), "1")
+            for key, value in setup.SINGLE_CHANNEL.items():
+                self.assertEqual(route.get(key), value)
             self.assertIn(setup.MIDI_SOURCE, [c.get("other") for c in route.findall("./IO[@direction='Input']/Port/Connection")])
             fluid = route.find("Processor[@unique-id='urn:ardour:a-fluidsynth']")
             self.assertIsNotNone(fluid)
@@ -218,6 +220,40 @@ class LaptopInstrumentTests(unittest.TestCase):
             setup.upgrade_session(music, FONT)
             self.assertIsNone(ET.parse(path).find(setup.FIXED_PIANO))
             self.assertEqual(path.with_suffix(".ardour.pre-general-midi").read_bytes(), original)
+
+    def test_channel_migration_only_changes_routing_and_preserves_later_choices(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            music = Path(tmp)
+            path = music / "Laptop Instrument/Laptop Instrument.ardour"
+            tree = ET.parse(TEMPLATE)
+            ET.SubElement(tree.find("Sources"), "Source", {"name": "keep.mid", "id": "999"})
+            setup.write_xml(path, tree)
+            original = path.read_bytes()
+            setup.configure_single_channel(music)
+            migrated = ET.parse(path)
+            route = migrated.find("./Routes/Route[@name='Sketch Piano']")
+            for key, value in setup.SINGLE_CHANNEL.items():
+                self.assertEqual(route.get(key), value)
+                route.set(key, tree.find("./Routes/Route[@name='Sketch Piano']").get(key))
+            self.assertEqual(ET.tostring(migrated.getroot()), ET.tostring(tree.getroot()))
+            self.assertEqual(path.with_suffix(".ardour.pre-single-channel").read_bytes(), original)
+            path.write_bytes(original)  # later deliberate multi-channel choice
+            setup.configure_single_channel(music)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_failed_channel_migration_keeps_snapshot_and_retries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            music = Path(tmp)
+            path = music / "Laptop Instrument/Laptop Instrument.ardour"
+            setup.write_xml(path, ET.parse(TEMPLATE))
+            original = path.read_bytes()
+            with mock.patch.object(setup, "write_xml", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    setup.configure_single_channel(music)
+            self.assertEqual(path.read_bytes(), original)
+            self.assertFalse((path.parent / ".single-channel-v1").exists())
+            setup.configure_single_channel(music)
+            self.assertEqual(ET.parse(path).find("./Routes/Route[@name='Sketch Piano']").get("playback-channel-mode"), "ForceChannel")
 
     def test_running_applications_are_not_reconfigured(self):
         with tempfile.TemporaryDirectory() as tmp:
