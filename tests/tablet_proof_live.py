@@ -343,6 +343,8 @@ hl.layer_rule({match={namespace="^tablet-rotation-fade$"},no_anim=true})
 desktop_policy={no_animation={["tablet-rotation-fade"]=true}}
 ''')
             (directory/'hyprland.lua').symlink_to(config)
+            if os.environ.get('TABLET_TEST_NOTIFICATION_GAME'):
+                config.write_text(config.read_text().replace('xwayland={enabled=false}', 'xwayland={enabled=true}'))
         start([os.environ['TABLET_TEST_HYPRLAND'],'-c',str(config)],'hyprland')
         ipc=until(lambda:next((runtime/'hypr').glob('*/.socket.sock'),None),'nested IPC')
         os.environ['HYPRLAND_INSTANCE_SIGNATURE']=ipc.parent.name
@@ -362,6 +364,27 @@ desktop_policy={no_animation={["tablet-rotation-fade"]=true}}
         processes.append(pointer)
         assert select.select([pointer.stdout],[],[],5)[0] and pointer.stdout.readline().strip()=='READY'
         start(['wtype','-s','600000','-k','Shift_L'],'seat-keyboard')
+        if os.environ.get('TABLET_TEST_NOTIFICATION_GAME'):
+            # Own the PRIVATE notification bus on the INNER display before a
+            # browser can auto-activate Mako against the outer compositor.
+            mako_config = root/'notification-mako.conf'
+            mako_config.write_text('''default-timeout=1500
+ignore-timeout=true
+font=DejaVu Sans 12
+[app-name="Project Workspace"]
+anchor=top-center
+layer=overlay
+margin=48,12
+width=640
+height=80
+''')
+            mako = start([os.environ['TABLET_TEST_MAKO'],'--config',str(mako_config)],'notification-mako')
+            def correct_notification_owner():
+                query=subprocess.run(['gdbus','call','--session','--dest','org.freedesktop.DBus',
+                    '--object-path','/org/freedesktop/DBus','--method','org.freedesktop.DBus.GetConnectionUnixProcessID',
+                    'org.freedesktop.Notifications'],capture_output=True,text=True,timeout=5)
+                return query.stdout.strip() == '(uint32 '+str(mako.pid)+',)'
+            until(correct_notification_owner,'private Mako owns correct inner-display notification bus')
         if native:
             manifests = root/'config/vivaldi/NativeMessagingHosts'
             manifests.mkdir(parents=True, exist_ok=True)
@@ -775,6 +798,14 @@ import QtQuick
 ShellRoot { FloatingWindow { visible: true; width: 480; height: 320; title: "Tablet fixture game"; color: "#15b94d"; onClosed: Qt.quit() } }
 ''')
             delayed = 'sleep 3; exec ' + shlex.join(['quickshell', '--path', str(game_ui)])
+            if os.environ.get('TABLET_TEST_NOTIFICATION_GAME'):
+                input_state = runtime/'notification-game-input.json'
+                input_control = runtime/'notification-game-control'
+                input_control.write_text('0')
+                delayed = 'sleep 3; exec ' + shlex.join(['env',
+                    'SDL_VIDEODRIVER='+os.environ['TABLET_TEST_NOTIFICATION_BACKEND'],
+                    'TABLET_NOTIFICATION_GAME_STATE='+str(input_state),
+                    'TABLET_NOTIFICATION_GAME_CONTROL='+str(input_control), os.environ['TABLET_TEST_NOTIFICATION_GAME']])
             launch = [sys.executable, os.environ['TABLET_GAMING_SOURCE'], '--', 'sh', '-c', delayed]
             failure = [sys.executable, os.environ['TABLET_GAMING_SOURCE'], '--', '/definitely-missing-tablet-test-game']
             (games/'failed.rom').touch()
@@ -826,6 +857,74 @@ FocusScope {
             until(lambda:next(c for c in clients() if c['address']==game['address'])['size']==[960,640], 'floating game gets true screen-filling presentation')
             until(lambda: snapshot('visible-floating-game').getpixel((40,40))==(21,185,77),
                   'game buffer fully rendered after compositor geometry settled')
+            if os.environ.get('TABLET_TEST_NOTIFICATION_GAME'):
+                # Exercise actual game input, not only compositor activewindow.
+                # Real Mako popup/expiry, no actions or clicks on notification.
+                def received(): return json.loads(input_state.read_text())
+                def key_received(name):
+                    before = received()['keys']; keys('q')
+                    until(lambda:received()['keys'] > before, name+' keyboard delivered', timeout=5)
+                def click_received(name, move_cursor=True):
+                    before = received()['clicks']
+                    if move_cursor:
+                        # Establish a real nonzero motion, not a no-op warp to
+                        # the same coordinate left by keyboard window focus.
+                        move(500,320); time.sleep(.05); move(480,320)
+                    time.sleep(.1)
+                    pointer_command('mouse-down'); time.sleep(.1); pointer_command('mouse-up')
+                    time.sleep(.1)
+                    ctl('eval','assert(hl.plugin.tablet_test.seat_snapshot())')
+                    (root/'notification-pointer-diagnostic.json').write_text(json.dumps({'name':name,'input':received(),
+                        'seat':json.loads((root/'seat-focus.json').read_text()),
+                        'scene':scene(),'active':json.loads(ctl('activewindow','-j')),
+                        'cursor':json.loads(ctl('cursorpos','-j')),'layers':json.loads(ctl('layers','-j'))},indent=2))
+                    until(lambda:received()['clicks'] > before, name+' pointer delivered', timeout=5)
+                until(lambda:status()['keyboardInset']==0, 'game fixture has no active text input/IME')
+                key_received('before notification'); click_received('before notification')
+                def notification_visible():
+                    return any(l.get('namespace')=='notifications' for level in json.loads(ctl('layers','-j'))['eDP-1']['levels'].values() for l in level)
+                for relative in (False, True):
+                    if relative:
+                        input_control.write_text('1'); until(lambda:received()['relative'], 'game pointer lock acquired')
+                    move(480,80)
+                    mark('passive-notification:begin', relative=relative, driver=received()['driver'])
+                    subprocess.run([os.environ['TABLET_TEST_NOTIFY'],'--app-name=Project Workspace',
+                                    '--expire-time=1500','Private tablet focus regression'],check=True,timeout=5)
+                    until(notification_visible,'real passive notification mapped')
+                    snapshot('notification-visible-'+str(relative))
+                    key_received('during passive notification')
+                    until(lambda:not notification_visible(),'notification expired')
+                    key_received('after passive notification'); click_received('after passive notification', False)
+                    assert received()['relative'] == relative, 'notification changed game pointer-lock mode'
+                    snapshot('notification-expired-'+str(relative))
+                    assert json.loads(ctl('activewindow','-j')).get('stableId')==game['stableId']
+                    mark('passive-notification:input-confirmed', **received())
+                input_control.write_text('0'); until(lambda:not received()['relative'], 'game pointer lock released')
+                # Intentional foreign focus must NOT be reclaimed by any fix.
+                foreign_ui=root/'notification-foreign.qml'
+                foreign_ui.write_text('import Quickshell; import QtQuick; ShellRoot { FloatingWindow { visible:true; width:240; height:160; title:"Notification foreign focus control"; color:"#555555" } }')
+                foreign=start(['quickshell','--path',str(foreign_ui)],'notification-foreign')
+                foreign_window=until(lambda:next((c for c in clients() if c['pid']==foreign.pid),None),'foreign focus control')
+                ctl('dispatch','focuswindow','address:'+foreign_window['address'])
+                time.sleep(3)
+                assert json.loads(ctl('activewindow','-j')).get('stableId')==foreign_window['stableId'], 'foreign focus reclaimed'
+                before=received()['keys']; keys('q'); time.sleep(.2)
+                assert received()['keys']==before, 'game received foreign keyboard input'
+                # Explicit Home -> game selection must work even while a
+                # foreign window still exists; do not assume closing it makes
+                # the compositor choose our game rather than another client.
+                proof('home'); until(lambda:scene()['home'] and not scene()['transitioning'],'Home available after foreign focus')
+                touch_target('app-games')
+                until(lambda:json.loads(ctl('activewindow','-j')).get('stableId')==game['stableId']
+                    and next((c for c in clients() if c.get('stableId')==game['stableId']),{}).get('fullscreen')==2
+                    and next((c for c in clients() if c.get('stableId')==game['stableId']),{}).get('size')==[960,640],
+                    'explicit fullscreen game return after foreign focus')
+                key_received('after explicit focus return')
+                ctl('dispatch','closewindow','address:'+foreign_window['address'])
+                until(lambda:not scene()['home'] and not scene()['transitioning']
+                    and scene()['presentationProgress'] < .001 and not scene()['navigationContact'],
+                    'explicit game return presentation settled')
+                mark('notification-foreign-focus:preserved')
             if os.environ.get('TABLET_TEST_LUA') == '1':
                 edge_home('game-to-home')
                 touch_target('app-games')

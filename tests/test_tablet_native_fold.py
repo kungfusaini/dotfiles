@@ -489,6 +489,70 @@ class NativeTests(unittest.TestCase):
         self.assertFalse(self.native.home)
         self.assertIn('swipe up for Home', self.native.error)
 
+    def test_explicit_game_tile_recovers_foreign_focus_without_releasing_same_lease(self):
+        self.enter()
+        game = self.client('0xac', 'def', n.WORKSPACE)
+        game.update(floating=True, size=[self.panel['width'],self.panel['height']])
+        foreign = self.client('0xad', 'fed', n.WORKSPACE)
+        self.clients += [game, foreign]; self.focus = foreign
+        self.native.active_app = 'games'; self.native.home = True
+        with ExitStack() as stack:
+            for patcher in self.runtime(): stack.enter_context(patcher)
+            stack.enter_context(patch.object(self.native, 'ipc'))
+            stack.enter_context(patch.object(self.native.games, 'game', return_value=game))
+            stack.enter_context(patch.object(self.native.games, 'launch', side_effect=lambda: self.dispatch('focuswindow','address:'+game['address'])))
+            lease = {'window':n.identity(game),'internal':0,'client':0,'presented':True}
+            self.native.record['game_presentation'] = lease
+            self.native.select_games()
+            self.assertEqual(self.focus['stableId'], 'def')
+            self.assertIs(self.native.record['game_presentation'], lease)
+            self.assertFalse(self.native.home)
+            self.assertFalse(lease['presented'])
+            self.assertFalse(any(e[0]=='fullscreenstate' for e in self.events))
+            self.assertTrue(self.native.present_game(game))
+            self.assertEqual((game['fullscreen'],game['fullscreenClient']), (2,2))
+            self.assertEqual((lease['internal'],lease['client']), (0,0))
+
+    def test_explicit_game_card_rearms_same_lease_without_automatic_enforcement(self):
+        self.enter()
+        game = self.client('0xac', 'def', n.WORKSPACE)
+        game.update(floating=True, size=[self.panel['width'],self.panel['height']])
+        self.clients.append(game); self.native.active_app = 'games'
+        with ExitStack() as stack:
+            for patcher in self.runtime(): stack.enter_context(patcher)
+            target = n.identity(game)
+            lease = {'window':target,'internal':0,'client':0,'presented':True}
+            self.native.record['game_presentation'] = lease
+            self.native.games_target = target
+            stack.enter_context(patch.object(self.native, 'switcher_target', return_value=('games',target)))
+            stack.enter_context(patch.object(self.native, 'owned_window_action', side_effect=lambda *a:self.dispatch('focuswindow','address:'+game['address'])))
+            stack.enter_context(patch.object(self.native, 'state', return_value={}))
+            self.native.resume_app({})
+            self.assertFalse(lease['presented'])
+            self.assertIsNone(self.native.games_target)
+            self.assertIs(self.native.record['game_presentation'], lease)
+            self.assertTrue(self.native.present_game(game))
+            self.assertEqual((lease['internal'],lease['client']), (0,0))
+
+    def test_different_presentation_lease_still_refuses_foreign_focus_restoration(self):
+        self.enter()
+        game = self.client('0xac', 'def', n.WORKSPACE)
+        previous = self.client('0xad', 'fed', n.WORKSPACE)
+        foreign = self.client('0xae', 'efd', n.WORKSPACE)
+        self.clients += [game, previous, foreign]; self.focus = foreign
+        self.native.active_app = 'games'; self.native.home = True
+        with ExitStack() as stack:
+            for patcher in self.runtime(): stack.enter_context(patcher)
+            stack.enter_context(patch.object(self.native, 'ipc'))
+            stack.enter_context(patch.object(self.native.games, 'game', return_value=game))
+            lease = {'window':n.identity(previous),'internal':0,'client':0,'presented':True}
+            self.native.record['game_presentation'] = lease
+            with self.assertRaisesRegex(RuntimeError, 'verified foreground'):
+                self.native.select_games()
+            self.assertIs(self.native.record['game_presentation'], lease)
+        self.assertEqual(self.focus['stableId'], 'efd')
+        self.assertFalse(any(e[0] in ('focuswindow','fullscreenstate') for e in self.events))
+
     def test_empty_focus_can_repair_only_verified_foreground_tablet_target(self):
         self.enter(); self.native.active_app = 'games'; self.native.games_requested = True; self.native.home = False
         game = self.client('0xcd', 'def', n.WORKSPACE)

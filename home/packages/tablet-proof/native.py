@@ -521,6 +521,10 @@ class Native(p.Proof):
             self.select_stremio(expected=target)
         elif app == 'games' and self.active_app == 'games':
             self.owned_window_action(target, 'focus')
+            lease = self.record.get('game_presentation')
+            if lease and lease['window'] == identity(target):
+                lease['presented'] = False
+            self.games_target = None
             self.games_requested = True
             self.home = self.drawer = self.resume_overview = False
             self.remember()
@@ -683,7 +687,17 @@ class Native(p.Proof):
             raise RuntimeError('Exact tablet game/library is unavailable; no replacement opened')
         self.cover('Opening Pegasus…')
         try:
-            self.release_game_presentation()
+            lease = self.record.get('game_presentation')
+            target = (self.games.game() or self.games.launcher()) if lease else None
+            # Returning to the SAME lifetime must not demand its focus before
+            # the explicit selection can restore focus. Keep its valid lease;
+            # switching to another app/window still uses strict restoration.
+            if target and lease and lease['window'] == identity(target):
+                # Explicit return may re-present fullscreen if the compositor
+                # exited it during foreign focus, without replacing originals.
+                lease['presented'] = False
+            else:
+                self.release_game_presentation()
             if not self.record.get('home_only'):
                 self.pause_media()
                 self.release_window()

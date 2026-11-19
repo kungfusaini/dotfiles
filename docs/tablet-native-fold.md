@@ -154,6 +154,21 @@ foreground, with neither settings drawer nor IME holding input. The bottom
 handle remains usable after game exit and return to Pegasus; the session does
 not silently become a standalone launcher with no tablet navigation.
 
+An explicit Home → Pegasus selection can return to the same verified game or
+library after foreign focus: it reuses that exact lifetime's fullscreen lease
+instead of requiring game focus before it can restore game focus. Explicit tile
+and game-card returns recheck fullscreen presentation without overwriting the
+original modes; ordinary polling still does not repeatedly enforce fullscreen.
+Different window/app lease restoration remains foreground-checked; this is not
+an automatic refocus or a modal-dialog bypass.
+
+`tests/tablet-touch.nix { notificationProbe = true; gameBackend = "wayland"; }`
+(and `gameBackend = "x11"`) adds a private Mako arrival/expiry test with an SDL
+key/button witness, normal/relative-pointer modes, and a foreign-focus negative
+control followed by explicit Home/tile recovery. These synthetic notifications
+have not reproduced the reported physical interruption; do not infer its cause
+from passing focus metadata or these isolated cases alone.
+
 ## Posture, rotation and recovery
 
 `watch-fold` shares the old watcher's singleton lock and refuses coexistence.

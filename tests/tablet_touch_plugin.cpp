@@ -2,6 +2,7 @@
 #include <hyprland/src/plugins/PluginAPI.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
+#include <hyprland/src/protocols/core/Compositor.hpp>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -54,6 +55,18 @@ static int luaTouch(lua_State* L) {
     lua_pushboolean(L, true);
     return 1;
 }
+static int luaSeatSnapshot(lua_State* L) {
+    auto pid = [](const auto& weak) {
+        pid_t value = 0;
+        if (auto surface = weak.lock()) wl_client_get_credentials(surface->client(), &value, nullptr, nullptr);
+        return value;
+    };
+    std::ofstream file(std::filesystem::path(std::getenv("TABLET_WINDOW_TEST_ROOT")) / "seat-focus.json");
+    file << "{\"pointerPid\":" << pid(g_pSeatManager->m_state.pointerFocus)
+         << ",\"keyboardPid\":" << pid(g_pSeatManager->m_state.keyboardFocus) << "}";
+    lua_pushboolean(L, true);
+    return 1;
+}
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     const char* root = std::getenv("TABLET_WINDOW_TEST_ROOT");
@@ -70,7 +83,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_pInputManager->m_touches.push_back(device);
     g_pInputManager->m_hids.push_back(device);
     g_pInputManager->updateCapabilities();
-    if (!HyprlandAPI::addLuaFunction(handle, "tablet_test", "touch", luaTouch) ||
+    if (!HyprlandAPI::addLuaFunction(handle, "tablet_test", "seat_snapshot", luaSeatSnapshot) ||
+        !HyprlandAPI::addLuaFunction(handle, "tablet_test", "touch", luaTouch) ||
         !HyprlandAPI::addDispatcherV2(handle, "tablet-test-touch", touch))
         throw std::runtime_error("Touch test dispatcher registration failed");
     return {"tablet-test-touch", "Private compositor wl_touch injection", "Machine tests", "1"};
