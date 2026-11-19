@@ -94,6 +94,7 @@ in
     nodejs
     poppler-utils
     (callPackage ./packages/stremio.nix { })
+    (callPackage ./packages/private-x11 { })
   ];
 
   xdg.configFile."ardour9/templates/Musical Sketch/Musical Sketch.template".source =
