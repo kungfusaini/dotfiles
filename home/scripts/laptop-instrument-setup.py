@@ -48,7 +48,7 @@ def seed_vmpk(config):
         "InEnabled": "false", "ThruEnabled": "false",
     }
     settings["Preferences"] = {
-        "BaseOctave": "4", "StartingKey": "0", "NumKeys": "61",
+        "BaseOctave": "4", "StartingKey": "0", "NumKeys": "44",
         "Channel": "0", "Velocity": "90",
         "EnableKeyboardInput": "true", "EnableMouseInput": "true",
         "EnableTouchInput": "true", "ShowStatusBar": "true",
@@ -56,6 +56,12 @@ def seed_vmpk(config):
     settings["Keyboard"] = {
         "MapFile": str(config / "vmpk/home-row.xml"),
         "RawKeyboardMode": "false",
+    }
+    # Drumstick's ShowAlways=3 and OctaveC4=1: every piano key is labelled,
+    # using the same octave convention as the companion typing-key guide.
+    settings["TextSettings"] = {
+        "namesVisibility": "3", "namesOctave": "1",
+        "namesOrientation": "0", "namesFont": "DejaVu Sans,28",
     }
     stream = io.StringIO()
     settings.write(stream, space_around_delimiters=False)

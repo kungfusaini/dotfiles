@@ -1,6 +1,23 @@
 { config, lib, pkgs, ... }:
 
 let
+  guide = pkgs.runCommand "laptop-keyboard-guide" {
+    nativeBuildInputs = [ pkgs.python3 pkgs.resvg ];
+  } ''
+    mkdir -p "$out"
+    python3 ${../scripts/laptop-keyboard-guide.py} \
+      ${../config/vmpk/home-row.xml} "$out/guide.svg"
+    resvg --use-fonts-dir ${pkgs.dejavu_fonts}/share/fonts \
+      "$out/guide.svg" "$out/guide.png"
+  '';
+  guideLauncher = pkgs.writeShellApplication {
+    name = "laptop-keyboard-guide";
+    text = ''
+      exec ${pkgs.swayimg}/bin/swayimg --scale=fit \
+        --class=laptop-keyboard-guide ${guide}/guide.png "$@"
+    '';
+  };
+
   # Ardour's stock build links JACK2. Use PipeWire's compatible client library,
   # without starting jackd or changing the desktop-wide audio environment.
   ardourPipewire = pkgs.symlinkJoin {
@@ -15,7 +32,16 @@ let
   };
 in
 {
-  home.packages = [ ardourPipewire pkgs.vmpk ];
+  home.packages = [ ardourPipewire pkgs.vmpk guideLauncher ];
+
+  xdg.desktopEntries.laptop-keyboard-guide = {
+    name = "Laptop Keyboard Guide";
+    comment = "See the laptop keys and piano notes for VMPK";
+    exec = "${guideLauncher}/bin/laptop-keyboard-guide";
+    icon = "input-keyboard";
+    categories = [ "AudioVideo" "Music" ];
+    terminal = false;
+  };
 
   xdg.configFile."vmpk/home-row.xml".source = ../config/vmpk/home-row.xml;
 

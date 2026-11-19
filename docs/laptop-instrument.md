@@ -9,6 +9,30 @@ also be touched directly; touching another application's window changes focus.
 This initial setup does not implement global key interception or a separate
 touchscreen dashboard.
 
+## Visual first-use view
+
+Open **Laptop Keyboard Guide** from the app launcher (or run
+`laptop-keyboard-guide`) beside VMPK. It shows a large two-octave piano with
+laptop-key letters, plus all four typing rows with each mapped note labelled.
+The home row, black-key row, lower notes and upper notes use different colours.
+The PNG/SVG reference is generated from the managed XML map at build time,
+not maintained as a second hand-written mapping.
+
+VMPK itself starts with **all note names visible**, using C4 for MIDI note60,
+and highlights notes while they are played. Its visible piano is limited to
+the mapped C3–G6 span (44 semitones), rather than shrinking the keys to show
+unused higher octaves. Its Program selector shows the
+selected sound. VMPK does not natively put this custom typing-key mapping on
+its piano, so the companion image supplies that reference without patching
+VMPK or replacing it with a custom instrument.
+
+The guide is **static**, not a playable touch keyboard or a live display:
+keep VMPK focused for key input and highlighting. It represents Base Octave4,
+Transpose0 and the managed baseline; octave shifts and custom maps can make
+the reference differ from the current instrument. Existing user preferences
+are not overwritten just to force labels on: if VMPK was configured earlier,
+choose **View → Show Note Names → Always** to enable them.
+
 ## Playing layout
 
 43 typing keys are mapped. At the initial Base Octave of **4**:
@@ -82,6 +106,10 @@ the JACK API. Routing its MIDI into ACE Reasonable Synth produced nonzero
 stereo float PCM at a task-owned recorder, with Ardour's hardware playback
 connections disabled. This verifies the software path, not audible playback,
 hardware key rollover, touch behavior, or measured input-to-sound latency.
+The visual defaults were also checked on an isolated Xvfb display: all piano
+notes were labelled, holding A highlighted C4, and the status showed MIDI60.
+The guide's43 labelled typing keys are checked against the XML map in tests,
+and its build-rendered PNG is visually inspected for readability.
 
 Primary references:
 - [VMPK documentation and editable mappings](https://vmpk.sourceforge.io/index.shtml)

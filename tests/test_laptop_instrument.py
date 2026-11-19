@@ -12,6 +12,10 @@ spec = importlib.util.spec_from_file_location(
 setup = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(setup)
 TEMPLATE = ROOT / "home/config/ardour/musical-sketch.template"
+guide_spec = importlib.util.spec_from_file_location(
+    "laptop_keyboard_guide", ROOT / "home/scripts/laptop-keyboard-guide.py")
+guide = importlib.util.module_from_spec(guide_spec)
+guide_spec.loader.exec_module(guide)
 
 
 class LaptopInstrumentTests(unittest.TestCase):
@@ -25,8 +29,35 @@ class LaptopInstrumentTests(unittest.TestCase):
         self.assertEqual([mapping[k] for k in "WETYU"], [13, 15, 18, 20, 22])
         self.assertEqual(mapping["Z"], 0)
         self.assertEqual(mapping["="], 43)
-        self.assertTrue(all(0 <= note < 61 for note in mapping.values()))
+        self.assertTrue(all(0 <= note < 44 for note in mapping.values()))
         self.assertFalse(set(mapping) & {"Left", "Right", "PgUp", "PgDown", "Esc"})
+
+    def test_visual_guide_matches_every_managed_mapping(self):
+        path = ROOT / "home/config/vmpk/home-row.xml"
+        svg = guide.render(path).getroot()
+        caps = {g.get("data-key"): g.get("data-midi")
+                for g in svg.findall(f"{{{guide.SVG}}}g")}
+        mapping = {m.get("key"): str(48 + int(m.get("note")))
+                   for m in ET.parse(path).findall("mapping")}
+        self.assertEqual({k: v for k, v in caps.items() if v}, mapping)
+        self.assertEqual(caps["A"], "60")
+        self.assertEqual(caps["W"], "61")
+        self.assertEqual(caps["Q"], "")
+        text = " ".join(svg.itertext())
+        self.assertIn("A = middle C", text)
+        self.assertIn("C4", text)
+        self.assertIn("G6", text)
+        self.assertIn("This guide is static", text)
+
+    def test_visual_guide_tracks_changes_instead_of_duplicating_the_map(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "map.xml"
+            path.write_text('<keyboardmap><mapping key="A" note="14"/></keyboardmap>')
+            svg = guide.render(path).getroot()
+            cap = next(g for g in svg.findall(f"{{{guide.SVG}}}g") if g.get("data-key") == "A")
+            self.assertEqual(cap.get("data-midi"), "62")
+        self.assertEqual(guide.note_name(60), "C4")
+        self.assertEqual(guide.note_name(61), "C#4")
 
     def test_initial_setup_is_playable_and_preserves_other_preferences(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -52,6 +83,9 @@ class LaptopInstrumentTests(unittest.TestCase):
             self.assertEqual(prefs["Keyboard"]["MapFile"], str(config / "vmpk/home-row.xml"))
             self.assertEqual(prefs["Connections"]["ThruEnabled"], "false")
             self.assertEqual(prefs["Preferences"]["BaseOctave"], "4")
+            self.assertEqual(prefs["Preferences"]["NumKeys"], "44")
+            self.assertEqual(prefs["TextSettings"]["namesVisibility"], "3")
+            self.assertEqual(prefs["TextSettings"]["namesOctave"], "1")
 
     def test_repeated_activation_never_replaces_preferences_or_music(self):
         with tempfile.TemporaryDirectory() as tmp:
