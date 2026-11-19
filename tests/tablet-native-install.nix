@@ -1,5 +1,5 @@
 # Installation contract: immutable companion/host, unchanged normal browser and
-# legacy entry routes until explicit native acceptance. No browser is opened.
+# accepted native entry routes; legacy watcher must not be started. No browser is opened.
 { pkgs, homeConfig, expectedBrowser }:
 let
   lib = pkgs.lib;
@@ -7,9 +7,9 @@ let
   manifest = homeConfig.xdg.configFile."vivaldi/NativeMessagingHosts/org.machine.tablet_media.json".source;
   watcher = builtins.head (builtins.filter (p: p.name == "tablet-fold-watch") homeConfig.home.packages);
 in
-assert !homeConfig.programs.tablet-native.automatic;
+assert homeConfig.programs.tablet-native.automatic;
 assert toString pkgs.vivaldi == toString expectedBrowser;
-assert lib.hasInfix "tablet-chat start-home" homeConfig.xdg.desktopEntries.tablet-workspace.exec;
+assert lib.hasInfix "/bin/tablet-native start" homeConfig.xdg.desktopEntries.tablet-workspace.exec;
 assert builtins.any (p: p.name == "tablet-native") homeConfig.home.packages;
 assert builtins.all (binding:
   !(lib.hasInfix "tablet-chat toggle" (builtins.toJSON binding) || lib.hasInfix "tablet-native toggle" (builtins.toJSON binding))
@@ -32,9 +32,9 @@ assert extension['content_scripts'][1]['all_frames']
 assert extension['content_scripts'][1]['match_origin_as_fallback']
 assert extension.get('externally_connectable') is None
 PY
-  ${pkgs.gnugrep}/bin/grep -Fq -- '-tablet-fold-watch.py' ${watcher}/bin/tablet-fold-watch
-  if ${pkgs.gnugrep}/bin/grep -Fq -- 'tablet-native watch-fold' ${watcher}/bin/tablet-fold-watch; then
-    echo 'Native routing was enabled before acceptance' >&2
+  ${pkgs.gnugrep}/bin/grep -Fq -- '/bin/tablet-native watch-fold' ${watcher}/bin/tablet-fold-watch
+  if ${pkgs.gnugrep}/bin/grep -Fq -- '-tablet-fold-watch.py' ${watcher}/bin/tablet-fold-watch; then
+    echo 'Legacy folding is still wired after native acceptance' >&2
     exit 1
   fi
   touch "$out"

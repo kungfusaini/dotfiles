@@ -1,5 +1,17 @@
 # Native tablet workspace resume
 
+## Default route
+
+After the accepted physical Home/switcher trial and explicit approval, the laptop
+sets `programs.tablet-native.automatic = true`. The existing single
+`tablet-fold-watch` startup wrapper now runs `tablet-native watch-fold`; the
+old watcher is not started. The tablet desktop entry and Home shortcut also use
+the native session. Shared legacy support remains for rollback/tests, not as a
+second active route. Applying configuration does not replace a running watcher:
+verify and hand off its singleton ownership while unfolded, without restarting
+the desktop. Remaining pen/suspend/site/game-specific checks are not implied by
+this routing decision.
+
 ## Required lifecycle
 
 **Fold switches into the dedicated `tablet-trial` workspace and resumes the

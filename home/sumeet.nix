@@ -121,6 +121,9 @@ in
     options = "--delete-older-than 14d";
   };
 
+  # Accepted native tablet Home/switcher owns folding and tablet entry.
+  programs.tablet-native.automatic = true;
+
   programs.home-manager.enable = true;
   programs.project-object.enable = true;
 }

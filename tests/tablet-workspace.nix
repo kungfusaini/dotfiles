@@ -18,7 +18,8 @@ assert builtins.hasAttr "tablet-workspace" home.xdg.desktopEntries;
 assert builtins.elem "intel_hid.enable_sw_tablet_mode=0" config.boot.kernelParams;
 assert builtins.length (builtins.filter (entry: builtins.match ".*/bin/tablet-fold-watch.*" entry != null) autostart) == 1;
 assert !(builtins.any (entry: builtins.match ".*/bin/tablet-workspace watch.*" entry != null) autostart);
-assert builtins.match ".*/bin/tablet-chat start-home" home.xdg.desktopEntries.tablet-workspace.exec != null;
+assert home.programs.tablet-native.automatic;
+assert builtins.match ".*/bin/tablet-native start" home.xdg.desktopEntries.tablet-workspace.exec != null;
 # The frozen current baseline has no automatic/manual toggle binding.
 assert !(builtins.any (entry: builtins.match ".*tablet-chat toggle.*" (builtins.toJSON entry) != null)
   home.wayland.windowManager.hyprland.settings.bind);
