@@ -6,6 +6,14 @@ let
   modelModePolicy = builtins.fromJSON (builtins.readFile ../config/pi/model-modes.json);
   defaultModelMode = builtins.head (builtins.filter (mode: mode.id == modelModePolicy.default) modelModePolicy.modes);
 
+  emojiPython = pkgs.python3.withPackages (ps: [ ps.pillow ]);
+  emojiNormalizer = pkgs.writeShellApplication {
+    name = "pi-normalize-emoji";
+    text = ''
+      exec ${emojiPython}/bin/python3 ${../scripts/normalize-emoji.py} "$@"
+    '';
+  };
+
   codex-imagegen = pkgs.python3Packages.buildPythonApplication {
     pname = "codex-imagegen-cli";
     version = "0.2.0";
@@ -28,7 +36,7 @@ let
   };
 in
 {
-  home.packages = [ modelDiscovery browserAutomation pkgs.python3 pkgs.curl ];
+  home.packages = [ modelDiscovery browserAutomation emojiNormalizer pkgs.python3 pkgs.curl ];
 
   systemd.user.services.pi-model-discovery = {
     Unit.Description = "Check the authenticated Codex model catalog without invoking models";
@@ -80,6 +88,11 @@ in
   xdg.configFile."pi/agent/extensions/nanogpt.ts".source = ../config/pi/extensions/nanogpt.ts;
   xdg.configFile."pi/agent/extensions/reload-all.ts".source = ../config/pi/extensions/reload-all.ts;
   xdg.configFile."pi/agent/extensions/review.ts".source = ../config/pi/extensions/review.ts;
+  xdg.configFile."pi/agent/skills/codex-imagegen/SKILL.md".source = ../config/pi/skills/codex-imagegen/SKILL.md;
+  xdg.configFile."pi/agent/skills/codex-imagegen/assets/emoji-style-reference.png".source = pkgs.fetchurl {
+    url = "https://raw.githubusercontent.com/kungfusaini/pi-codex-imagegen/5aa8d0eaf7f0d20c072c6fb67af73704106eef86/presets/emoji/emoji-style-reference-sheet.png";
+    hash = "sha256-yNTRG5cEY13Z9muUjPRlszQc1efghMZrErhjm1t5C/g=";
+  };
   xdg.configFile."pi/agent/skills/nanogpt/SKILL.md".source = ../config/pi/skills/nanogpt/SKILL.md;
   xdg.configFile."pi/agent/skills/workstream/SKILL.md".source = ../config/pi/skills/workstream/SKILL.md;
   xdg.configFile."pi/agent/skills/browser/SKILL.md".source = ../config/pi/skills/browser/SKILL.md;
