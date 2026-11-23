@@ -27,6 +27,7 @@ def sandbox_command(history, model, check=False):
         command += ["--ro-bind", str(model), "/model.gguf"]
     for key, value in {
         "HOME": "/home/private", "LANG": "C.UTF-8", "TMPDIR": "/tmp",
+        "TERM": "xterm-256color", "COLORTERM": "truecolor",
         "PATH": "/nonexistent", "PI_CODING_AGENT_DIR": "/home/private/agent",
         "PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0",
         "PI_HYPERLINKS": "0", "PI_IMAGE_PROTOCOL": "none",

@@ -1,0 +1,520 @@
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -306,19 +306,8 @@
+ 	return `'${value.replace(/'/g, `'\\''`)}'`;
+ }
+ 
+-export function formatResumeCommand(sessionManager: SessionManager): string | undefined {
+-	if (!process.stdout.isTTY) return undefined;
+-	if (!sessionManager.isPersisted()) return undefined;
+-
+-	const sessionFile = sessionManager.getSessionFile();
+-	if (!sessionFile || !fs.existsSync(sessionFile)) return undefined;
+-
+-	const args = [APP_NAME];
+-	if (!sessionManager.usesDefaultSessionDir()) {
+-		args.push("--session-dir", quoteIfNeeded(sessionManager.getSessionDir()));
+-	}
+-	args.push("--session", sessionManager.getSessionId());
+-	return args.join(" ");
++export function formatResumeCommand(_sessionManager: SessionManager): string | undefined {
++	return undefined;
+ }
+ 
+ function hasDefaultModelProvider(providerId: string): providerId is keyof typeof defaultModelPerProvider {
+@@ -413,6 +402,15 @@
+ }
+ 
+ export class InteractiveMode {
++	// This package variant is exclusively used inside pi-private's sandbox.
++	private denyPrivateAction(): boolean {
++		this.showWarning("Unavailable in private chat: local, text-only conversations only.");
++		return true;
++	}
++
++	private readonly privateCommands = new Set([
++		"new", "resume", "name", "session", "hotkeys", "tree", "fork", "clone", "compact", "quit",
++	]);
+ 	private runtimeHost: AgentSessionRuntime;
+ 	private renderer: TuiMainScreen | TuiAltScreen;
+ 	private ui: TUI;
+@@ -678,7 +676,7 @@
+ 
+ 	private createBaseAutocompleteProvider(): AutocompleteProvider {
+ 		// Define commands for autocomplete
+-		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.map((command) => ({
++		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.filter((command) => this.privateCommands.has(command.name)).map((command) => ({
+ 			name: command.name,
+ 			description: command.description,
+ 			...(command.argumentHint && { argumentHint: command.argumentHint }),
+@@ -769,11 +767,15 @@
+ 			}
+ 		}
+ 
+-		return new CombinedAutocompleteProvider(
+-			[...slashCommands, ...templateCommands, ...extensionCommands, ...skillCommandList],
+-			this.sessionManager.getCwd(),
+-			this.fdPath,
+-		);
++		// Preserve Pi's command completion, but never enumerate or complete files.
++		const commandsOnly = new CombinedAutocompleteProvider(slashCommands, this.sessionManager.getCwd(), null);
++		return {
++			getSuggestions: (lines, line, column, options) => {
++				if (!/^\/[a-z-]*$/.test((lines[line] ?? "").slice(0, column))) return Promise.resolve(null);
++				return commandsOnly.getSuggestions(lines, line, column, { ...options, force: false });
++			},
++			applyCompletion: (...args) => commandsOnly.applyCompletion(...args),
++		};
+ 	}
+ 
+ 	private setupAutocompleteProvider(): void {
+@@ -832,13 +834,9 @@
+ 		}
+ 	}
+ 
+-	private stopInteractiveTui(fullscreenExitOutput: FullscreenExitOutput): void {
+-		if (this.renderer.mode === "fullscreen" && fullscreenExitOutput === "transcript") {
+-			while (this.renderer.hasOverlayEntries) this.renderer.hideOverlay();
+-			this.switchTuiMode("regular", false, false);
+-			this.renderer.renderNow();
+-		}
+-		this.ui.stop({ preserveScreen: this.renderer.mode === "fullscreen" });
++	private stopInteractiveTui(_fullscreenExitOutput: FullscreenExitOutput): void {
++		// Never spill private content to the regular screen, including fatal exits.
++		this.ui.stop({ preserveScreen: true });
+ 	}
+ 
+ 	private switchTuiMode(mode: TuiMode, restoreProgress = true, startRenderer = true): boolean {
+@@ -1063,13 +1061,7 @@
+ 	 * Update terminal title with session name and cwd.
+ 	 */
+ 	private updateTerminalTitle(): void {
+-		const cwdBasename = path.basename(this.sessionManager.getCwd());
+-		const sessionName = this.sessionManager.getSessionName();
+-		if (sessionName) {
+-			this.ui.terminal.setTitle(`${APP_TITLE} - ${sessionName} - ${cwdBasename}`);
+-		} else {
+-			this.ui.terminal.setTitle(`${APP_TITLE} - ${cwdBasename}`);
+-		}
++		this.ui.terminal.setTitle("Pi — PRIVATE · LOCAL ONLY");
+ 	}
+ 
+ 	/**
+@@ -1181,6 +1173,7 @@
+ 			}
+ 		}
+ 
++		this.showStatus("Private chat ready. /resume opens private history; /quit returns to normal Pi.");
+ 		// Main interactive loop
+ 		while (true) {
+ 			const userInput = await this.getUserInput();
+@@ -3031,6 +3024,7 @@
+ 	}
+ 
+ 	private async handleRightClickPaste(): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		const target = this.renderer.getFocusedComponent();
+ 		const handleInput = target?.handleInput;
+ 		if (!target || !handleInput) return;
+@@ -3045,6 +3039,7 @@
+ 	}
+ 
+ 	private async handleClipboardPaste(): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		try {
+ 			const image = await readClipboardImage();
+ 			if (image) {
+@@ -3078,6 +3073,12 @@
+ 		this.defaultEditor.onSubmit = async (text: string) => {
+ 			text = text.trim();
+ 			if (!text) return;
++			if (text === "/exit") text = "/quit";
++			if (text.startsWith("!") || (text.startsWith("/") && !this.privateCommands.has(text.split(/\s/, 1)[0].slice(1)))) {
++				this.denyPrivateAction();
++				this.editor.setText("");
++				return;
++			}
+ 
+ 			// Handle commands
+ 			if (text === "/settings") {
+@@ -4210,7 +4211,7 @@
+ 			killTrackedDetachedChildren();
+ 		} catch {}
+ 		try {
+-			this.ui.stop();
++			this.ui.stop({ preserveScreen: true });
+ 		} catch {}
+ 		console.error(`${APP_NAME} exiting due to uncaughtException:`);
+ 		console.error(error);
+@@ -4278,6 +4279,7 @@
+ 	}
+ 
+ 	private handleCtrlZ(): void {
++		if (this.denyPrivateAction()) return;
+ 		if (process.platform === "win32") {
+ 			this.showStatus("Suspend to background is not supported on Windows");
+ 			return;
+@@ -4303,7 +4305,7 @@
+ 
+ 		try {
+ 			// Stop the TUI (restore terminal to normal mode)
+-			this.ui.stop();
++			this.ui.stop({ preserveScreen: true });
+ 
+ 			// Send SIGTSTP to process group (pid=0 means all processes in group)
+ 			process.kill(0, "SIGTSTP");
+@@ -4367,6 +4369,7 @@
+ 	}
+ 
+ 	private cycleThinkingLevel(): void {
++		if (this.denyPrivateAction()) return;
+ 		const newLevel = this.session.cycleThinkingLevel();
+ 		if (newLevel === undefined) {
+ 			this.showStatus("Current model does not support thinking");
+@@ -4378,6 +4381,7 @@
+ 	}
+ 
+ 	private async cycleModel(direction: "forward" | "backward"): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		try {
+ 			const result = await this.session.cycleModel(direction);
+ 			if (result === undefined) {
+@@ -4436,9 +4440,10 @@
+ 	}
+ 
+ 	private async handleOpenExternalEditor(): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		const editorCmd = this.settingsManager.getExternalEditorCommand();
+ 		const content = this.editor.getExpandedText?.() ?? this.editor.getText();
+-		this.ui.stop();
++		this.ui.stop({ preserveScreen: true });
+ 		try {
+ 			const result = await editInExternalEditor({
+ 				command: editorCmd,
+@@ -4744,6 +4749,7 @@
+ 	}
+ 
+ 	private showSettingsSelector(): void {
++		if (this.denyPrivateAction()) return;
+ 		this.showSelector((done) => {
+ 			let selector: SettingsSelectorComponent | undefined;
+ 			const defaultProvider = this.settingsManager.getDefaultProvider();
+@@ -4984,6 +4990,7 @@
+ 	}
+ 
+ 	private handleThinkingCommand(searchTerm?: string): void {
++		if (this.denyPrivateAction()) return;
+ 		const availableLevels = this.session.getAvailableThinkingLevels();
+ 		if (!searchTerm) {
+ 			this.showThinkingSelector();
+@@ -5012,6 +5019,7 @@
+ 	}
+ 
+ 	private showThinkingSelector(): void {
++		if (this.denyPrivateAction()) return;
+ 		this.showSelector((done) => {
+ 			const selectLevel = (level: ThinkingLevel, persist: boolean) => {
+ 				this.selectThinkingLevel(level, persist);
+@@ -5033,6 +5041,7 @@
+ 	}
+ 
+ 	private async handleModelCommand(searchTerm?: string): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		if (!searchTerm) {
+ 			this.showModelSelector();
+ 			return;
+@@ -5157,6 +5166,7 @@
+ 	}
+ 
+ 	private showTrustSelector(): void {
++		if (this.denyPrivateAction()) return;
+ 		const cwd = this.sessionManager.getCwd();
+ 		const trustStore = new ProjectTrustStore(this.runtimeHost.services.agentDir);
+ 		const savedDecision = trustStore.getEntry(cwd);
+@@ -5182,6 +5192,7 @@
+ 	}
+ 
+ 	private showModelSelector(initialSearchInput?: string): void {
++		if (this.denyPrivateAction()) return;
+ 		this.showSelector((done) => {
+ 			const selectModel = async (model: Model<any>, persist: boolean) => {
+ 				try {
+@@ -5219,6 +5230,7 @@
+ 	}
+ 
+ 	private showModelsSelector(): void {
++		if (this.denyPrivateAction()) return;
+ 		let availableModels = [...this.session.modelRuntime.getAvailableSnapshot()];
+ 		let availableModelIds = new Set(availableModels.map((model) => `${model.provider}/${model.id}`));
+ 		const configuredPatterns = this.settingsManager.getEnabledModels();
+@@ -5533,6 +5545,7 @@
+ 				initialFilterMode,
+ 			);
+ 			selector.onCopy = async (text) => {
++				if (this.denyPrivateAction()) return;
+ 				if (!text) {
+ 					this.showError("Selected entry has no text to copy");
+ 					return;
+@@ -5685,6 +5698,7 @@
+ 	}
+ 
+ 	private async handleLoginCommand(providerRef?: string): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		if (!providerRef) {
+ 			this.showLoginAuthTypeSelector();
+ 			return;
+@@ -5819,6 +5833,7 @@
+ 	}
+ 
+ 	private async showOAuthSelector(mode: "login" | "logout"): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		if (mode === "login") {
+ 			this.showLoginAuthTypeSelector();
+ 			return;
+@@ -6170,6 +6185,7 @@
+ 	// =========================================================================
+ 
+ 	private async handleReloadCommand(): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		if (this.session.isStreaming) {
+ 			this.showWarning("Wait for the current response to finish before reloading.");
+ 			return;
+@@ -6260,6 +6276,7 @@
+ 	}
+ 
+ 	private async handleExportCommand(text: string): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		const outputPath = this.getPathCommandArgument(text, "/export");
+ 
+ 		try {
+@@ -6307,6 +6324,7 @@
+ 	}
+ 
+ 	private async handleImportCommand(text: string): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		const inputPath = this.getPathCommandArgument(text, "/import");
+ 		if (!inputPath) {
+ 			this.showError("Usage: /import <path.jsonl>");
+@@ -6351,6 +6369,7 @@
+ 	}
+ 
+ 	private async handleShareCommand(): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		await shareSession({
+ 			session: this.session,
+ 			ui: this.ui,
+@@ -6362,6 +6381,7 @@
+ 	}
+ 
+ 	private async handleBugCommand(hint: string | undefined): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		await reportBug(
+ 			{
+ 				session: this.session,
+@@ -6379,6 +6399,7 @@
+ 	private async handleCopyCommand(
+ 		options: { flashConfirmation?: boolean; preferSelection?: boolean } = {},
+ 	): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		if (
+ 			options.preferSelection &&
+ 			this.ui instanceof TuiAltScreen &&
+@@ -6672,6 +6693,7 @@
+ 	}
+ 
+ 	private handleDebugCommand(): void {
++		if (this.denyPrivateAction()) return;
+ 		const width = this.ui.terminal.columns;
+ 		const height = this.ui.terminal.rows;
+ 		const allLines = this.ui.render(width);
+@@ -6729,6 +6751,7 @@
+ 	}
+ 
+ 	private async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {
++		if (this.denyPrivateAction()) return;
+ 		const extensionRunner = this.session.extensionRunner;
+ 
+ 		// Emit user_bash event to let extensions intercept
+--- a/packages/coding-agent/src/modes/interactive/components/footer.ts
++++ b/packages/coding-agent/src/modes/interactive/components/footer.ts
+@@ -229,7 +229,7 @@
+ 		const dimRemainder = theme.fg("dim", remainder);
+ 
+ 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
+-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
++		const lines = [truncateToWidth(theme.fg("warning", "PRIVATE · LOCAL ONLY · chat only"), width), pwdLine, dimStatsLeft + dimRemainder];
+ 
+ 		// Add extension statuses on a single line, sorted by key alphabetically
+ 		const extensionStatuses = this.footerData.getExtensionStatuses();
+--- a/packages/coding-agent/src/core/agent-session.ts
++++ b/packages/coding-agent/src/core/agent-session.ts
+@@ -410,6 +410,10 @@
+ 	private _runSystemPromptOptions?: NormalizedBuildSystemPromptOptions;
+ 
+ 	constructor(config: AgentSessionConfig) {
++		const privateModel = config.agent.state.model;
++		if (!privateModel || privateModel.provider !== "private-local" || privateModel.id !== "private-qwen" || privateModel.baseUrl !== "http://127.0.0.1:18080/v1") {
++			throw new Error("Private chat requires the pinned local model; no fallback is permitted");
++		}
+ 		this.agent = config.agent;
+ 		this.sessionManager = config.sessionManager;
+ 		this.settingsManager = config.settingsManager;
+@@ -1604,6 +1608,7 @@
+ 	 * @throws Error if no model selected or no API key available (when not streaming)
+ 	 */
+ 	async prompt(text: string, options?: PromptOptions): Promise<void> {
++		if (options?.images?.length) throw new Error("Private chat does not accept attachments");
+ 		if (this._isEmittingAgentSettled) {
+ 			this._deferredSettledActions.push(async () => await this.prompt(text, options));
+ 			return;
+@@ -2116,6 +2121,9 @@
+ 	 * @throws Error if no auth is configured for the model
+ 	 */
+ 	async setModel(model: Model<any>, options: ModelMutationOptions = {}): Promise<void> {
++		if (model.provider !== "private-local" || model.id !== "private-qwen" || model.baseUrl !== "http://127.0.0.1:18080/v1") {
++			throw new Error("Model switching is disabled in private chat");
++		}
+ 		if (!(await this._modelRuntime.checkAuth(model.provider))) {
+ 			throw new Error(`No API key for ${model.provider}/${model.id}`);
+ 		}
+--- a/packages/tui/src/components/markdown.ts
++++ b/packages/tui/src/components/markdown.ts
+@@ -255,7 +255,7 @@
+ 		defaultTextStyle?: DefaultTextStyle,
+ 		options?: MarkdownOptions,
+ 	) {
+-		this.text = text;
++		this.text = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "");
+ 		this.paddingX = paddingX;
+ 		this.paddingY = paddingY;
+ 		this.theme = theme;
+@@ -264,7 +264,7 @@
+ 	}
+ 
+ 	setText(text: string): void {
+-		this.text = text;
++		this.text = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "");
+ 		this.invalidate();
+ 	}
+ 
+--- a/packages/coding-agent/src/modes/interactive/components/assistant-message.ts
++++ b/packages/coding-agent/src/modes/interactive/components/assistant-message.ts
+@@ -203,9 +203,9 @@
+ 						? message.errorMessage
+ 						: "Operation aborted";
+ 				this.contentContainer.addChild(new Spacer(1));
+-				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), this.outputPad, 0));
++				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "")), this.outputPad, 0));
+ 			} else if (message.stopReason === "error") {
+-				const errorMsg = message.errorMessage || "Unknown error";
++				const errorMsg = (message.errorMessage || "Unknown error").replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "");
+ 				this.contentContainer.addChild(new Spacer(1));
+ 				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), this.outputPad, 0));
+ 			}
+--- a/packages/coding-agent/src/modes/interactive/tui-renderer.ts
++++ b/packages/coding-agent/src/modes/interactive/tui-renderer.ts
+@@ -31,17 +31,10 @@
+ 				const label = ` ↓ Jump to latest message${shortcut ? ` · ${shortcut}` : ""} `;
+ 				return theme.bg("selectedBg", theme.fg("text", label));
+ 			},
+-			openUrl: openBrowser,
++			openUrl: () => {},
+ 			onRightClickPaste: options.onRightClickPaste,
+-			copyOnSelect: options.fullscreenCopyOnSelect,
+-			copySelection: async (text) => {
+-				try {
+-					await copyToClipboard(text);
+-					return true;
+-				} catch (error) {
+-					return error instanceof Error ? error.message : String(error);
+-				}
+-			},
++			copyOnSelect: false,
++			copySelection: async () => "Clipboard is disabled in private chat",
+ 		});
+ 	}
+ 	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory);
+--- a/packages/coding-agent/src/core/session-manager.ts
++++ b/packages/coding-agent/src/core/session-manager.ts
+@@ -359,7 +359,7 @@
+ 	for (const line of lines) {
+ 		if (!line.trim()) continue;
+ 		try {
+-			const entry = JSON.parse(line) as FileEntry;
++			const entry = privateHistoryText(JSON.parse(line)) as FileEntry;
+ 			entries.push(entry);
+ 		} catch {
+ 			// Skip malformed lines
+@@ -616,7 +616,7 @@
+ function parseSessionEntryLine(line: string): FileEntry | null {
+ 	if (!line.trim()) return null;
+ 	try {
+-		return JSON.parse(line) as FileEntry;
++		return privateHistoryText(JSON.parse(line)) as FileEntry;
+ 	} catch {
+ 		// Skip malformed lines
+ 		return null;
+@@ -984,6 +984,17 @@
+  * Use buildSessionContext() to get the resolved message list for the LLM, which
+  * handles compaction summaries and follows the path from root to current leaf.
+  */
++// Private variant: sanitize history at ingestion so EVERY native history view
++// (tree, session list, branch previews and resumed transcript) receives safe text.
++function privateHistoryText<T>(value: T): T {
++	if (typeof value === "string") return value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, "") as T;
++	if (Array.isArray(value)) return value.map((item) => privateHistoryText(item)) as T;
++	if (value && typeof value === "object") {
++		return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, privateHistoryText(item)])) as T;
++	}
++	return value;
++}
++
+ export class SessionManager {
+ 	private sessionId: string = "";
+ 	private sessionFile: string | undefined;
+@@ -1083,6 +1094,7 @@
+ 	}
+ 
+ 	private _loadEntries(entries: FileEntry[], options?: NewSessionOptions): void {
++		entries = privateHistoryText(entries);
+ 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
+ 
+ 		if (header) {
+@@ -1187,6 +1199,7 @@
+ 	}
+ 
+ 	private _appendEntry(entry: SessionEntry): void {
++		entry = privateHistoryText(entry);
+ 		this.fileEntries.push(entry);
+ 		this.byId.set(entry.id, entry);
+ 		this.leafId = entry.id;
+--- a/packages/tui/src/components/text.ts
++++ b/packages/tui/src/components/text.ts
+@@ -16,14 +16,14 @@
+ 	private cachedLines?: string[];
+ 
+ 	constructor(text: string = "", paddingX: number = 1, paddingY: number = 1, customBgFn?: (text: string) => string) {
+-		this.text = text;
++		this.text = text.replace(/\u001b\[[0-9;:]*m|[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, (token) => token.startsWith("\u001b[") ? token : "");
+ 		this.paddingX = paddingX;
+ 		this.paddingY = paddingY;
+ 		this.customBgFn = customBgFn;
+ 	}
+ 
+ 	setText(text: string): void {
+-		this.text = text;
++		this.text = text.replace(/\u001b\[[0-9;:]*m|[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g, (token) => token.startsWith("\u001b[") ? token : "");
+ 		this.cachedText = undefined;
+ 		this.cachedWidth = undefined;
+ 		this.cachedLines = undefined;
+--- a/packages/tui/src/tui-alt-screen.ts
++++ b/packages/tui/src/tui-alt-screen.ts
+@@ -381,6 +381,8 @@
+ 	}
+ 
+ 	protected override afterTerminalStop(options: TuiStopOptions): void {
++		// This private-only renderer never exports its document on ANY stop path.
++		options = { ...options, preserveScreen: true };
+ 		if (!this.altScreenActive) return;
+ 		this.altScreenActive = false;
+ 		if (options.preserveScreen) {

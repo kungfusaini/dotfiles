@@ -1,88 +1,95 @@
-# Private chat for Pi
+# Private mode with Pi's native interface
 
-Run `/private` in normal interactive Pi, or run the installed `pi-private` command.
-Normal Pi releases the terminal while a separate, chat-only Pi RPC client and a
-dedicated local llama.cpp server run inside Bubblewrap. Exiting returns to the
-unchanged normal session. No normal messages, session IDs, project guidance,
-credentials, tool results or model selections are forwarded.
+Run `/private` in normal interactive Pi, or run installed `pi-private` directly.
+Normal Pi releases the terminal while a **native Pi TUI** and a dedicated local
+llama.cpp server run inside Bubblewrap. `/quit` (or `/exit`) returns to normal Pi
+without transferring conversation context. Native editor, Markdown, streaming,
+scrolling, message navigation and history selection remain Pi's own components.
+The private TUI uses fullscreen mode to keep private output off shell scrollback.
 
 ## Use
 
-- Type plain text and press Enter (single-line input in this first version).
-- `/new` starts another private conversation.
-- `/history` lists saved private conversations, newest first.
-- `/resume NUMBER` reopens a listed conversation and displays its messages.
-- `/exit`, `/quit`, EOF or Ctrl-C exits private mode.
-- Only one installed private chat may be open at a time, to avoid concurrent writes.
+- Type with Pi's normal editor, including multiline and terminal text paste.
+- `/new` starts a private conversation.
+- `/resume` opens Pi's native picker, containing only private history.
+- `/name`, `/session`, `/tree`, `/fork`, `/clone`, `/compact` and `/hotkeys` remain.
+- `/quit` or `/exit` returns to normal Pi. Ctrl-C follows native Pi's clear/exit
+  behavior; during startup it cancels launch and returns safely.
+- A permanent native footer says **PRIVATE · LOCAL ONLY · chat only**.
+- Only one installed private chat may be open, preventing concurrent writes.
 
-The launcher flushes unread terminal input before normal Pi resumes, including
-on startup failure. Normal Pi is shielded from foreground Ctrl-C while the private
-launcher shuts down and reaps its sandbox. A parent-death signal and extension
-shutdown cleanup also tear down private processes if normal Pi exits. If input flushing fails, normal Pi
-shuts down rather than accepting a potentially private input queue.
+There is no replacement text frontend or numbered `/resume NUMBER` interface.
+Existing private JSONL conversations remain compatible; no migration, copying,
+merging or deletion is performed. Normal Pi's package, settings, selected model
+and history are untouched.
 
-The entry point does not accept a prompt argument. Private input is never sent to
-the parent Pi. The `/private` command itself is not a promise to conceal that the
-feature was opened. The extension uses an alternate terminal screen and clears
-it before returning. Model/history output is plain text with terminal control
-and Unicode format characters removed; no OSC clipboard writes or live links.
+## Privacy boundary
 
-Private conversations are **unencrypted**, saved with restrictive permissions at
-`~/.local/state/pi-private/sessions/`, outside normal Pi's session/history and
-Project Object worklogs. They remain accessible to root and other programs
-running as the same user. This is not protection against a compromised host,
-terminal recording, backups, swap, memory inspection or arbitrary host searches.
-Do not run host tools over this directory or submit its contents to a cloud model.
-No private content should be placed in source control, worklogs or test artifacts.
+The complete environment, **including inference**, uses fresh mount, process,
+IPC, user and network namespaces. It cannot reach external networking, host
+loopback, desktop sockets, host home or projects. Only the read-only Nix store,
+read-only selected GGUF and separate writable history are mounted, along with
+minimal virtual devices and private temporary directories. Environment variables
+are allowlisted. Namespace failures abort; there is no less-private fallback.
 
-## Boundary
+The existing Qwen3.5-4B-Q4_K_M weights come from `~/matrix/models/LLM/`. Inference
+uses CPU/four threads, an 8192-token context and a 1024-token response limit.
+Private mode never downloads weights or stops/reconfigures existing model
+services. Diagnostics stay in sandbox tmpfs, not the system journal.
 
-- The **entire** private environment, including inference, uses fresh mount,
-  process, IPC, user and network namespaces. There is no external interface,
-  route, host loopback connection or network proxy. User-namespace failures
-  abort launch; there is no less-private fallback.
-- Only the Nix store (read-only), the selected GGUF (read-only), separate history
-  (read-write), minimal virtual devices and private temporary directories are
-  exposed. Host home, credentials, D-Bus/SSH/browser sockets, `/run/user` and
-  project directories are not mounted. Environment variables are allowlisted.
-- This first version uses the existing Qwen3.5-4B-Q4_K_M weights from
-  `~/matrix/models/LLM/`, CPU inference, four threads, an 8192-token context and
-  a 1024-token response limit. It starts/stops its own server and never stops or
-  reconfigures existing model services. Weights are never downloaded at runtime.
-- Pi runs offline with no tools, discovered extensions, skills, templates,
-  context files or ordinary package settings. Its bundled llama command is
-  intrinsically registered in Pi 0.87.1, but cannot be dispatched through this UI.
-- The custom text-only frontend allowlists RPC operations. There is no native
-  Pi TUI command dispatch, user shell, file attachment, model switching, export,
-  share, editor, clipboard or external-browser operation. `@paths` inside prose
-  are just text, not file expansion. Leading shell/attachment/unknown slash
-  commands are rejected. Chat is still Pi's session and inference engine, not a
-  separately implemented conversation store.
-- Server and RPC diagnostics stay in sandbox tmpfs, not the system journal.
-  Completed conversation messages persist through Pi's normal JSONL mechanism.
-  An interrupted generation may be incomplete. History is never automatically
-  merged into normal Pi or cloud sessions.
+A dedicated package variant (`native-chat.patch`) restricts the **actual Pi UI**:
 
-Bubblewrap is a sandbox construction tool, not a complete policy by itself:
-https://github.com/containers/bubblewrap . The mounts, environment and namespace
-arguments in `launcher.py` define this feature's policy. It is not a VM; the
-host kernel and installed Nix dependencies remain trusted.
+- Tools, discovered extensions, skills, templates and project context are off.
+- Shell, attachments, exports/imports/uploads, login, cloud/model switching,
+  settings, external editors, clipboard operations, debugging and suspend are
+  blocked. Native handlers are guarded, including shortcut/menu paths; hiding
+  slash suggestions is not the enforcement mechanism.
+- Slash completion includes only supported private commands; file/path
+  completion is disabled. `@paths` typed in prose are literal text, not reads.
+- Pi's session engine rejects non-pinned models and image attachments.
+- Native Markdown preserves theme formatting but filters raw terminal-control
+  input. Private history is also sanitized on append/read, covering tree/list
+  previews and older saved conversations, not just the main transcript.
+- Fullscreen copy-on-select and the renderer's clipboard/browser callbacks are
+  disabled. Even forced transcript/fatal exits leave fullscreen without printing
+  conversation text or a normal-Pi resume command into shell scrollback.
+- The bundled `/llama` extension intrinsically exists in Pi 0.87.1, but private
+  UI dispatch blocks it. Offline flags reduce automatic activity; the sandbox,
+  not those flags, enforces the network boundary.
+
+The launcher flushes unread private keystrokes before normal input resumes,
+including startup failures. Normal Pi is shielded from foreground SIGINT while
+launching. Parent-death protection and shutdown cleanup terminate/reap private
+processes when normal Pi exits. Failed input flushing shuts normal Pi down
+rather than handing a potentially private input queue to it.
+
+Private history is **unencrypted**, under `~/.local/state/pi-private/sessions/`
+with restrictive permissions, outside normal Pi and Project Object histories.
+It remains accessible to root and programs running as the same user. This does
+not protect against a compromised host, terminal recording, backups, swap,
+memory inspection, arbitrary host searches or deliberate human copying/link
+opening through the terminal. Do not submit this directory to a cloud model.
+The `/private` invocation itself is not concealed from the normal environment.
+
+Bubblewrap supplies mechanisms; these mounts and namespaces define the policy:
+https://github.com/containers/bubblewrap . The host kernel and installed Nix
+software are trusted. This is not a VM or a promise that a same-user host app
+cannot read local files.
 
 ## Verification
 
 ```sh
-python3 -B tests/test_pi_private.py
-node --test tests/pi-private.test.mjs
 python3 -B tests/test_pi_private.py --package /nix/store/…-pi-private-0.1.0
-python3 -B tests/test_pi_private_terminal.py --package /nix/store/…-pi-private-0.1.0 --pi /nix/store/…-pi-coding-agent-0.87.1/bin/pi
+node --test tests/pi-private.test.mjs
+PI_PRIVATE_TEST_ROOT=/nix/store/…-pi-coding-agent-0.87.1/lib/node_modules/pi-monorepo \
+  node --test tests/pi-private-native.test.mjs
+python3 -B tests/test_pi_private_native.py --package /nix/store/…-pi-private-0.1.0
+python3 -B tests/test_pi_private_terminal.py --package /nix/store/…-pi-private-0.1.0 --pi /nix/store/…-normal-pi/bin/pi
 pi-private --check
 ```
 
-The packaged test uses synthetic prompts and a temporary history directory,
-checks actual blocked external/host-loopback connectivity and distinct network
-namespace identity, performs real isolated local inference, verifies restrictive
-history permissions, then reopens that conversation in a fresh sandbox. It does
-not read existing chats or call a cloud model. Hidden PTY tests run actual Pi
-without graphical windows, verifying startup-failure input isolation and Ctrl-C
-return to the original model/session, and full private-process teardown when
-only the normal Pi parent is terminated. `--check` performs no inference.
+Tests use only synthetic prompts and temporary histories. Hidden PTY tests
+exercise actual native Pi, multiline editing, command/shortcut restrictions,
+real isolated local inference, native named-history reopening, queued-input
+failure isolation, Ctrl-C return and parent-death teardown. They open no windows
+and inspect no existing chats. `--check` performs no inference.

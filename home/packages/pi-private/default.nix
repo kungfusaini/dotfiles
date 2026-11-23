@@ -1,10 +1,14 @@
 { runCommand, replaceVars, python3, bubblewrap, llama-cpp, pi }:
 let
+  # A dedicated variant: the normal Pi package and its interface are untouched.
+  nativePi = pi.overrideAttrs (old: {
+    patches = (old.patches or [ ]) ++ [ ./native-chat.patch ];
+  });
   launcher = replaceVars ./launcher.py {
     python = "${python3}/bin/python3";
     bwrap = "${bubblewrap}/bin/bwrap";
     chat = "${./chat.py}";
-    pi = "${pi}/bin/pi";
+    pi = "${nativePi}/bin/pi";
     llama = "${llama-cpp}/bin/llama-server";
   };
 in

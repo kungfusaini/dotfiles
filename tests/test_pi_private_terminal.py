@@ -34,16 +34,25 @@ def until(fd, needle, timeout=60):
 
 
 def wait_exit(pid, fd):
+    output = b""
     deadline = time.monotonic() + 15
     while time.monotonic() < deadline:
         found, status = os.waitpid(pid, os.WNOHANG)
         if found:
             assert os.waitstatus_to_exitcode(status) == 0, status
-            return
+            while select.select([fd], [], [], 0)[0]:
+                try:
+                    data = os.read(fd, 65536)
+                except OSError:
+                    break
+                if not data:
+                    break
+                output += data
+            return output
         ready, _, _ = select.select([fd], [], [], 0.1)
         if ready:
             try:
-                os.read(fd, 65536)
+                output += os.read(fd, 65536)
             except OSError:
                 pass
     raise AssertionError("Normal Pi did not exit cleanly after /quit")
@@ -107,7 +116,7 @@ def run_case(package, pi, interrupt, terminate_parent=False):
             until(fd, "PRIVATE_TEST_NORMAL_READY")
             os.write(fd, b"/private\r")
             if interrupt or terminate_parent:
-                until(fd, "[PRIVATE", timeout=210)
+                until(fd, "Private chat ready.", timeout=210)
                 if terminate_parent:
                     children = descendants(pid)
                     assert len(children) >= 3, "Expected launcher, sandbox and private children"
@@ -123,10 +132,12 @@ def run_case(package, pi, interrupt, terminate_parent=False):
                     print("PASS: terminating only normal Pi tears down private processes and releases storage lock")
                     return
                 os.write(fd, b"\x03")
+                time.sleep(0.15)
+                os.write(fd, b"\x03")
             else:
                 until(fd, "Starting isolated local model")
                 os.write(fd, b"PRIVATE_SENTINEL_DO_NOT_FORWARD\n")
-            until(fd, "Private chat failed", timeout=30)
+            until(fd, "fixture-model" if interrupt else "Private chat failed", timeout=30)
             assert os.waitpid(pid, os.WNOHANG) == (0, 0), "Ctrl-C killed the normal Pi parent"
             os.write(fd, b"/quit\r")
             wait_exit(pid, fd)
