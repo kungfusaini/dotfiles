@@ -32,8 +32,20 @@ read-only selected GGUF and separate writable history are mounted, along with
 minimal virtual devices and private temporary directories. Environment variables
 are allowlisted. Namespace failures abort; there is no less-private fallback.
 
-The existing Qwen3.5-4B-Q4_K_M weights come from `~/matrix/models/LLM/`. Inference
-uses CPU/four threads, an 8192-token context and a 1024-token response limit.
+Private mode uses `~/matrix/models/LLM/Qwen3.5-4B-abliterated.Q4_K_M.gguf`.
+The original weights and private history remain untouched; exit and reopen
+`/private` to use the new weights. The internal `private-qwen` ID is retained
+for history compatibility. Abliteration reduces refusals but does not guarantee
+unrestricted responses or factual accuracy, and does not itself improve speed.
+
+Weights: [mradermacher/Qwen3.5-4B-abliterated-GGUF](https://huggingface.co/mradermacher/Qwen3.5-4B-abliterated-GGUF),
+revision `f3b61227dde75c72d12391c443efd6fa0229e0eb`, file
+`Qwen3.5-4B-abliterated.Q4_K_M.gguf` (2,707,514,688 bytes), SHA-256
+`1ec0b30c75b49223c82542caf2635a7af4edcda80d8c89759cc000d3871bf48e`.
+The file is downloaded separately and verified against the publisher's LFS hash;
+it is not included in Git or downloaded at private-mode startup.
+
+Inference uses CPU/four threads, an 8192-token context and a 1024-token response limit.
 Private mode never downloads weights or stops/reconfigures existing model
 services. Diagnostics stay in sandbox tmpfs, not the system journal.
 

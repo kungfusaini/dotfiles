@@ -23,7 +23,7 @@ def configure():
     (agent / "settings.json").write_text(json.dumps(settings))
     (agent / "models.json").write_text(json.dumps({"providers": {"private-local": {
         "baseUrl": "http://127.0.0.1:18080/v1", "api": "openai-completions", "apiKey": "local",
-        "models": [{"id": MODEL, "name": "Private local Qwen", "input": ["text"],
+        "models": [{"id": MODEL, "name": "Private Qwen3.5-4B Abliterated", "input": ["text"],
                     "contextWindow": 8192, "maxTokens": 1024,
                     "compat": {"supportsStore": False, "supportsDeveloperRole": False,
                                "supportsReasoningEffort": False, "maxTokensField": "max_tokens"}}]

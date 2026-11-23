@@ -10,7 +10,7 @@ import subprocess
 import sys
 import termios
 
-MODEL_RELATIVE = "matrix/models/LLM/Qwen3.5-4B-Q4_K_M.gguf"
+MODEL_RELATIVE = "matrix/models/LLM/Qwen3.5-4B-abliterated.Q4_K_M.gguf"
 
 
 def sandbox_command(history, model, check=False):
@@ -88,7 +88,7 @@ def main():
     check = sys.argv[1:] == ["--check"]
     model = None if check else home / MODEL_RELATIVE
     if model is not None and not model.is_file():
-        raise RuntimeError("Required local Qwen model is missing; no cloud fallback is available")
+        raise RuntimeError("Required local Qwen3.5-4B Abliterated model is missing; no cloud fallback is available")
     # A foreground child inherits only terminal streams, never prompts or context.
     # No network or namespace failure has a fallback path.
     try:

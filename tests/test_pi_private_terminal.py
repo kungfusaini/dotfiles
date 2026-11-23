@@ -92,10 +92,10 @@ def run_case(package, pi, interrupt, terminate_parent=False):
             .replace("@privateChat@", str(package))
             .replace('export default function (pi: ExtensionAPI) {',
                 'export default function (pi: ExtensionAPI) { pi.on("session_start", () => { setTimeout(() => process.stdout.write("PRIVATE_TEST_NORMAL_READY"), 100); });'))
-        model = home / "matrix/models/LLM/Qwen3.5-4B-Q4_K_M.gguf"
+        model = home / "matrix/models/LLM/Qwen3.5-4B-abliterated.Q4_K_M.gguf"
         model.parent.mkdir(parents=True)
         if interrupt or terminate_parent:
-            model.symlink_to(Path.home() / "matrix/models/LLM/Qwen3.5-4B-Q4_K_M.gguf")
+            model.symlink_to(Path.home() / "matrix/models/LLM/Qwen3.5-4B-abliterated.Q4_K_M.gguf")
         else:
             model.write_bytes(b"synthetic-invalid-model")
         normal_history = home / "normal-sessions"

@@ -31,6 +31,16 @@ if __name__ == "__main__" and "--package" in sys.argv:
 
 
 class Policy(unittest.TestCase):
+    def test_abliterated_weights_and_display_name(self):
+        self.assertEqual(launcher.MODEL_RELATIVE,
+                         "matrix/models/LLM/Qwen3.5-4B-abliterated.Q4_K_M.gguf")
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"PI_CODING_AGENT_DIR": tmp}):
+            chat.configure()
+            models = json.loads((Path(tmp) / "models.json").read_text())
+            model = models["providers"]["private-local"]["models"][0]
+            self.assertEqual(model["id"], "private-qwen")  # Keep existing private history compatible.
+            self.assertEqual(model["name"], "Private Qwen3.5-4B Abliterated")
+
     def test_native_tui_with_no_tools_or_discovery(self):
         argv = chat.pi_command("/pi")
         for option in ["--offline", "--no-tools", "--no-extensions", "--no-skills", "--no-context-files", "--no-approve"]:
