@@ -23,6 +23,20 @@ def sandbox_command(history, model, check=False):
         "--bind", str(history), "/history",
         "--chdir", "/home/private",
     ]
+    # kirax1's Intel iGPU: render access only, never the display/card device.
+    # libdrm needs PCI identity metadata, not the rest of host sysfs. Build a
+    # minimal discovery tree instead of exposing /sys or the whole GPU subtree.
+    gpu = "/sys/devices/pci0000:00/0000:00:02.0"
+    command += [
+        "--dev-bind", "/dev/dri/renderD128", "/dev/dri/renderD128",
+        "--dir", gpu + "/drm/renderD128",
+        "--symlink", "../../../0000:00:02.0", gpu + "/drm/renderD128/device",
+        "--symlink", "../../../bus/pci", gpu + "/subsystem",
+        "--symlink", "../../devices/pci0000:00/0000:00:02.0/drm/renderD128", "/sys/dev/char/226:128",
+    ]
+    for attribute in ["uevent", "vendor", "device", "subsystem_vendor", "subsystem_device", "revision"]:
+        path = gpu + "/" + attribute
+        command += ["--ro-bind", path, path]
     if model is not None:
         command += ["--ro-bind", str(model), "/model.gguf"]
     for key, value in {
@@ -31,6 +45,7 @@ def sandbox_command(history, model, check=False):
         "PATH": "/nonexistent", "PI_CODING_AGENT_DIR": "/home/private/agent",
         "PI_OFFLINE": "1", "PI_SKIP_VERSION_CHECK": "1", "PI_TELEMETRY": "0",
         "PI_HYPERLINKS": "0", "PI_IMAGE_PROTOCOL": "none",
+        "VK_DRIVER_FILES": "@intelVulkanIcd@",
     }.items():
         command += ["--setenv", key, value]
     command += ["@python@", "@chat@", "--pi", "@pi@", "--llama", "@llama@"]

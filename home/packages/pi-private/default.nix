@@ -1,4 +1,4 @@
-{ runCommand, replaceVars, python3, bubblewrap, llama-cpp, pi }:
+{ runCommand, replaceVars, python3, bubblewrap, llama-cpp, mesa, pi }:
 let
   # A dedicated variant: the normal Pi package and its interface are untouched.
   nativePi = pi.overrideAttrs (old: {
@@ -9,7 +9,8 @@ let
     bwrap = "${bubblewrap}/bin/bwrap";
     chat = "${./chat.py}";
     pi = "${nativePi}/bin/pi";
-    llama = "${llama-cpp}/bin/llama-server";
+    llama = "${llama-cpp.override { vulkanSupport = true; }}/bin/llama-server";
+    intelVulkanIcd = "${mesa}/share/vulkan/icd.d/intel_icd.x86_64.json";
   };
 in
 runCommand "pi-private-0.1.0" { } ''

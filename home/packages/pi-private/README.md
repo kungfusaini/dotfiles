@@ -29,8 +29,21 @@ The complete environment, **including inference**, uses fresh mount, process,
 IPC, user and network namespaces. It cannot reach external networking, host
 loopback, desktop sockets, host home or projects. Only the read-only Nix store,
 read-only selected GGUF and separate writable history are mounted, along with
-minimal virtual devices and private temporary directories. Environment variables
-are allowlisted. Namespace failures abort; there is no less-private fallback.
+minimal virtual devices and private temporary directories. GPU acceleration adds
+only `/dev/dri/renderD128` and six read-only Intel PCI identity files (`uevent`,
+`vendor`, `device`, `subsystem_vendor`, `subsystem_device`, `revision`) in a minimal
+synthetic sysfs discovery tree. No display/card device, input/audio device, whole
+host sysfs, desktop socket or driver runtime directory is mounted. The PCI path
+and render node target kirax1's Intel Arc B390; hardware-layout changes fail closed.
+A pinned Mesa Intel Vulkan ICD comes from the Nix store, not the host environment.
+Environment variables are allowlisted. Namespace/device failures abort; there is
+no less-private or cloud fallback.
+
+GPU access is a deliberate expansion of the trusted surface: the sandbox now
+shares the kernel GPU driver and physical GPU with the desktop. Render-only
+access does not grant desktop capture, but does not isolate GPU resource use,
+driver vulnerabilities or GPU side channels. Network and filesystem boundaries
+remain in place.
 
 Private mode uses `~/matrix/models/LLM/Qwen3.5-4B-abliterated.Q4_K_M.gguf`.
 The original weights and private history remain untouched; exit and reopen
@@ -45,7 +58,10 @@ revision `f3b61227dde75c72d12391c443efd6fa0229e0eb`, file
 The file is downloaded separately and verified against the publisher's LFS hash;
 it is not included in Git or downloaded at private-mode startup.
 
-Inference uses CPU/four threads, an 8192-token context and a 1024-token response limit.
+Inference uses llama.cpp's Vulkan backend with all 33 layers offloaded to the
+Intel GPU, four CPU helper threads, an 8192-token context and a 1024-token response
+limit. `Vulkan0` is required explicitly; unavailable GPU startup fails rather than
+silently changing to a CPU or cloud service. Flash attention is explicitly off.
 Private mode never downloads weights or stops/reconfigures existing model
 services. Diagnostics stay in sandbox tmpfs, not the system journal.
 
@@ -98,10 +114,25 @@ PI_PRIVATE_TEST_ROOT=/nix/store/…-pi-coding-agent-0.87.1/lib/node_modules/pi-m
 python3 -B tests/test_pi_private_native.py --package /nix/store/…-pi-private-0.1.0
 python3 -B tests/test_pi_private_terminal.py --package /nix/store/…-pi-private-0.1.0 --pi /nix/store/…-normal-pi/bin/pi
 pi-private --check
+# Optional: compare against the pre-GPU package, using only synthetic chats.
+python3 -B tests/test_pi_private_performance.py --package /nix/store/…-gpu-pi-private-0.1.0 \
+  --baseline-package /nix/store/…-cpu-pi-private-0.1.0
 ```
 
 Tests use only synthetic prompts and temporary histories. Hidden PTY tests
 exercise actual native Pi, multiline editing, command/shortcut restrictions,
 real isolated local inference, native named-history reopening, queued-input
 failure isolation, Ctrl-C return and parent-death teardown. They open no windows
-and inspect no existing chats. `--check` performs no inference.
+and inspect no existing chats. `--check` performs no inference, checks render-only
+exposure/read-only PCI metadata, and requires the render device to exist. The
+packaged tests also enumerate Vulkan devices inside the sandbox.
+
+The synthetic performance test uses the same weights, 8192-token context, four
+threads, 61-token chat input and 64 generated tokens, with cache reuse disabled.
+On kirax1 under existing desktop/private-session load, two CPU responses took
+32.825/67.000 seconds versus 5.091/5.305 seconds with Vulkan (9.60x aggregate
+wall-time speedup). GPU decoding measured 17.90/18.15 tokens/sec and diagnostics
+confirmed 33/33 layer offload. These are loaded-system observations, not guaranteed
+latencies; startup, longer context and concurrent CPU/GPU activity can differ.
+The probe keeps synthetic responses and diagnostics in sandbox tmpfs and outputs
+only timing/offload evidence. It never opens real private history.

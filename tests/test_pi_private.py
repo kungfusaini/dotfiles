@@ -65,6 +65,27 @@ class Policy(unittest.TestCase):
         self.assertNotIn(str(Path.home()), argv)
         self.assertIn("TERM", argv)
 
+    def test_render_only_gpu_and_minimal_read_only_metadata(self):
+        argv = launcher.sandbox_command(Path("/private-history"), Path("/weights"))
+        triples = [argv[i:i + 3] for i in range(len(argv) - 2)]
+        self.assertEqual([t for t in triples if t[0] == "--dev-bind"],
+                         [["--dev-bind", "/dev/dri/renderD128", "/dev/dri/renderD128"]])
+        gpu = "/sys/devices/pci0000:00/0000:00:02.0"
+        sysfs = [t for t in triples if t[0] == "--ro-bind" and t[1].startswith("/sys")]
+        self.assertEqual(sysfs, [["--ro-bind", gpu + "/" + a, gpu + "/" + a] for a in
+                               ["uevent", "vendor", "device", "subsystem_vendor", "subsystem_device", "revision"]])
+        self.assertIn(["--setenv", "VK_DRIVER_FILES", "@intelVulkanIcd@"], triples)
+        self.assertNotIn("/dev/dri/card0", argv)
+        self.assertNotIn("/sys", argv)
+        self.assertNotIn("/run/opengl-driver", argv)
+
+    def test_gpu_server_has_explicit_device_and_no_cloud_fallback(self):
+        argv = chat.model_command("/llama-server")
+        self.assertEqual(argv[argv.index("--device") + 1], "Vulkan0")
+        self.assertEqual(argv[argv.index("--n-gpu-layers") + 1], "999")
+        self.assertEqual(argv[argv.index("--ctx-size") + 1], "8192")
+        self.assertIn("--log-disable", argv)
+
     def test_symlink_storage_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -87,6 +108,16 @@ class Packaged(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("PASS:", result.stdout)
             self.assertNotIn("Network namespace: " + os.readlink("/proc/self/ns/net"), result.stdout)
+
+    def test_real_vulkan_device_in_sandbox(self):
+        built = load("built_gpu_launcher", PACKAGE / "bin/pi-private")
+        with tempfile.TemporaryDirectory(prefix="pi-private-gpu-test-") as tmp:
+            argv = built.sandbox_command(Path(tmp), None)
+            server = argv[-1]
+            argv[-6:] = [server, "--list-devices"]
+            result = subprocess.run(argv, capture_output=True, text=True, timeout=30)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Vulkan0: Intel(R) Arc", result.stdout)
 
 
 if __name__ == "__main__":
