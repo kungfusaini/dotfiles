@@ -1,8 +1,12 @@
-{ config, pkgs, ... }:
+{ config, pkgs, lib, osConfig, ... }:
 
 let
   modelDiscovery = pkgs.callPackage ../packages/pi-model-discovery { };
   browserAutomation = pkgs.callPackage ../packages/pi-browser { };
+  privateChat = pkgs.callPackage ../packages/pi-private {
+    pi = lib.findFirst (p: (p.pname or "") == "pi-coding-agent")
+      (throw "pi-private requires the host's Pi package") osConfig.users.users.sumeet.packages;
+  };
   modelModePolicy = builtins.fromJSON (builtins.readFile ../config/pi/model-modes.json);
   defaultModelMode = builtins.head (builtins.filter (mode: mode.id == modelModePolicy.default) modelModePolicy.modes);
 
@@ -36,7 +40,7 @@ let
   };
 in
 {
-  home.packages = [ modelDiscovery browserAutomation emojiNormalizer pkgs.python3 pkgs.curl ];
+  home.packages = [ modelDiscovery browserAutomation privateChat emojiNormalizer pkgs.python3 pkgs.curl ];
 
   systemd.user.services.pi-model-discovery = {
     Unit.Description = "Check the authenticated Codex model catalog without invoking models";
@@ -80,6 +84,9 @@ in
   xdg.configFile."pi/agent/bin/codex".source = "${pkgs.codex}/bin/codex";
   xdg.configFile."pi/agent/bin/codex-imagegen".source = "${codex-imagegen}/bin/codex-imagegen";
   xdg.configFile."pi/agent/AGENTS.md".source = ../config/pi/AGENTS.md;
+  xdg.configFile."pi/agent/extensions/private.ts".text = builtins.replaceStrings
+    [ "@privateChat@" ] [ "${privateChat}" ]
+    (builtins.readFile ../config/pi/extensions/private.ts);
   xdg.configFile."pi/agent/extensions/chatid.ts".source = ../config/pi/extensions/chatid.ts;
   xdg.configFile."pi/agent/extensions/command-terminal.ts".source = ../config/pi/extensions/command-terminal.ts;
   xdg.configFile."pi/agent/extensions/codex-imagegen.ts".source = ../config/pi/extensions/codex-imagegen.ts;
