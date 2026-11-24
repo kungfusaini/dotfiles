@@ -15,7 +15,7 @@ The private TUI uses fullscreen mode to keep private output off shell scrollback
 - `/name`, `/session`, `/tree`, `/fork`, `/clone`, `/compact` and `/hotkeys` remain.
 - `/quit` or `/exit` returns to normal Pi. Ctrl-C follows native Pi's clear/exit
   behavior; during startup it cancels launch and returns safely.
-- `/image <description>` generates a local image; Escape cancels and reaps its server.
+- `/image <description>` generates a quality image; `/image --fast <description>` uses the faster preset. Escape cancels and reaps its server.
 - A permanent native footer says **PRIVATE · LOCAL ONLY · chat + /image**.
 - Only one installed private chat may be open, preventing concurrent writes.
 
@@ -29,24 +29,55 @@ and history are untouched.
 Reopen `/private` after deployment, then try:
 
 ```text
-/image A red ceramic teapot on a wooden table beside a sunlit window
+/image Candid photograph of a sunlit kitchen, natural colors, realistic textures
+/image --fast A red ceramic teapot beside a sunlit window
 ```
 
 A single pinned extension exposes this **human-only command**, not a model tool.
 It uses [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)'s
 Vulkan backend and the existing read-only
 `~/matrix/models/image/checkpoints/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors`.
-No new image weights are downloaded. The first version generates one 512×512 PNG,
-20 Euler steps, CFG 5, with an on-demand server that exits after each request.
-A harmless synthetic test took about 46 seconds including model startup on
-kirax1; load and thermal conditions vary. Chat remains usable if image weights
-are missing; `/image` reports unavailability rather than downloading/falling back.
+No new image weights are downloaded. Both presets generate one square PNG with
+CFG 5 and an on-demand server that exits after each request:
+
+| Command | Resolution | Steps | Sampler / scheduler |
+| --- | --- | --- | --- |
+| `/image <description>` or `/image --quality <description>` | 1024×1024 | 35 | DPM++ 2M / Karras |
+| `/image --fast <description>` | 512×512 | 20 | Euler / discrete |
+
+The quality preset follows the model's [recommended sampler, steps and CFG range](https://huggingface.co/RunDiffusion/Juggernaut-XL-v9#recommended-settings)
+at SDXL's native square resolution. It improves available detail, not a guarantee
+of photographic quality for every scene. Quality uses GPU VAE tiling with
+64×64 latent tiles (512px decode regions) and 50% overlap: an untiled 1024px VAE
+graph exceeds this Intel Vulkan driver's single-buffer limit. The resolution and
+35-step sampling stay unchanged; decoding does not fall back to the CPU.
+For realism, describe a photograph,
+natural lighting/materials and the desired scene; no style terms or negative
+prompts are silently injected. The 64×64 preview is not the full-resolution image.
+
+The previous fast preset measured about 46 seconds including startup on kirax1.
+The corrected quality preset measured **315.4 seconds (5m15s)** through the actual
+native `/image` command for a harmless photographic portrait, including image-model
+startup and the private PNG save. The 1024×1024 result was visually inspected;
+metadata stripping, mode-0600 storage, history reopening, cancellation and process
+cleanup all passed. GPU diagnostics confirmed Vulkan-resident parameters and the
+DPM++ 2M sampling path; a focused 1024px test separately verified tiled GPU decoding.
+The initial untiled test returned HTTP 500 because the VAE compute allocation
+exceeded the driver's buffer-size limit, not because generation was CPU-only.
+These are loaded-desktop measurements, not guaranteed latencies; load and thermal
+conditions vary. Chat remains usable if image weights are missing; `/image`
+reports unavailability rather than downloading/falling back.
 
 The loader captures input until the request finishes or is cancelled; wait for
 chat generation to finish before using `/image`. Prompts travel over worker stdin
 and sandbox-only HTTP (`127.0.0.1:18081`), not process command lines or a host-facing
 port. User text cannot inject backend configuration tags or CLI arguments. Fixed
 limits bound prompt length, dimensions, batch size, steps and response size.
+Only `fast` and `quality` are accepted; arbitrary flags, custom dimensions and
+backend settings remain unavailable. Fast allows 240 seconds for the HTTP request
+and a 4 MiB response; quality allows 600 seconds and 16 MiB. Both allow up to
+120 seconds of model startup, with outer UI guards of 380/740 seconds respectively.
+Escape remains available throughout generation.
 Backend logs stay in sandbox tmpfs; no diagnostics are sent to the journal.
 
 The result has a small **64×64-pixel, ANSI half-block terminal preview** and a full
@@ -176,6 +207,10 @@ packaged tests also enumerate Vulkan devices inside the sandbox. Image tests
 exercise actual `/image` generation, metadata stripping, mode-0600 outputs,
 pixel-only preview, image-only history persistence/reopening, rejected backend
 tags, and Escape-driven server teardown, using only synthetic temporary data.
+`test_pi_private_images.py --preset fast` verifies the preserved fast path;
+the default tests quality, including the default `/image` command. Optional
+`--artifact-dir <cache-directory>` retains only the synthetic test PNG for visual
+inspection. Old 512px history entries without a preset field remain renderable.
 
 The synthetic performance test uses the same weights, 8192-token context, four
 threads, 61-token chat input and 64 generated tokens, with cache reuse disabled.

@@ -228,8 +228,17 @@ test("pinned image extension renders bounded pixel-only previews", async () => {
   const image = await jiti.import(extension);
   const fixture = { filename: "a".repeat(32) + ".png", width: 512, height: 512,
     seconds: 1, preview: Buffer.alloc(64 * 64 * 3, 127).toString("base64") };
-  assert.equal(image.validImage(fixture), true);
-  for (const value of [{ ...fixture, filename: "../../leak.png" }, { ...fixture, preview: "\\x1b]52;c;no" },
+  assert.equal(image.validImage(fixture), true); // Legacy 512px history remains renderable.
+  assert.equal(image.validImage({ ...fixture, preset: "fast" }), true);
+  assert.equal(image.validImage({ ...fixture, preset: "quality", width: 1024, height: 1024 }), true);
+  assert.deepEqual(image.parseImageArgs("a red teapot"), { prompt: "a red teapot", preset: "quality" });
+  assert.deepEqual(image.parseImageArgs("--quality a red teapot"), { prompt: "a red teapot", preset: "quality" });
+  assert.deepEqual(image.parseImageArgs("--fast a red teapot"), { prompt: "a red teapot", preset: "fast" });
+  for (const args of ["", "--fast", "--quality", "--width 8192 teapot", "--fast --quality teapot", "x".repeat(4001)]) {
+    assert.throws(() => image.parseImageArgs(args), /Usage: \/image/);
+  }
+  for (const value of [{ ...fixture, preset: "quality" }, { ...fixture, preset: "unknown" },
+    { ...fixture, preset: "fast", width: 1024, height: 1024 }, { ...fixture, filename: "../../leak.png" }, { ...fixture, preview: "\\x1b]52;c;no" },
     { ...fixture, width: 8192 }, { ...fixture, seconds: NaN }, { ...fixture, preview: "A".repeat(20000) }]) {
     assert.equal(image.validImage(value), false);
     assert.throws(() => new image.PixelPreview(value));

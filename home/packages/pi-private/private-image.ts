@@ -3,8 +3,25 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { BorderedLoader } from "@earendil-works/pi-coding-agent";
 import { Container, Text } from "@earendil-works/pi-tui";
 
+export type ImagePreset = "fast" | "quality";
+
+export function parseImageArgs(args: string): { prompt: string; preset: ImagePreset } {
+	let prompt = args.trim();
+	let preset: ImagePreset = "quality";
+	const flag = /^--(fast|quality)(?:\s+|$)/.exec(prompt);
+	if (flag) {
+		preset = flag[1] as ImagePreset;
+		prompt = prompt.slice(flag[0].length).trim();
+	}
+	if (!prompt || prompt.length > 4000 || prompt.startsWith("--")) {
+		throw new Error("Usage: /image [--quality|--fast] <description, up to 4000 characters>");
+	}
+	return { prompt, preset };
+}
+
 export interface PrivateImage {
 	filename: string;
+	preset?: ImagePreset;
 	width: number;
 	height: number;
 	preview: string;
@@ -15,7 +32,8 @@ export function validImage(value: unknown): value is PrivateImage {
 	if (!value || typeof value !== "object") return false;
 	const image = value as PrivateImage;
 	return typeof image.filename === "string" && /^[a-f0-9]{32}\.png$/.test(image.filename)
-		&& image.width === 512 && image.height === 512
+		&& (((image.preset === undefined || image.preset === "fast") && image.width === 512 && image.height === 512)
+			|| (image.preset === "quality" && image.width === 1024 && image.height === 1024))
 		&& typeof image.preview === "string" && /^[A-Za-z0-9+/]{16384}$/.test(image.preview)
 		&& Number.isFinite(image.seconds) && image.seconds >= 0;
 }
@@ -63,12 +81,14 @@ export default function (pi: ExtensionAPI) {
 		return box;
 	});
 	pi.registerCommand("image", {
-		description: "Generate a private local image: /image <description>",
+		description: "Generate a private image (quality default): /image [--fast|--quality] <description>",
 		handler: async (args, ctx) => {
-			const prompt = args.trim();
 			if (ctx.mode !== "tui" || !ctx.hasUI) return;
-			if (!prompt || prompt.length > 4000) {
-				ctx.ui.notify("Usage: /image <description, up to 4000 characters>", "warning");
+			let prompt: string;
+			let preset: ImagePreset;
+			try { ({ prompt, preset } = parseImageArgs(args)); }
+			catch {
+				ctx.ui.notify("Usage: /image [--quality|--fast] <description, up to 4000 characters>", "warning");
 				return;
 			}
 			if (active || closing || !ctx.isIdle()) {
@@ -76,7 +96,8 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			const result = await ctx.ui.custom<PrivateImage | null>((tui, theme, _kb, done) => {
-				const loader = new BorderedLoader(tui, theme, "Generating private local image (512×512, 20 steps)…");
+				const settings = preset === "quality" ? "quality: 1024×1024, 35 steps" : "fast: 512×512, 20 steps";
+				const loader = new BorderedLoader(tui, theme, `Generating private local image (${settings})…`);
 				const child = spawn("@python@", ["@imageHelper@"], { stdio: ["pipe", "pipe", "ignore"] });
 				active = child;
 				let output = "";
@@ -84,14 +105,14 @@ export default function (pi: ExtensionAPI) {
 				const cancel = () => { child.kill("SIGTERM"); };
 				loader.signal.addEventListener("abort", cancel, { once: true });
 				// Give Python time to terminate/reap its model server before returning.
-				const timer = setTimeout(cancel, 380000);
+				const timer = setTimeout(cancel, preset === "quality" ? 740000 : 380000);
 				child.stdout!.setEncoding("utf8");
 				child.stdout!.on("data", (data: string) => {
 					if (output.length + data.length > 25000) { oversized = true; cancel(); }
 					else output += data;
 				});
 				child.stdin!.on("error", () => {});
-				child.stdin!.end(JSON.stringify({ prompt }));
+				child.stdin!.end(JSON.stringify({ prompt, preset }));
 				completion = new Promise<void>((resolve) => {
 					const finish = (code: number | null) => {
 						clearTimeout(timer);
@@ -99,7 +120,7 @@ export default function (pi: ExtensionAPI) {
 						active = undefined;
 						let image: PrivateImage | null = null;
 						if (code === 0 && !loader.signal.aborted && !oversized && !closing) {
-							try { const parsed = JSON.parse(output); if (validImage(parsed)) image = parsed; } catch {}
+							try { const parsed = JSON.parse(output); if (validImage(parsed) && parsed.preset === preset) image = parsed; } catch {}
 						}
 						done(image);
 						resolve();
@@ -115,7 +136,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			pi.sendMessage({ customType: "private-image", display: true, details: result,
-				content: `Private image · ${result.width}×${result.height} · ${result.seconds}s\n${prompt}\nSaved: ~/.local/state/pi-private/images/${result.filename}` },
+				content: `Private image · ${result.preset} · ${result.width}×${result.height} · ${result.seconds}s\n${prompt}\nSaved: ~/.local/state/pi-private/images/${result.filename}` },
 				{ triggerTurn: false });
 		},
 	});
