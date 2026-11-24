@@ -11,9 +11,10 @@ import sys
 import termios
 
 MODEL_RELATIVE = "matrix/models/LLM/Qwen3.5-4B-abliterated.Q4_K_M.gguf"
+IMAGE_MODEL_RELATIVE = "matrix/models/image/checkpoints/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors"
 
 
-def sandbox_command(history, model, check=False):
+def sandbox_command(history, model, check=False, images=None, image_model=None):
     command = [
         "@bwrap@", "--unshare-all", "--unshare-user", "--die-with-parent", "--new-session",
         "--disable-userns", "--cap-drop", "ALL", "--clearenv",
@@ -39,6 +40,10 @@ def sandbox_command(history, model, check=False):
         command += ["--ro-bind", path, path]
     if model is not None:
         command += ["--ro-bind", str(model), "/model.gguf"]
+    if images is not None:
+        command += ["--bind", str(images), "/images"]
+    if image_model is not None:
+        command += ["--ro-bind", str(image_model), "/image-model.safetensors"]
     for key, value in {
         "HOME": "/home/private", "LANG": "C.UTF-8", "TMPDIR": "/tmp",
         "TERM": "xterm-256color", "COLORTERM": "truecolor",
@@ -94,6 +99,7 @@ def main():
     home = Path.home()
     root = private_directory(home / ".local/state/pi-private")
     history = private_directory(root / "sessions")
+    images = private_directory(root / "images")
     lock = os.open(root / "active.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -107,7 +113,9 @@ def main():
     # A foreground child inherits only terminal streams, never prompts or context.
     # No network or namespace failure has a fallback path.
     try:
-        return subprocess.call(sandbox_command(history, model, check), close_fds=True)
+        image_model = home / IMAGE_MODEL_RELATIVE
+        return subprocess.call(sandbox_command(history, model, check, images=images,
+                               image_model=image_model if image_model.is_file() else None), close_fds=True)
     finally:
         os.close(lock)
 

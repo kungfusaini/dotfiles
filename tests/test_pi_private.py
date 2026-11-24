@@ -48,6 +48,8 @@ class Policy(unittest.TestCase):
         self.assertNotIn("rpc", argv)
         self.assertEqual(argv[argv.index("--tui-mode") + 1], "fullscreen")
         self.assertEqual(argv[argv.index("--session-dir") + 1], "/history")
+        self.assertEqual(argv.count("--extension"), 1)
+        self.assertEqual(argv[argv.index("--extension") + 1], "@imageExtension@")
 
     def test_native_exit_and_selection_defaults(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"PI_CODING_AGENT_DIR": tmp}):
@@ -85,6 +87,16 @@ class Policy(unittest.TestCase):
         self.assertEqual(argv[argv.index("--n-gpu-layers") + 1], "999")
         self.assertEqual(argv[argv.index("--ctx-size") + 1], "8192")
         self.assertIn("--log-disable", argv)
+
+    def test_optional_image_mounts_are_narrow_and_weights_read_only(self):
+        argv = launcher.sandbox_command(Path("/private-history"), Path("/weights"),
+            images=Path("/private-images"), image_model=Path("/image-weights"))
+        triples = [argv[i:i + 3] for i in range(len(argv) - 2)]
+        self.assertIn(["--bind", "/private-images", "/images"], triples)
+        self.assertIn(["--ro-bind", "/image-weights", "/image-model.safetensors"], triples)
+        self.assertEqual([t for t in triples if t[0] == "--bind"],
+                         [["--bind", "/private-history", "/history"], ["--bind", "/private-images", "/images"]])
+        self.assertNotIn(str(Path.home()), argv)
 
     def test_symlink_storage_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:

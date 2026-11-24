@@ -28,12 +28,12 @@
  export class InteractiveMode {
 +	// This package variant is exclusively used inside pi-private's sandbox.
 +	private denyPrivateAction(): boolean {
-+		this.showWarning("Unavailable in private chat: local, text-only conversations only.");
++		this.showWarning("Unavailable in private chat: local chat and /image only.");
 +		return true;
 +	}
 +
 +	private readonly privateCommands = new Set([
-+		"new", "resume", "name", "session", "hotkeys", "tree", "fork", "clone", "compact", "quit",
++		"new", "resume", "name", "session", "hotkeys", "tree", "fork", "clone", "compact", "quit", "image",
 +	]);
  	private runtimeHost: AgentSessionRuntime;
  	private renderer: TuiMainScreen | TuiAltScreen;
@@ -57,7 +57,7 @@
 -			this.fdPath,
 -		);
 +		// Preserve Pi's command completion, but never enumerate or complete files.
-+		const commandsOnly = new CombinedAutocompleteProvider(slashCommands, this.sessionManager.getCwd(), null);
++		const commandsOnly = new CombinedAutocompleteProvider([...slashCommands, ...extensionCommands.filter((command) => command.name === "image")], this.sessionManager.getCwd(), null);
 +		return {
 +			getSuggestions: (lines, line, column, options) => {
 +				if (!/^\/[a-z-]*$/.test((lines[line] ?? "").slice(0, column))) return Promise.resolve(null);
@@ -342,7 +342,7 @@
  
  		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 -		const lines = [pwdLine, dimStatsLeft + dimRemainder];
-+		const lines = [truncateToWidth(theme.fg("warning", "PRIVATE · LOCAL ONLY · chat only"), width), pwdLine, dimStatsLeft + dimRemainder];
++		const lines = [truncateToWidth(theme.fg("warning", "PRIVATE · LOCAL ONLY · chat + /image"), width), pwdLine, dimStatsLeft + dimRemainder];
  
  		// Add extension statuses on a single line, sorted by key alphabetically
  		const extensionStatuses = this.footerData.getExtensionStatuses();
@@ -480,6 +480,9 @@
  		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
  
  		if (header) {
+@@ -1163 +1175 @@
+-		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
++		const hasAssistant = this.fileEntries.some((e) => (e.type === "message" && e.message.role === "assistant") || (e.type === "custom_message" && e.customType === "private-image"));
 @@ -1187,6 +1199,7 @@
  	}
  
@@ -488,6 +491,9 @@
  		this.fileEntries.push(entry);
  		this.byId.set(entry.id, entry);
  		this.leafId = entry.id;
+@@ -1715 +1728 @@
+-			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
++			const hasAssistant = this.fileEntries.some((e) => (e.type === "message" && e.message.role === "assistant") || (e.type === "custom_message" && e.customType === "private-image"));
 --- a/packages/tui/src/components/text.ts
 +++ b/packages/tui/src/components/text.ts
 @@ -16,14 +16,14 @@

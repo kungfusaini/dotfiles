@@ -32,10 +32,10 @@ def configure():
 
 def pi_command(executable):
     return [executable, "--tui-mode", "fullscreen", "--offline", "--no-approve", "--no-tools",
-            "--no-extensions", "--no-skills", "--no-prompt-templates", "--no-themes",
+            "--no-extensions", "--extension", "@imageExtension@", "--no-skills", "--no-prompt-templates", "--no-themes",
             "--no-context-files", "--session-dir", str(HISTORY),
             "--provider", "private-local", "--model", MODEL, "--thinking", "off",
-            "--system-prompt", "You are a private, local, chat-only assistant. You have no tools or file access. Answer the user's messages directly."]
+            "--system-prompt", "You are a private, local assistant. You have no tools or file access. Answer the user's messages directly. The user can run /image followed by a description to generate a local image; you cannot run that command yourself or view the generated image."]
 
 
 def model_command(executable):

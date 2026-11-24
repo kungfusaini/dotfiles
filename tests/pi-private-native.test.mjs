@@ -1,7 +1,7 @@
 // Verify the actual compiled private Pi variant, not a mock replacement UI.
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -52,10 +52,13 @@ test("native shortcut handlers are guarded, not just slash commands", async () =
 
 test("slash autocomplete retains native commands and never enumerates files", async () => {
   const instance = mode();
-  instance.privateCommands = new Set(["new", "resume", "name", "session", "hotkeys", "tree", "fork", "clone", "compact", "quit"]);
+  instance.privateCommands = new Set(["new", "resume", "name", "session", "hotkeys", "tree", "fork", "clone", "compact", "quit", "image"]);
   Object.defineProperties(instance, {
     sessionManager: { value: { getCwd: () => "/nonexistent-private-fixture" } },
-    session: { value: { promptTemplates: [], extensionRunner: { getRegisteredCommands: () => [] } } },
+    session: { value: { promptTemplates: [], extensionRunner: { getRegisteredCommands: () => [
+      { name: "image", invocationName: "image", description: "Private image" },
+      { name: "unsafe", invocationName: "unsafe", description: "Must not be offered" },
+    ] } } },
     settingsManager: { value: { getEnableSkillCommands: () => false } },
   });
   instance.skillCommands = new Map();
@@ -63,6 +66,7 @@ test("slash autocomplete retains native commands and never enumerates files", as
   const options = { signal: new AbortController().signal, force: true };
   const suggestions = await provider.getSuggestions(["/"], 0, 1, options);
   assert.ok(suggestions.items.some((item) => item.value === "resume"));
+  assert.ok(suggestions.items.some((item) => item.value === "image"));
   assert.ok(suggestions.items.every((item) => instance.privateCommands.has(item.value)));
   for (const text of ["@/history", "/history/", "/nix/store/", "hello", "/name /history"]) {
     assert.equal(await provider.getSuggestions([text], 0, text.length, options), null);
@@ -71,7 +75,7 @@ test("slash autocomplete retains native commands and never enumerates files", as
 
 test("native submit rejects shell and unsafe commands without prompting", async () => {
   const instance = mode();
-  instance.privateCommands = new Set(["new", "resume", "name", "session", "hotkeys", "tree", "fork", "clone", "compact", "quit"]);
+  instance.privateCommands = new Set(["new", "resume", "name", "session", "hotkeys", "tree", "fork", "clone", "compact", "quit", "image"]);
   instance.defaultEditor = {};
   instance.editor = { setText() {} };
   instance.setupEditorSubmitHandler();
@@ -196,6 +200,57 @@ test("actual uncaught-crash cleanup cannot spill the private renderer document",
   }
 });
 
+test("image-only sessions persist and branch without a chat-model response", async () => {
+  const { SessionManager, loadEntriesFromFile } = await import(pathToFileURL(`${root}/dist/core/session-manager.js`));
+  const directory = mkdtempSync(join(tmpdir(), "pi-private-image-history-"));
+  try {
+    const manager = SessionManager.create("/home/private", directory);
+    const leaf = manager.appendCustomMessageEntry("private-image", "Synthetic local image", true, { filename: "fixture.png" });
+    assert.ok(existsSync(manager.getSessionFile()));
+    assert.ok(loadEntriesFromFile(manager.getSessionFile()).some((e) => e.type === "custom_message"));
+    const branch = manager.createBranchedSession(leaf);
+    assert.ok(existsSync(branch));
+    manager.appendSessionInfo("Image-only fixture");
+    const entries = loadEntriesFromFile(branch);
+    assert.equal(entries.filter((e) => e.type === "session").length, 1);
+    assert.ok(entries.some((e) => e.type === "session_info"));
+  } finally { rmSync(directory, { recursive: true }); }
+});
+
+test("pinned image extension renders bounded pixel-only previews", async () => {
+  const extension = process.env.PI_PRIVATE_IMAGE_EXTENSION;
+  assert.ok(extension, "Set PI_PRIVATE_IMAGE_EXTENSION to the packaged private-image.ts");
+  const { createJiti } = await import(pathToFileURL(`${root}/node_modules/jiti/lib/jiti.mjs`));
+  const jiti = createJiti(import.meta.url, { fsCache: false, moduleCache: false, alias: {
+    "@earendil-works/pi-coding-agent": `${root}/dist/index.js`,
+    "@earendil-works/pi-tui": `${root}/node_modules/@earendil-works/pi-tui/dist/index.js`,
+  } });
+  const image = await jiti.import(extension);
+  const fixture = { filename: "a".repeat(32) + ".png", width: 512, height: 512,
+    seconds: 1, preview: Buffer.alloc(64 * 64 * 3, 127).toString("base64") };
+  assert.equal(image.validImage(fixture), true);
+  for (const value of [{ ...fixture, filename: "../../leak.png" }, { ...fixture, preview: "\\x1b]52;c;no" },
+    { ...fixture, width: 8192 }, { ...fixture, seconds: NaN }, { ...fixture, preview: "A".repeat(20000) }]) {
+    assert.equal(image.validImage(value), false);
+    assert.throws(() => new image.PixelPreview(value));
+  }
+  const preview = new image.PixelPreview(fixture);
+  for (const width of [1, 2, 16, 80]) {
+    for (const line of preview.render(width)) {
+      const pixels = line.replace(/\x1b\[[0-9;]*m/g, "");
+      assert.ok(/^▀+$/.test(pixels));
+      assert.ok(pixels.length <= width);
+    }
+  }
+  const commands = new Map();
+  image.default({ on() {}, registerMessageRenderer() {}, registerCommand(name, spec) { commands.set(name, spec); } });
+  assert.deepEqual([...commands.keys()], ["image"]);
+  const notices = [];
+  await commands.get("image").handler("", { mode: "tui", hasUI: true, ui: { notify: (text) => notices.push(text) } });
+  assert.match(notices[0], /Usage: \/image/);
+  assert.ok(!readFileSync(extension, "utf8").includes("registerTool("));
+});
+
 test("private banner is part of the native footer renderer", () => {
-  assert.match(FooterComponent.prototype.render.toString(), /PRIVATE · LOCAL ONLY · chat only/);
+  assert.match(FooterComponent.prototype.render.toString(), /PRIVATE · LOCAL ONLY · chat \+ \/image/);
 });
