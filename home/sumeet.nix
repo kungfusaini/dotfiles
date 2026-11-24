@@ -93,6 +93,7 @@ in
     nicotine-plus
     nodejs
     poppler-utils
+    xarchiver
     (callPackage ./packages/stremio.nix { })
     (callPackage ./packages/private-x11 { })
   ];
