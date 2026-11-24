@@ -100,6 +100,11 @@ in
     url = "https://raw.githubusercontent.com/kungfusaini/pi-codex-imagegen/5aa8d0eaf7f0d20c072c6fb67af73704106eef86/presets/emoji/emoji-style-reference-sheet.png";
     hash = "sha256-yNTRG5cEY13Z9muUjPRlszQc1efghMZrErhjm1t5C/g=";
   };
+  xdg.configFile."pi/agent/prompts/grill-me.md".source = ../config/pi/prompts/grill-me.md;
+  xdg.configFile."pi/agent/skills/grill-me" = {
+    source = ../config/pi/skills/grill-me;
+    recursive = true;
+  };
   xdg.configFile."pi/agent/skills/nanogpt/SKILL.md".source = ../config/pi/skills/nanogpt/SKILL.md;
   xdg.configFile."pi/agent/skills/workstream/SKILL.md".source = ../config/pi/skills/workstream/SKILL.md;
   xdg.configFile."pi/agent/skills/browser/SKILL.md".source = ../config/pi/skills/browser/SKILL.md;
