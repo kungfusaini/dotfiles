@@ -1,7 +1,7 @@
 // Verify the actual compiled private Pi variant, not a mock replacement UI.
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -224,6 +224,7 @@ test("pinned image extension renders bounded pixel-only previews", async () => {
   const jiti = createJiti(import.meta.url, { fsCache: false, moduleCache: false, alias: {
     "@earendil-works/pi-coding-agent": `${root}/dist/index.js`,
     "@earendil-works/pi-tui": `${root}/node_modules/@earendil-works/pi-tui/dist/index.js`,
+    "@earendil-works/pi-ai": `${root}/node_modules/@earendil-works/pi-ai/dist/compat.js`,
   } });
   const image = await jiti.import(extension);
   const fixture = { filename: "a".repeat(32) + ".png", width: 512, height: 512,
@@ -252,12 +253,16 @@ test("pinned image extension renders bounded pixel-only previews", async () => {
     }
   }
   const commands = new Map();
-  image.default({ on() {}, registerMessageRenderer() {}, registerCommand(name, spec) { commands.set(name, spec); } });
+  const tools = new Map();
+  image.default({ on() {}, registerMessageRenderer() {}, registerCommand(name, spec) { commands.set(name, spec); },
+    registerTool(spec) { tools.set(spec.name, spec); } });
   assert.deepEqual([...commands.keys()], ["image"]);
+  assert.deepEqual([...tools.keys()], ["generate_image"]);
   const notices = [];
   await commands.get("image").handler("", { mode: "tui", hasUI: true, ui: { notify: (text) => notices.push(text) } });
   assert.match(notices[0], /Usage: \/image/);
-  assert.ok(!readFileSync(extension, "utf8").includes("registerTool("));
+  assert.equal(tools.get("generate_image").parameters.additionalProperties, false);
+  assert.deepEqual(Object.keys(tools.get("generate_image").parameters.properties), ["prompt", "preset"]);
 });
 
 test("private banner is part of the native footer renderer", () => {

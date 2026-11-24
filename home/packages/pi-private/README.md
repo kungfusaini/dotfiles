@@ -15,7 +15,8 @@ The private TUI uses fullscreen mode to keep private output off shell scrollback
 - `/name`, `/session`, `/tree`, `/fork`, `/clone`, `/compact` and `/hotkeys` remain.
 - `/quit` or `/exit` returns to normal Pi. Ctrl-C follows native Pi's clear/exit
   behavior; during startup it cancels launch and returns safely.
-- `/image <description>` generates a quality image; `/image --fast <description>` uses the faster preset. Escape cancels and reaps its server.
+- Ask normally, e.g. “Generate a realistic image of a sunlit kitchen.” The private agent has one local `generate_image` tool.
+- `/image <description>` also generates a quality image; `/image --fast <description>` uses the faster preset. Escape cancels and reaps its server.
 - A permanent native footer says **PRIVATE · LOCAL ONLY · chat + /image**.
 - Only one installed private chat may be open, preventing concurrent writes.
 
@@ -33,7 +34,17 @@ Reopen `/private` after deployment, then try:
 /image --fast A red ceramic teapot beside a sunlit window
 ```
 
-A single pinned extension exposes this **human-only command**, not a model tool.
+A single pinned extension exposes the `/image` command and exactly one
+model-callable tool, `generate_image`. Built-in tools are disabled and the active
+tool allowlist contains only `generate_image`: no shell, file, browser, network,
+attachment or image-analysis tools are enabled. The agent is instructed to call
+it only for an explicit image request, use quality by default and fast when asked,
+and never automatically retry. At most one tool generation is allowed per agent
+run; success terminates that run without an unnecessary follow-up model call.
+The command and tool share the same worker, single-request lock, size/time limits,
+private preview/storage and cancellation/cleanup path. Tool results contain text
+and private preview metadata, not image content sent to the model.
+
 It uses [stable-diffusion.cpp](https://github.com/leejet/stable-diffusion.cpp)'s
 Vulkan backend and the existing read-only
 `~/matrix/models/image/checkpoints/Juggernaut-XL_v9_RunDiffusionPhoto_v2.safetensors`.
@@ -140,9 +151,10 @@ services. Diagnostics stay in sandbox tmpfs, not the system journal.
 
 A dedicated package variant (`native-chat.patch`) restricts the **actual Pi UI**:
 
-- Tools, discovered extensions, skills, templates and project context are off.
-  Only the explicitly pinned `/image` extension is loaded from the Nix store;
-  this does not enable arbitrary extension discovery or model-callable tools.
+- Built-in tools, discovered extensions, skills, templates and project context
+  are off. Only the explicitly pinned image extension is loaded from the Nix
+  store, and only its `generate_image` tool is allowlisted. This does not enable
+  arbitrary extension discovery or other model-callable tools.
 - Shell, attachments, exports/imports/uploads, login, cloud/model switching,
   settings, external editors, clipboard operations, debugging and suspend are
   blocked. Native handlers are guarded, including shortcut/menu paths; hiding
@@ -180,6 +192,14 @@ software are trusted. This is not a VM or a promise that a same-user host app
 cannot read local files.
 
 ## Verification
+
+For the natural-language tool addition, Sumeet explicitly requested no functional
+or generation tests. Required Nix snapshot build validation and static review
+are performed; the local model's actual tool selection and tool-driven generation
+have **not** been exercised. Earlier generation/timing evidence below concerns
+the shared backend and manual `/image` path, not the new natural-language path.
+Test assertions have been updated but are not claimed to have been run for this
+addition.
 
 ```sh
 python3 -B tests/test_pi_private.py --package /nix/store/…-pi-private-0.1.0

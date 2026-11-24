@@ -31,11 +31,12 @@ def configure():
 
 
 def pi_command(executable):
-    return [executable, "--tui-mode", "fullscreen", "--offline", "--no-approve", "--no-tools",
+    return [executable, "--tui-mode", "fullscreen", "--offline", "--no-approve",
+            "--no-builtin-tools", "--tools", "generate_image",
             "--no-extensions", "--extension", "@imageExtension@", "--no-skills", "--no-prompt-templates", "--no-themes",
             "--no-context-files", "--session-dir", str(HISTORY),
             "--provider", "private-local", "--model", MODEL, "--thinking", "off",
-            "--system-prompt", "You are a private, local assistant. You have no tools or file access. Answer the user's messages directly. The user can run /image followed by a description to generate a local image; you cannot run that command yourself or view the generated image."]
+            "--system-prompt", "You are a private, local assistant. Your only tool is generate_image, which creates one image on the local GPU. Call it when the user explicitly asks you to create, draw, render or generate an image; do not tell them to use /image instead. Use the quality preset by default and fast only when the user asks for speed. Never generate images for unrelated conversation or automatically retry. The tool displays the image preview and saves the full PNG privately. You cannot view or analyze the image, browse, run shell commands or read files. The /image command remains a manual alternative."]
 
 
 def model_command(executable):

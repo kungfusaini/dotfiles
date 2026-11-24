@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { BorderedLoader } from "@earendil-works/pi-coding-agent";
+import { BorderedLoader, defineTool } from "@earendil-works/pi-coding-agent";
+import { Type } from "@earendil-works/pi-ai";
 import { Container, Text } from "@earendil-works/pi-tui";
 
 export type ImagePreset = "fast" | "quality";
@@ -69,6 +70,53 @@ export default function (pi: ExtensionAPI) {
 	let active: ChildProcess | undefined;
 	let completion: Promise<void> | undefined;
 	let closing = false;
+	let requestedThisTurn = false;
+	pi.on("before_agent_start", () => { requestedThisTurn = false; });
+	pi.on("tool_call", (event) => {
+		if (event.toolName !== "generate_image") return;
+		if (requestedThisTurn || active || closing) {
+			return { block: true, reason: "Only one private image request is allowed per run; no automatic retries.", terminate: true };
+		}
+		requestedThisTurn = true;
+	});
+
+	function runImage(prompt: string, preset: ImagePreset, signal?: AbortSignal): Promise<PrivateImage | null> {
+		if (active || closing || signal?.aborted) return Promise.resolve(null);
+		const request = new Promise<PrivateImage | null>((resolve) => {
+			const child = spawn("@python@", ["@imageHelper@"], { stdio: ["pipe", "pipe", "ignore"] });
+			active = child;
+			let output = "";
+			let oversized = false;
+			const cancel = () => { child.kill("SIGTERM"); };
+			signal?.addEventListener("abort", cancel, { once: true });
+			const timer = setTimeout(cancel, preset === "quality" ? 740000 : 380000);
+			child.stdout!.setEncoding("utf8");
+			child.stdout!.on("data", (data: string) => {
+				if (output.length + data.length > 25000) { oversized = true; cancel(); }
+				else output += data;
+			});
+			child.stdin!.on("error", () => {});
+			child.stdin!.end(JSON.stringify({ prompt, preset }));
+			child.once("error", () => { /* close always follows error */ });
+			child.once("close", (code) => {
+				clearTimeout(timer);
+				signal?.removeEventListener("abort", cancel);
+				active = undefined;
+				let image: PrivateImage | null = null;
+				if (code === 0 && !signal?.aborted && !oversized && !closing) {
+					try { const parsed = JSON.parse(output); if (validImage(parsed) && parsed.preset === preset) image = parsed; } catch {}
+				}
+				resolve(image);
+			});
+		});
+		completion = request.then(() => {}, () => {});
+		return request;
+	}
+
+	function caption(image: PrivateImage, prompt: string): string {
+		return `Private image · ${image.preset} · ${image.width}×${image.height} · ${image.seconds}s\n${prompt}\nSaved: ~/.local/state/pi-private/images/${image.filename}`;
+	}
+
 	pi.on("session_shutdown", async () => {
 		closing = true;
 		active?.kill("SIGTERM");
@@ -80,6 +128,37 @@ export default function (pi: ExtensionAPI) {
 		box.addChild(new Text(typeof message.content === "string" ? message.content : "Private image", 0, 1));
 		return box;
 	});
+	pi.registerTool(defineTool({
+		name: "generate_image",
+		label: "Generate private image",
+		description: "Generate one image locally on the GPU, only when the user explicitly asks for an image. Use quality by default, or fast when the user requests speed. No uploads, external network, file reading or image analysis. Do not automatically retry.",
+		parameters: Type.Object({
+			prompt: Type.String({ minLength: 1, maxLength: 4000, description: "The image description requested by the user" }),
+			preset: Type.Optional(Type.Union([Type.Literal("quality"), Type.Literal("fast")])),
+		}, { additionalProperties: false }),
+		executionMode: "sequential",
+		async execute(_id, params, signal) {
+			if (active || closing) throw new Error("Wait for the active private image request to finish.");
+			const prompt = params.prompt.trim();
+			const preset = params.preset ?? "quality";
+			if (!prompt || prompt.length > 4000 || (preset !== "quality" && preset !== "fast")) {
+				throw new Error("An image description and a supported named preset are required.");
+			}
+			const image = await runImage(prompt, preset, signal);
+			if (!image) throw new Error("Private image cancelled or unavailable. Nothing was sent to a cloud service.");
+			return { content: [{ type: "text", text: caption(image, prompt) }], details: image, terminate: true };
+		},
+		renderCall(args) {
+			return new Text(`Generating private image · ${args?.preset === "fast" ? "fast" : "quality (allow several minutes)"} · GPU`, 0, 0);
+		},
+		renderResult(result) {
+			const box = new Container();
+			if (validImage(result.details)) box.addChild(new PixelPreview(result.details));
+			const text = result.content.filter((part) => part.type === "text").map((part) => part.text).join("\n");
+			box.addChild(new Text(text, 0, 1));
+			return box;
+		},
+	}));
 	pi.registerCommand("image", {
 		description: "Generate a private image (quality default): /image [--fast|--quality] <description>",
 		handler: async (args, ctx) => {
@@ -98,36 +177,7 @@ export default function (pi: ExtensionAPI) {
 			const result = await ctx.ui.custom<PrivateImage | null>((tui, theme, _kb, done) => {
 				const settings = preset === "quality" ? "quality: 1024×1024, 35 steps" : "fast: 512×512, 20 steps";
 				const loader = new BorderedLoader(tui, theme, `Generating private local image (${settings})…`);
-				const child = spawn("@python@", ["@imageHelper@"], { stdio: ["pipe", "pipe", "ignore"] });
-				active = child;
-				let output = "";
-				let oversized = false;
-				const cancel = () => { child.kill("SIGTERM"); };
-				loader.signal.addEventListener("abort", cancel, { once: true });
-				// Give Python time to terminate/reap its model server before returning.
-				const timer = setTimeout(cancel, preset === "quality" ? 740000 : 380000);
-				child.stdout!.setEncoding("utf8");
-				child.stdout!.on("data", (data: string) => {
-					if (output.length + data.length > 25000) { oversized = true; cancel(); }
-					else output += data;
-				});
-				child.stdin!.on("error", () => {});
-				child.stdin!.end(JSON.stringify({ prompt, preset }));
-				completion = new Promise<void>((resolve) => {
-					const finish = (code: number | null) => {
-						clearTimeout(timer);
-						loader.signal.removeEventListener("abort", cancel);
-						active = undefined;
-						let image: PrivateImage | null = null;
-						if (code === 0 && !loader.signal.aborted && !oversized && !closing) {
-							try { const parsed = JSON.parse(output); if (validImage(parsed) && parsed.preset === preset) image = parsed; } catch {}
-						}
-						done(image);
-						resolve();
-					};
-					child.once("error", () => { /* close always follows error */ });
-					child.once("close", finish);
-				});
+				runImage(prompt, preset, loader.signal).then(done).catch(() => done(null));
 				return loader;
 			});
 			if (closing) return;
@@ -136,7 +186,7 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 			pi.sendMessage({ customType: "private-image", display: true, details: result,
-				content: `Private image · ${result.preset} · ${result.width}×${result.height} · ${result.seconds}s\n${prompt}\nSaved: ~/.local/state/pi-private/images/${result.filename}` },
+				content: caption(result, prompt) },
 				{ triggerTurn: false });
 		},
 	});

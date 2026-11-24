@@ -43,9 +43,11 @@ class Policy(unittest.TestCase):
 
     def test_native_tui_with_no_tools_or_discovery(self):
         argv = chat.pi_command("/pi")
-        for option in ["--offline", "--no-tools", "--no-extensions", "--no-skills", "--no-context-files", "--no-approve"]:
+        for option in ["--offline", "--no-builtin-tools", "--no-extensions", "--no-skills", "--no-context-files", "--no-approve"]:
             self.assertIn(option, argv)
         self.assertNotIn("rpc", argv)
+        self.assertNotIn("--no-tools", argv)
+        self.assertEqual(argv[argv.index("--tools") + 1], "generate_image")
         self.assertEqual(argv[argv.index("--tui-mode") + 1], "fullscreen")
         self.assertEqual(argv[argv.index("--session-dir") + 1], "/history")
         self.assertEqual(argv.count("--extension"), 1)
