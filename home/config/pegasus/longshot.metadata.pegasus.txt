@@ -1,0 +1,14 @@
+collection: PC
+shortname: pc
+
+# Native recompilation; no game code or assets are deployed by Home Manager.
+game: The Legend of Zelda: Ocarina of Time (Longshot)
+file: /home/sumeet/matrix/projects/longshot/game/bin/longshot
+launch: tablet-game-launch -- longshot-play
+developer: Nintendo
+publisher: Nintendo
+genre: Action, Adventure
+players: 1
+summary: The Switch 2 remake running natively through Longshot. Stable-release notifications appear at launch; use Longshot Launcher to update after saving and quitting.
+assets.box_front: /home/sumeet/matrix/projects/longshot/game/longshot.png
+assets.background: /home/sumeet/matrix/projects/longshot/game/longshot.png

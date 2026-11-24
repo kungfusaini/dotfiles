@@ -39,6 +39,7 @@ let
   '';
   pegasusArtwork = import ../packages/pegasus-artwork.nix { inherit pkgs; };
   symphonyRecomp = pkgs.callPackage ../packages/symphony-recomp { };
+  longshot = pkgs.callPackage ../packages/longshot { };
   steamSession = pkgs.callPackage ../packages/steam-session { };
   tabletGameLaunch = pkgs.writeShellApplication {
     name = "tablet-game-launch";
@@ -52,10 +53,32 @@ in
     pegasus-frontend
     ryubing
     symphonyRecomp
+    longshot
     (pkgs.callPackage ../packages/voyee-controller { })
     steamSession
     tabletGameLaunch
   ];
+
+  # Triggered only by longshot-play; network checks never block launching a game.
+  systemd.user.services.longshot-update-check = {
+    Unit.Description = "Notify about new stable Longshot releases (at most daily)";
+    Service = {
+      Type = "oneshot";
+      ExecStart = "${longshot}/bin/longshot-update-check ${config.home.homeDirectory}/matrix/projects/longshot/game";
+      Environment = [ "XDG_STATE_HOME=${config.xdg.stateHome}" ];
+      UMask = "0077";
+      TimeoutStartSec = 20;
+      NoNewPrivileges = true;
+    };
+  };
+  xdg.desktopEntries.longshot-launcher = {
+    name = "Longshot Launcher";
+    comment = "Manage stable Longshot updates; save and quit before rebuilding";
+    exec = "${longshot}/bin/longshot-launcher";
+    icon = "system-software-update";
+    categories = [ "Game" ];
+    terminal = false;
+  };
 
   # Human opens opt out of automation for the current client lifetime. Keep
   # Steam's existing desktop actions/URI handler, changing only their launcher.
@@ -84,6 +107,8 @@ in
     "pegasus-frontend/game_dirs.txt".source = ../config/pegasus/game_dirs.txt;
     "pegasus-frontend/metafiles/custom.metadata.pegasus.txt".source =
       ../config/pegasus/custom.metadata.pegasus.txt;
+    "pegasus-frontend/metafiles/longshot.metadata.pegasus.txt".source =
+      ../config/pegasus/longshot.metadata.pegasus.txt;
     "pegasus-frontend/metafiles/ps2.metadata.pegasus.txt".source =
       ../config/pegasus/ps2.metadata.pegasus.txt;
     "pegasus-frontend/metafiles/steam.metadata.pegasus.txt".source =
