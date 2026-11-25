@@ -43,6 +43,7 @@ in
     ./modules/voxtype.nix
     ./modules/waybar.nix
     ./modules/yazi.nix
+    ./modules/zotero.nix
   ];
 
   home.username = "sumeet";
