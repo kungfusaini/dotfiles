@@ -12,7 +12,7 @@ let
     file="$dir/screenshot-$(date +%Y%m%d-%H%M%S).png"
     ${pkgs.grim}/bin/grim "$file"
     ${pkgs.wl-clipboard}/bin/wl-copy < "$file"
-    ${pkgs.libnotify}/bin/notify-send "Screenshot saved" "$file"
+    ${pkgs.libnotify}/bin/notify-send --app-name=Screenshots "Screenshot saved" "$file"
   '';
   screenshotSelection = pkgs.writeShellScript "hypr-screenshot-selection" ''
     set -eu
@@ -22,7 +22,7 @@ let
     geometry="$(${pkgs.slurp}/bin/slurp)"
     ${pkgs.grim}/bin/grim -g "$geometry" "$file"
     ${pkgs.wl-clipboard}/bin/wl-copy < "$file"
-    ${pkgs.libnotify}/bin/notify-send "Screenshot saved" "$file"
+    ${pkgs.libnotify}/bin/notify-send --app-name=Screenshots "Screenshot saved" "$file"
   '';
   classRule = class: effects: { match = { inherit class; }; } // effects;
   titleRule = title: effects: { match = { inherit title; }; } // effects;

@@ -1,8 +1,17 @@
 { micStatusWaybar, pkgs, platformProfileWaybar, ... }:
 
 let
+  notificationMode = pkgs.writeShellApplication {
+    name = "dnd-waybar";
+    runtimeInputs = with pkgs; [ mako gnugrep procps util-linux ];
+    text = builtins.readFile ../../hosts/kirax1/scripts/desktop/dnd-waybar;
+  };
   baseWaybarConfig = builtins.fromJSON (builtins.readFile ../config/waybar/config);
   waybarConfig = baseWaybarConfig // {
+    "custom/dnd" = baseWaybarConfig."custom/dnd" // {
+      exec = "${notificationMode}/bin/dnd-waybar";
+      on-click = "${notificationMode}/bin/dnd-waybar toggle";
+    };
     "custom/mic-status" = baseWaybarConfig."custom/mic-status" // {
       exec = "${micStatusWaybar}/bin/mic-status-waybar";
     };

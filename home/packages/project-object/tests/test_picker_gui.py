@@ -466,13 +466,10 @@ class PickerGuiSourceTests(unittest.TestCase):
 
     def test_workspace_label_has_narrow_do_not_disturb_exception(self):
         module = HOME_MANAGER_MODULE.read_text()
-        exception = 'mode=do-not-disturb app-name=\\"Project Workspace\\"'
-        self.assertIn('services.mako.settings."' + exception + '" = {\n      invisible = false;', module)
+        self.assertNotIn('invisible = false;', module)
         general = (ROOT.parents[1] / "modules" / "mako.nix").read_text()
-        self.assertIn('settings."mode=do-not-disturb"', general)
-        self.assertIn('invisible = 1;', general)
-        # Home Manager emits criteria in key order: the general rule must run first.
-        self.assertLess("mode=do-not-disturb", exception)
+        self.assertIn('category = "navigation"; matches = [ (app "Project Workspace") ];', general)
+        self.assertIn('do-not-disturb = [ "device-safety" "navigation" ];', general)
 
     def test_global_next_attention_jumps_from_active_workspace_without_showing_picker(self):
         tree = ast.parse(GUI_SOURCE.read_text())

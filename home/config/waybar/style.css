@@ -77,6 +77,10 @@ window#waybar {
   color: #ff9966;
 }
 
+#custom-dnd.no-contact {
+  color: #e5c07b;
+}
+
 #custom-dnd.inactive {
   color: #eeeeee;
 }

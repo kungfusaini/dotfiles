@@ -203,7 +203,7 @@ class FileOpenTests(unittest.TestCase):
              patch.object(opener, "open_file", side_effect=RuntimeError("missing file")), \
              patch.object(opener.subprocess, "run") as notify:
             self.assertEqual(opener.main(), 1)
-            self.assertEqual(notify.call_args.args[0][:2], ["notify-send", "File opening failed"])
+            self.assertEqual(notify.call_args.args[0][:3], ["notify-send", "--app-name=Project file open", "File opening failed"])
 
     def test_browser_rule_and_bootstrap_are_private_and_exact(self):
         with tempfile.TemporaryDirectory() as root, patch.dict(os.environ, {"XDG_RUNTIME_DIR": root}), \

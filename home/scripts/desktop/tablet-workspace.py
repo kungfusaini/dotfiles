@@ -259,7 +259,7 @@ def main():
         return 0
     except (OSError, ValueError, KeyError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"tablet-workspace: {error}", file=sys.stderr)
-        subprocess.run(["notify-send", "Tablet workspace", str(error)], check=False)
+        subprocess.run(["notify-send", "--app-name=Tablet workspace", "Tablet workspace", str(error)], check=False)
         return 1
 
 

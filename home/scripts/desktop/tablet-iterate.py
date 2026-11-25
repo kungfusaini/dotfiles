@@ -1090,7 +1090,7 @@ class Trial:
         if errors:
             if self.voice_guard or self.voice_pending or self.recording or self.transcriber:
                 try:
-                    run("notify-send", "Tablet voice needs attention", "Private recording may still be active. Recover the tablet trial before restarting it.")
+                    run("notify-send", "--app-name=Tablet voice", "Tablet voice needs attention", "Private recording may still be active. Recover the tablet trial before restarting it.")
                 except Exception:
                     pass
             raise RuntimeError("Trial cleanup needs recovery: " + "; ".join(errors))

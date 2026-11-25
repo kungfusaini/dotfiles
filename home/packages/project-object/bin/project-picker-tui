@@ -66,11 +66,11 @@ CONTEXT_BRIEF_TEXT_LENGTH = 160
 
 
 def notify_error(message):
-    subprocess.run([NOTIFY, APP_NAME, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    subprocess.run([NOTIFY, "--app-name=Project picker", APP_NAME, message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
 def notify_warning(message):
-    subprocess.run([NOTIFY, "Project restoration", message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    subprocess.run([NOTIFY, "--app-name=Project restoration", "Project restoration", message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
 def ensure_directory(directory):
@@ -1669,7 +1669,7 @@ def archive_stream_noninteractive(project_id, stream_id):
         registry, project, stream_registry, stream = resolve_active_stream(project_id, stream_id)
         session = reconcile_session(registry, load_session())
         archive_stream(project, stream, stream_registry, session)
-        subprocess.run([NOTIFY, APP_NAME, f"Archived stream {project['name']} · {stream['name']}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        subprocess.run([NOTIFY, "--app-name=Project picker", APP_NAME, f"Archived stream {project['name']} · {stream['name']}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
     finally:
         release_lock()
 

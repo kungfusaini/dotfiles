@@ -54,7 +54,7 @@ LAUNCH_WORKSPACE_ENV = "PROJECT_OBJECT_LAUNCH_WORKSPACE_NAME"
 
 
 def notify_error(message: str) -> None:
-    subprocess.run([NOTIFY, "Project browser", message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    subprocess.run([NOTIFY, "--app-name=Project browser", "Project browser", message], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
 def run(command: list[str]) -> subprocess.CompletedProcess:

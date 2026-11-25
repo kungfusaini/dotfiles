@@ -38,7 +38,7 @@ start_osk() {
   local osk
   osk=$(osk_command) || {
     echo "tablet-osk: wvkbd is not installed" >&2
-    notify-send "On-screen keyboard" "wvkbd is not installed" 2>/dev/null || true
+    notify-send --app-name='On-screen keyboard' "On-screen keyboard" "wvkbd is not installed" 2>/dev/null || true
     return 1
   }
 

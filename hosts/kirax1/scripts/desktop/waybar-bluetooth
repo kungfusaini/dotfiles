@@ -2,7 +2,7 @@
 set -euo pipefail
 
 notify() {
-  command -v notify-send >/dev/null && notify-send "Bluetooth" "$1" || true
+  command -v notify-send >/dev/null && notify-send --app-name='Bluetooth controls' "Bluetooth" "$1" || true
 }
 
 bt_powered() {

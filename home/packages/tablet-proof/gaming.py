@@ -303,7 +303,7 @@ def worker(command, request):
         record.update(phase='unavailable', error=str(error))
         write('launch.json', record)
         try:
-            subprocess.run(['notify-send', 'Tablet game handoff unavailable', str(error)], check=False)
+            subprocess.run(['notify-send', '--app-name=Tablet game', 'Tablet game handoff unavailable', str(error)], check=False)
         except OSError:
             pass  # A missing notification backend must not strand cleanup/receipt.
     # Never terminate a game/Steam cleanup worker. Returning from this command

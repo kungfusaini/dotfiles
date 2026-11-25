@@ -1007,7 +1007,7 @@ class Native(p.Proof):
                 self.record['media_pause_notice_sent'] = True
                 self.journal()
                 try:
-                    p.run('notify-send', 'Tablet playback was not paused',
+                    p.run('notify-send', '--app-name=Tablet playback', 'Tablet playback was not paused',
                           'Check companion pairing and website access. No other browser window was paused.')
                 except (OSError, subprocess.SubprocessError):
                     pass

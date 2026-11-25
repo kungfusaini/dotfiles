@@ -214,7 +214,7 @@ def main():
         message = "Could not open file: " + str(error)
         print("project-file-open: " + message, file=sys.stderr)
         try:
-            subprocess.run(["notify-send", "File opening failed", message], check=False, timeout=5)
+            subprocess.run(["notify-send", "--app-name=Project file open", "File opening failed", message], check=False, timeout=5)
         except (OSError, subprocess.TimeoutExpired):
             pass
         return 1

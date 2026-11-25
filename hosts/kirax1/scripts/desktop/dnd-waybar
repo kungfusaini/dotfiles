@@ -1,31 +1,53 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-status() {
-  if makoctl mode 2>/dev/null | grep -qx 'do-not-disturb'; then
-    printf '{"text":"","class":"active","tooltip":"Do Not Disturb: on\\nClick to allow notifications"}\n'
+current_mode() {
+  local modes
+  modes="$(makoctl mode)" || return
+  if grep -qx 'do-not-disturb' <<< "$modes"; then
+    printf 'do-not-disturb'
+  elif grep -qx 'no-contact' <<< "$modes"; then
+    printf 'no-contact'
   else
-    printf '{"text":"","class":"inactive","tooltip":"Notifications: on\\nClick for Do Not Disturb"}\n'
+    printf 'all'
   fi
 }
 
-toggle() {
-  makoctl mode -t do-not-disturb >/dev/null
-
-  if makoctl mode 2>/dev/null | grep -qx 'do-not-disturb'; then
-    makoctl dismiss --all --no-history 2>/dev/null || true
-  else
-    notify-send "Notifications enabled" "Do Not Disturb is off" 2>/dev/null || true
+status() {
+  local mode
+  if ! mode="$(current_mode 2>/dev/null)"; then
+    printf '{"text":"?","class":"error","tooltip":"Notification service unavailable"}\n'
+    return
   fi
+  case "$mode" in
+    all) printf '{"text":"","class":"inactive","tooltip":"All approved notifications\\nClick for No contact"}\n' ;;
+    no-contact) printf '{"text":"","class":"no-contact","tooltip":"No contact: tools only\\nClick for Do Not Disturb"}\n' ;;
+    do-not-disturb) printf '{"text":"","class":"active","tooltip":"Do Not Disturb: safety and navigation only\\nClick for All notifications"}\n' ;;
+  esac
+}
 
-  pkill -RTMIN+9 waybar 2>/dev/null || true
+toggle() {
+  # Serialize rapid clicks and preserve any unrelated Mako modes.
+  exec 9>"${XDG_RUNTIME_DIR:?}/notification-mode.lock"
+  flock 9
+  local mode
+  mode="$(current_mode)"
+  # Mako reapplies styles on mode changes but does not restart expiry timers.
+  # Clear old popups before tightening policy so they cannot reappear later.
+  if [[ "$mode" != do-not-disturb ]]; then
+    makoctl dismiss --all --no-history
+  fi
+  case "$mode" in
+    all) makoctl mode -a no-contact -r do-not-disturb ;;
+    no-contact) makoctl mode -a do-not-disturb -r no-contact ;;
+    do-not-disturb) makoctl mode -r do-not-disturb -r no-contact ;;
+  esac >/dev/null
+  pkill -RTMIN+9 -x waybar 2>/dev/null || true
+  pkill -RTMIN+9 -x .waybar-wrapped 2>/dev/null || true
 }
 
 case "${1:-status}" in
   status|--status) status ;;
   toggle|--toggle) toggle ;;
-  *)
-    printf 'Usage: %s [status|toggle]\n' "${0##*/}" >&2
-    exit 2
-    ;;
+  *) printf 'Usage: %s [status|toggle]\n' "${0##*/}" >&2; exit 2 ;;
 esac

@@ -74,10 +74,8 @@ in
       "ignore-timeout" = true;
     };
 
-    # Sorts after the general DND criterion; navigation feedback is not an alert.
-    services.mako.settings."mode=do-not-disturb app-name=\"Project Workspace\"" = {
-      invisible = false;
-    };
+    # Visibility is owned by the central notification registry, including the
+    # navigation-feedback exception in DND. This module owns presentation only.
 
     wayland.windowManager.hyprland.settings = lib.mkIf cfg.enableHyprlandBinding (if config.wayland.windowManager.hyprland.configType == "lua" then {
       terminal._var = lib.mkForce "${package}/bin/project-terminal";
